@@ -1,0 +1,246 @@
+"""
+Analysis run orchestrator.
+
+Handles:
+- Creating and tracking analysis_run records
+- Batching emails for LLM calls
+- Storing results with full traceability
+- Resuming interrupted runs (skip already-analyzed)
+"""
+import hashlib
+import json
+from datetime import datetime
+from pathlib import Path
+from typing import Any, Callable, Dict, Generator, List, Optional
+
+from src.storage.database import get_db
+
+
+# ─────────────────────────── PROMPT LOADING ──────────────────────────────────
+
+_PROMPTS_DIR = Path(__file__).parent / "prompts"
+
+
+def load_prompt(name: str) -> str:
+    """Load a prompt template from src/analysis/prompts/<name>.txt"""
+    path = _PROMPTS_DIR / f"{name}.txt"
+    if not path.exists():
+        raise FileNotFoundError(f"Prompt template not found: {path}")
+    return path.read_text(encoding="utf-8")
+
+
+def prompt_hash(prompt_text: str) -> str:
+    return hashlib.sha256(prompt_text.encode()).hexdigest()[:16]
+
+
+# ─────────────────────────── RUN LIFECYCLE ───────────────────────────────────
+
+def create_run(
+    analysis_type: str,
+    provider_name: str,
+    model_id: str,
+    prompt_text: str,
+    prompt_version: str = "v1",
+    notes: str = "",
+) -> int:
+    """Insert a new analysis_run row and return its ID."""
+    with get_db() as conn:
+        cur = conn.execute(
+            """INSERT INTO analysis_runs
+               (analysis_type, provider_name, model_id, prompt_hash, prompt_version, status, notes)
+               VALUES (?, ?, ?, ?, ?, 'running', ?)""",
+            (analysis_type, provider_name, model_id,
+             prompt_hash(prompt_text), prompt_version, notes),
+        )
+        return cur.lastrowid
+
+
+def finish_run(run_id: int, status: str = "complete", email_count: int = 0) -> None:
+    with get_db() as conn:
+        conn.execute(
+            "UPDATE analysis_runs SET status=?, email_count=? WHERE id=?",
+            (status, email_count, run_id),
+        )
+
+
+def already_analyzed(run_id: int, email_id: int) -> bool:
+    """True if this email already has a result for this run."""
+    with get_db() as conn:
+        row = conn.execute(
+            "SELECT id FROM analysis_results WHERE run_id=? AND email_id=?",
+            (run_id, email_id),
+        ).fetchone()
+        return row is not None
+
+
+def store_result(
+    run_id: int,
+    email_id: int,
+    result_json: str,
+    sender_contact_id: Optional[int] = None,
+) -> None:
+    with get_db() as conn:
+        conn.execute(
+            """INSERT OR REPLACE INTO analysis_results
+               (run_id, email_id, sender_contact_id, result_json)
+               VALUES (?, ?, ?, ?)""",
+            (run_id, email_id, sender_contact_id, result_json),
+        )
+
+
+def store_topics_for_email(
+    email_id: int,
+    topics: List[Dict[str, Any]],
+    run_id: int,
+) -> None:
+    """Link email to topics after classification."""
+    with get_db() as conn:
+        for t in topics:
+            topic_name = t.get("name", "")
+            confidence = float(t.get("confidence", 1.0))
+            row = conn.execute(
+                "SELECT id FROM topics WHERE name=?", (topic_name,)
+            ).fetchone()
+            if not row:
+                # Auto-create AI-discovered topic
+                cur = conn.execute(
+                    "INSERT OR IGNORE INTO topics (name, description, is_user_defined) VALUES (?,?,0)",
+                    (topic_name, ""),
+                )
+                topic_id = cur.lastrowid or conn.execute(
+                    "SELECT id FROM topics WHERE name=?", (topic_name,)
+                ).fetchone()["id"]
+            else:
+                topic_id = row["id"]
+
+            conn.execute(
+                """INSERT OR REPLACE INTO email_topics (email_id, topic_id, confidence, run_id)
+                   VALUES (?, ?, ?, ?)""",
+                (email_id, topic_id, confidence, run_id),
+            )
+
+
+def store_timeline_events(
+    run_id: int,
+    email_id: int,
+    events: List[Dict[str, Any]],
+) -> None:
+    with get_db() as conn:
+        for ev in events:
+            conn.execute(
+                """INSERT INTO timeline_events
+                   (run_id, email_id, event_date, event_type, description, significance)
+                   VALUES (?, ?, ?, ?, ?, ?)""",
+                (
+                    run_id,
+                    email_id,
+                    ev.get("event_date", ""),
+                    ev.get("event_type", "statement"),
+                    ev.get("description", ""),
+                    ev.get("significance", "medium"),
+                ),
+            )
+
+
+def store_contradictions(run_id: int, contradictions: List[Dict[str, Any]]) -> None:
+    with get_db() as conn:
+        for c in contradictions:
+            # Resolve topic ID if provided
+            topic_id = None
+            if c.get("topic"):
+                row = conn.execute(
+                    "SELECT id FROM topics WHERE name=?", (c["topic"],)
+                ).fetchone()
+                if row:
+                    topic_id = row["id"]
+
+            conn.execute(
+                """INSERT INTO contradictions
+                   (run_id, email_id_a, email_id_b, scope, topic_id, explanation, severity)
+                   VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    run_id,
+                    c["email_id_a"],
+                    c["email_id_b"],
+                    c.get("scope", "intra-sender"),
+                    topic_id,
+                    c.get("explanation", ""),
+                    c.get("severity", "medium"),
+                ),
+            )
+
+
+# ─────────────────────────── EMAIL FETCHING ──────────────────────────────────
+
+def get_emails_for_analysis(
+    skip_if_analyzed: bool = True,
+    run_id: Optional[int] = None,
+    since: Optional[datetime] = None,
+    topic_filter: Optional[str] = None,
+    direction: Optional[str] = None,
+    limit: Optional[int] = None,
+) -> List[Dict[str, Any]]:
+    """Fetch emails that need analysis, with optional filters."""
+    with get_db() as conn:
+        params = []
+        wheres = []
+
+        if since:
+            wheres.append("e.date >= ?")
+            params.append(since.isoformat())
+
+        if direction:
+            wheres.append("e.direction = ?")
+            params.append(direction)
+
+        if topic_filter:
+            wheres.append("""e.id IN (
+                SELECT et.email_id FROM email_topics et
+                JOIN topics t ON t.id = et.topic_id AND t.name = ?
+            )""")
+            params.append(topic_filter)
+
+        # Skip emails already analyzed in this run
+        if skip_if_analyzed and run_id:
+            wheres.append("""e.id NOT IN (
+                SELECT email_id FROM analysis_results WHERE run_id = ?
+            )""")
+            params.append(run_id)
+
+        # Skip emails with no substantive new content
+        wheres.append("TRIM(e.delta_text) != ''")
+        wheres.append("LENGTH(TRIM(e.delta_text)) > 20")
+
+        where_clause = ("WHERE " + " AND ".join(wheres)) if wheres else ""
+        limit_clause = f"LIMIT {limit}" if limit else ""
+
+        rows = conn.execute(
+            f"""SELECT e.id, e.date, e.direction, e.subject,
+                       e.delta_text, e.from_address, e.contact_id, e.language
+                FROM emails e
+                {where_clause}
+                ORDER BY e.date ASC
+                {limit_clause}""",
+            params,
+        ).fetchall()
+
+        return [dict(r) for r in rows]
+
+
+def batch(items: list, size: int) -> Generator[list, None, None]:
+    """Split a list into batches of at most `size` items."""
+    for i in range(0, len(items), size):
+        yield items[i: i + size]
+
+
+def parse_json_response(text: str) -> Any:
+    """Extract JSON from LLM response, stripping any markdown fences."""
+    text = text.strip()
+    # Remove ```json ... ``` fences if present
+    if text.startswith("```"):
+        lines = text.split("\n")
+        text = "\n".join(
+            l for l in lines
+            if not l.strip().startswith("```")
+        ).strip()
+    return json.loads(text)

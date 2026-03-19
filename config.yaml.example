@@ -1,0 +1,70 @@
+# Copy this file to config.yaml and customize
+# config.yaml is gitignored and never committed
+
+imap:
+  server: imap.mail.yahoo.com
+  port: 993
+  ssl: true
+
+# LLM provider routing — controls which provider handles each task type
+# Providers: claude, openai, groq, ollama
+llm:
+  default_provider: groq          # Used when no task-specific provider is set
+  task_providers:
+    classify: groq                # Topic classification (cheap, high volume)
+    tone: groq                    # Tone analysis (cheap, high volume)
+    timeline: groq                # Event extraction
+    contradictions: claude        # Deep reasoning needed
+    manipulation: claude          # Deep reasoning needed
+    reply_draft: claude           # Reply generation
+
+  # Provider-specific settings
+  providers:
+    claude:
+      model: claude-sonnet-4-6
+    openai:
+      model: gpt-4o-mini
+    groq:
+      model: llama-3.3-70b-versatile
+    ollama:
+      base_url: http://localhost:11434
+      model: mistral
+
+# Watched contacts (emails will be fetched for these addresses and ALL their aliases)
+# Format: name, email (primary), role (me | ex-wife | lawyer | other), aliases (optional list)
+# Aliases = other addresses the same person has used over the years.
+# You can also add aliases later with: python cli.py contacts alias -i <id> --add <email>
+contacts:
+  - name: Moi
+    email: your@yahoo.com
+    role: me
+  - name: Ex-femme
+    email: exwife@example.com
+    role: ex-wife
+    aliases:
+      - exwife.old@hotmail.fr
+      - exwife.pro@entreprise.com
+
+# Predefined topics (AI will also discover new ones)
+topics:
+  - name: logement
+    description: Appartement, loyer, charges, déménagement
+  - name: enfants
+    description: Garde, pension alimentaire, école, vacances
+  - name: finances
+    description: Comptabilité, partage des biens, dettes
+  - name: divorce
+    description: Procédure de divorce, accord, avocat
+  - name: contradictions
+    description: Déclarations contradictoires détectées
+
+# Database
+database:
+  path: data/emails.db
+
+# Analysis settings
+analysis:
+  batch_size: 20                  # Emails per LLM batch
+  max_retries: 3
+  retry_delay_seconds: 5
+  skip_if_analyzed: true          # Skip already-processed emails (use --force to override)
