@@ -1,0 +1,155 @@
+{% extends "base.html" %}
+{% block title %}Settings{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <div>
+    <h1 class="page-title">Settings</h1>
+    <p class="page-subtitle">Analysis runs, coverage, and system overview</p>
+  </div>
+</div>
+
+<div class="page-body">
+
+  <!-- Overview stats -->
+  <div class="stat-grid mb-6">
+    <div class="stat-card">
+      <div class="stat-label">Total Emails</div>
+      <div class="stat-value">{{ "{:,}".format(overview.total) }}</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Threads</div>
+      <div class="stat-value">{{ "{:,}".format(overview.threads) }}</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Analysis Runs</div>
+      <div class="stat-value">{{ overview.runs_count }}</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Contradictions</div>
+      <div class="stat-value">{{ overview.contradiction_count }}</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Timeline Events</div>
+      <div class="stat-value">{{ overview.timeline_events_count }}</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Court Events</div>
+      <div class="stat-value">{{ overview.court_events_count }}</div>
+    </div>
+  </div>
+
+  <!-- Analysis coverage -->
+  <div class="card mb-6">
+    <div class="card-header">
+      <span class="card-title">Analysis Coverage</span>
+    </div>
+    <div class="card-body">
+      {% set total = overview.total or 1 %}
+      {% for key, cov in coverage.items() %}
+      <div class="progress-row">
+        <span class="progress-label">{{ cov.label }}</span>
+        <div class="progress-track">
+          <div class="progress-fill" data-value="{{ cov.pct }}" style="width:{{ cov.pct }}%"></div>
+        </div>
+        <span class="progress-pct">{{ cov.count }} / {{ overview.total }} ({{ cov.pct }}%)</span>
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+
+  <!-- Quick launch buttons -->
+  <div class="card mb-6">
+    <div class="card-header">
+      <span class="card-title">Run Analysis</span>
+    </div>
+    <div class="card-body">
+      <p class="text-sm text-secondary mb-4">
+        Analysis must be run from the command line. Use these commands in your terminal:
+      </p>
+      <div style="display:flex;flex-wrap:wrap;gap:var(--space-3)">
+        <code style="background:var(--bg);border:1px solid var(--border);padding:var(--space-2) var(--space-3);border-radius:var(--radius);font-size:var(--font-size-sm)">
+          python cli.py analyze classify
+        </code>
+        <code style="background:var(--bg);border:1px solid var(--border);padding:var(--space-2) var(--space-3);border-radius:var(--radius);font-size:var(--font-size-sm)">
+          python cli.py analyze tone
+        </code>
+        <code style="background:var(--bg);border:1px solid var(--border);padding:var(--space-2) var(--space-3);border-radius:var(--radius);font-size:var(--font-size-sm)">
+          python cli.py analyze timeline
+        </code>
+        <code style="background:var(--bg);border:1px solid var(--border);padding:var(--space-2) var(--space-3);border-radius:var(--radius);font-size:var(--font-size-sm)">
+          python cli.py analyze all
+        </code>
+        <code style="background:var(--bg);border:1px solid var(--border);padding:var(--space-2) var(--space-3);border-radius:var(--radius);font-size:var(--font-size-sm)">
+          python cli.py analyze deep
+        </code>
+      </div>
+    </div>
+  </div>
+
+  <!-- Analysis runs table -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-title">Analysis Runs</span>
+      <span class="text-sm text-muted">{{ runs | length }} total</span>
+    </div>
+
+    {% if runs %}
+    <div class="table-wrapper" style="border-radius:0;border:none;box-shadow:none">
+      <table>
+        <thead>
+          <tr>
+            <th>ID</th>
+            <th>Type</th>
+            <th>Provider</th>
+            <th>Model</th>
+            <th>Status</th>
+            <th>Results</th>
+            <th>Date</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for run in runs %}
+          <tr id="run-row-{{ run.id }}">
+            <td class="text-xs text-muted">#{{ run.id }}</td>
+            <td>
+              <span class="badge badge-secondary">{{ run.analysis_type }}</span>
+            </td>
+            <td class="text-sm">{{ run.provider_name or '—' }}</td>
+            <td class="text-xs text-muted" title="{{ run.model_id }}">
+              {{ (run.model_id or '—')[:20] }}{% if run.model_id and run.model_id|length > 20 %}…{% endif %}
+            </td>
+            <td>
+              <span class="badge {% if run.status == 'complete' %}badge-success{% elif run.status == 'partial' %}badge-medium{% else %}badge-secondary{% endif %}">
+                {{ run.status }}
+              </span>
+            </td>
+            <td class="text-sm">{{ run.result_count or 0 }}</td>
+            <td class="text-xs text-muted">{{ run.run_date[:16] if run.run_date else '—' }}</td>
+            <td>
+              <button class="btn btn-secondary btn-sm" style="color:var(--severity-high)"
+                      hx-post="/settings/runs/{{ run.id }}/delete"
+                      hx-target="#run-row-{{ run.id }}"
+                      hx-swap="outerHTML"
+                      hx-confirm="Delete run #{{ run.id }} and all {{ run.result_count or 0 }} results?">
+                Delete
+              </button>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+
+    {% else %}
+    <div class="empty-state">
+      <div class="empty-state-icon">🔬</div>
+      <div class="empty-state-title">No analysis runs yet</div>
+      <p class="empty-state-text">Run analysis from the CLI to see results here.</p>
+    </div>
+    {% endif %}
+  </div>
+
+</div>
+{% endblock %}

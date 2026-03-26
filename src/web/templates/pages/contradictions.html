@@ -1,0 +1,160 @@
+{% extends "base.html" %}
+{% block title %}Contradictions{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <div>
+    <h1 class="page-title">Contradiction Browser</h1>
+    <p class="page-subtitle">Conflicting statements detected across emails</p>
+  </div>
+  <div class="flex gap-3 items-center">
+    <span class="badge badge-high">{{ counts.get('high', 0) }} High</span>
+    <span class="badge badge-medium">{{ counts.get('medium', 0) }} Medium</span>
+    <span class="badge badge-secondary">{{ counts.get('low', 0) }} Low</span>
+  </div>
+</div>
+
+<div class="page-body">
+
+  {% if perspective != 'legal' %}
+  <div class="alert alert-info mb-6">
+    This page is optimised for the Legal perspective.
+    <a href="#" onclick="document.getElementById('perspective-form').querySelector('[value=legal]').click()">Switch to Legal</a>
+  </div>
+  {% endif %}
+
+  <!-- Filters -->
+  <div class="card mb-6">
+    <div class="card-body">
+      <div style="display:flex;gap:var(--space-4);flex-wrap:wrap;align-items:flex-end">
+
+        <div class="form-group">
+          <label class="form-label">Severity</label>
+          <select id="sev-select" onchange="applyFilters()" class="form-input">
+            <option value="all" {% if severity == 'all' %}selected{% endif %}>All</option>
+            <option value="high"   {% if severity == 'high'   %}selected{% endif %}>High</option>
+            <option value="medium" {% if severity == 'medium' %}selected{% endif %}>Medium</option>
+            <option value="low"    {% if severity == 'low'    %}selected{% endif %}>Low</option>
+          </select>
+        </div>
+
+        <div class="form-group">
+          <label class="form-label">Scope</label>
+          <select id="scope-select" onchange="applyFilters()" class="form-input">
+            <option value="all"          {% if scope == 'all'          %}selected{% endif %}>All</option>
+            <option value="intra-sender" {% if scope == 'intra-sender' %}selected{% endif %}>Intra-sender</option>
+            <option value="cross-sender" {% if scope == 'cross-sender' %}selected{% endif %}>Cross-sender</option>
+          </select>
+        </div>
+
+        <div class="form-group">
+          <label class="form-label">Topic</label>
+          <select id="topic-select" onchange="applyFilters()" class="form-input">
+            <option value="all" {% if topic == 'all' %}selected{% endif %}>All topics</option>
+            {% for t in available_topics %}
+            <option value="{{ t.topic_name }}" {% if topic == t.topic_name %}selected{% endif %}>
+              {{ t.topic_name }} ({{ t.cnt }})
+            </option>
+            {% endfor %}
+          </select>
+        </div>
+
+        <div class="form-group" style="margin-left:auto;display:flex;align-items:flex-end">
+          <span class="text-sm text-muted">
+            {% if counts.get('filtered_total', 0) != counts.get('total', 0) %}
+              {{ counts.get('filtered_total', 0) }} of {{ counts.get('total', 0) }} contradiction{{ 's' if counts.get('total', 0) != 1 else '' }}
+            {% else %}
+              {{ counts.get('total', 0) }} contradiction{{ 's' if counts.get('total', 0) != 1 else '' }}
+            {% endif %}
+          </span>
+        </div>
+
+      </div>
+    </div>
+  </div>
+
+  {% if contradiction_items %}
+  {% for item in contradiction_items %}
+  <div class="contradiction-card">
+    <div class="contradiction-card-header">
+      <span class="badge {% if item.severity == 'high' %}badge-high{% elif item.severity == 'medium' %}badge-medium{% else %}badge-low{% endif %}">
+        {{ item.severity | title }}
+      </span>
+      <span class="badge badge-secondary">{{ item.scope or 'intra-sender' }}</span>
+      {% if item.topic %}
+      <span class="topic-pill" style="cursor:pointer" onclick="document.getElementById('topic-select').value='{{ item.topic }}';applyFilters()">
+        {{ item.topic }}
+      </span>
+      {% endif %}
+      <!-- LLM model badge -->
+      {% if item.model_id %}
+      <span class="badge badge-secondary" style="font-size:0.65rem;opacity:0.75;font-weight:400"
+            title="{{ item.provider_name }} — {{ item.model_id }}">
+        {{ item.provider_name }}/{{ item.model_id | truncate(20, true, '…') }}
+      </span>
+      {% endif %}
+      <span class="text-sm text-secondary" style="margin-left:auto">#{{ item.id }}</span>
+    </div>
+
+    <div style="padding:var(--space-4);background:var(--bg);border-bottom:1px solid var(--border)">
+      <p class="text-sm">{{ item.explanation }}</p>
+    </div>
+
+    <div class="contradiction-emails">
+      <div class="contradiction-email-excerpt">
+        <div class="text-xs text-muted mb-2">
+          {{ item.date_a[:10] if item.date_a else '—' }} ·
+          <span class="badge {% if item.dir_a == 'sent' %}badge-sent{% else %}badge-received{% endif %}">{{ item.dir_a }}</span>
+        </div>
+        <div class="text-sm font-medium mb-2">{{ item.subject_a or '(no subject)' }}</div>
+        <a href="/emails/{{ item.email_id_a }}" class="text-xs">View email &rarr;</a>
+      </div>
+      <div class="contradiction-email-excerpt">
+        <div class="text-xs text-muted mb-2">
+          {{ item.date_b[:10] if item.date_b else '—' }} ·
+          <span class="badge {% if item.dir_b == 'sent' %}badge-sent{% else %}badge-received{% endif %}">{{ item.dir_b }}</span>
+        </div>
+        <div class="text-sm font-medium mb-2">{{ item.subject_b or '(no subject)' }}</div>
+        <a href="/emails/{{ item.email_id_b }}" class="text-xs">View email &rarr;</a>
+      </div>
+    </div>
+
+    {% if perspective == 'legal' %}
+    <div style="padding:var(--space-4);border-top:1px solid var(--border)">
+      <div hx-get="/notes/email/{{ item.email_id_a }}"
+           hx-trigger="revealed"
+           hx-swap="outerHTML">
+        <span class="text-xs text-muted">Loading notes…</span>
+      </div>
+    </div>
+    {% endif %}
+  </div>
+  {% endfor %}
+
+  {% else %}
+  <div class="empty-state">
+    <div class="empty-state-icon">⚡</div>
+    <div class="empty-state-title">No contradictions found</div>
+    <p class="empty-state-text">
+      {% if severity != 'all' or scope != 'all' or topic != 'all' %}
+        No contradictions match your current filters.
+        <a href="/analysis/contradictions" style="display:block;margin-top:var(--space-2)">Clear all filters</a>
+      {% else %}
+        Run <code>python cli.py analyze contradictions</code> to detect contradictions,
+        or import filled Excel batches via <code>analyze import-results</code>.
+      {% endif %}
+    </p>
+  </div>
+  {% endif %}
+
+</div>
+
+<script>
+function applyFilters() {
+  const sev   = document.getElementById('sev-select').value;
+  const sc    = document.getElementById('scope-select').value;
+  const tp    = document.getElementById('topic-select').value;
+  window.location = '/analysis/contradictions?severity=' + sev + '&scope=' + sc + '&topic=' + tp;
+}
+</script>
+{% endblock %}

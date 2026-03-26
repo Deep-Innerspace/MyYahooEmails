@@ -1,0 +1,84 @@
+{% extends "base.html" %}
+{% block title %}Chapters{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <div>
+    <h1 class="page-title">Chapters</h1>
+    <p class="page-subtitle">Organise your emails into narrative chapters</p>
+  </div>
+  <a href="/narrative" class="btn btn-secondary">← Narrative Arc</a>
+</div>
+
+<div class="page-body">
+
+  {% if perspective != 'book' %}
+  <div class="alert alert-info mb-6">
+    This page is optimised for the Book perspective.
+    <a href="#" onclick="document.getElementById('perspective-form').querySelector('[value=book]').click()">Switch to Book</a>
+  </div>
+  {% endif %}
+
+  <div style="display:grid;grid-template-columns:320px 1fr;gap:var(--space-6);align-items:start">
+
+    <!-- Left panel: chapter list + create form -->
+    <div>
+      <!-- Create new chapter form -->
+      <div class="card mb-4">
+        <div class="card-header">
+          <span class="card-title">New Chapter</span>
+        </div>
+        <div class="card-body">
+          <form hx-post="/chapters"
+                hx-target="#chapter-list-container"
+                hx-swap="innerHTML">
+            <div class="form-group">
+              <label class="form-label">Title <span style="color:var(--severity-high)">*</span></label>
+              <input type="text" name="title" class="form-input" placeholder="Chapter title" required>
+            </div>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:var(--space-2)">
+              <div class="form-group">
+                <label class="form-label">Date from</label>
+                <input type="date" name="date_from" class="form-input">
+              </div>
+              <div class="form-group">
+                <label class="form-label">Date to</label>
+                <input type="date" name="date_to" class="form-input">
+              </div>
+            </div>
+            <div class="form-group">
+              <label class="form-label">Summary</label>
+              <textarea name="summary" class="form-input" rows="2" placeholder="Brief description…"></textarea>
+            </div>
+            <button type="submit" class="btn btn-primary" style="width:100%">Add Chapter</button>
+          </form>
+        </div>
+      </div>
+
+      <!-- Chapter list -->
+      <div id="chapter-list-container">
+        {% include "partials/chapter_list.html" %}
+      </div>
+    </div>
+
+    <!-- Right panel: chapter detail -->
+    <div id="chapter-detail-panel">
+      {% if chapters %}
+      <div class="empty-state" style="padding:var(--space-8)">
+        <div class="empty-state-icon">📖</div>
+        <div class="empty-state-title">Select a chapter</div>
+        <p class="empty-state-text">Click a chapter on the left to view and edit its details.</p>
+      </div>
+      {% else %}
+      <div class="empty-state" style="padding:var(--space-8)">
+        <div class="empty-state-icon">📚</div>
+        <div class="empty-state-title">No chapters yet</div>
+        <p class="empty-state-text">Create your first chapter using the form on the left.</p>
+      </div>
+      {% endif %}
+    </div>
+
+  </div>
+
+</div>
+{% endblock %}

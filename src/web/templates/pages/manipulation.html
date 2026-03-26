@@ -1,0 +1,297 @@
+{% extends "base.html" %}
+{% block title %}Manipulation Patterns{% endblock %}
+
+{% block content %}
+<style>
+/* ── Chart grid ───────────────────────────────────────────────────────── */
+.chart-section { margin-bottom: var(--space-6); }
+.chart-row-2 {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--space-4);
+}
+.chart-card .card-header {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;  /* prevent space-between splitting title / info-icon */
+  gap: 0;
+  flex-wrap: nowrap;
+}
+.chart-card .card-header .card-title {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+.chart-card img {
+  width: 100%;
+  height: auto;
+  display: block;
+  border-radius: 0 0 var(--radius) var(--radius);
+}
+/* ── Period toggle ────────────────────────────────────────────────────── */
+.period-toggle { display: flex; gap: var(--space-2); }
+.period-toggle button {
+  padding: 2px 10px;
+  font-size: var(--font-size-xs);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  cursor: pointer;
+  color: var(--text-secondary);
+}
+.period-toggle button.active {
+  background: var(--primary);
+  color: #fff;
+  border-color: var(--primary);
+}
+</style>
+
+<div class="page-header">
+  <div>
+    <h1 class="page-title">Manipulation Patterns</h1>
+    <p class="page-subtitle">Per-email manipulation pattern detection</p>
+  </div>
+  <div class="flex gap-3 items-center">
+    <span class="badge badge-secondary">{{ total }} emails above threshold</span>
+  </div>
+</div>
+
+<div class="page-body">
+
+  {% if perspective != 'legal' %}
+  <div class="alert alert-info mb-6">
+    This page is optimised for the Legal perspective.
+    <a href="#" onclick="document.getElementById('perspective-form').querySelector('[value=legal]').click()">Switch to Legal</a>
+  </div>
+  {% endif %}
+
+  <!-- ── Charts section ──────────────────────────────────────────────── -->
+  <div class="chart-section">
+
+    <!-- 1. Score Timeline (full width) -->
+    <div class="card chart-card mb-4">
+      <div class="card-header">
+        <span class="card-title">📈 Score Evolution Over Time</span>
+        <span class="info-icon"
+              data-tip="Average manipulation score per quarter for sent and received emails. Only emails with a score > 0 are included. Rising lines indicate escalating manipulative behaviour during those periods.">i</span>
+        <div style="margin-left:auto">
+          <div class="period-toggle" id="timeline-toggle">
+            <button class="active" onclick="setTimelinePeriod('quarter', this)">Quarters</button>
+            <button onclick="setTimelinePeriod('month', this)">Months</button>
+            <button onclick="setTimelinePeriod('year', this)">Years</button>
+          </div>
+        </div>
+      </div>
+      <img id="chart-timeline"
+           src="/charts/manipulation-timeline?by=quarter&direction={{ direction if direction != 'all' else '' }}"
+           alt="Score evolution" loading="lazy">
+    </div>
+
+    <!-- 2. Pattern Frequency + Score Distribution (2 columns) -->
+    <div class="chart-row-2 mb-4">
+
+      <!-- Pattern Frequency -->
+      <div class="card chart-card">
+        <div class="card-header">
+          <span class="card-title">📊 Pattern Frequency</span>
+          <span class="info-icon"
+                data-tip="How many emails contained each manipulation pattern, broken down by direction (sent vs received). Longer bars = more pervasive tactic. Useful to identify the dominant strategies used throughout the correspondence.">i</span>
+        </div>
+        <img src="/charts/manipulation-pattern-freq?direction={{ direction if direction != 'all' else '' }}"
+             alt="Pattern frequency" loading="lazy">
+      </div>
+
+      <!-- Score Distribution -->
+      <div class="card chart-card">
+        <div class="card-header">
+          <span class="card-title">🔢 Score Distribution</span>
+          <span class="info-icon"
+                data-tip="Histogram showing how many emails fall into each 0.1-wide score bucket (0.0–0.1, 0.1–0.2, … 0.9–1.0). Helps distinguish whether manipulation is sporadic (most emails near 0) or systematic (mass of emails at high scores).">i</span>
+        </div>
+        <img src="/charts/manipulation-score-dist?direction={{ direction if direction != 'all' else '' }}"
+             alt="Score distribution" loading="lazy">
+      </div>
+
+    </div>
+
+    <!-- 3. Patterns Over Time — two full-width stacked cards (received / sent) -->
+    <div class="chart-section">
+
+      <!-- Received -->
+      <div class="card chart-card mb-4" id="patterns-time-card-received">
+        <div class="card-header" style="cursor:pointer; flex-direction:column; align-items:stretch; gap:var(--space-2)" onclick="togglePatternsTime('received')">
+          <div style="display:flex; align-items:center; justify-content:space-between">
+            <span class="card-title">📥 Received Patterns</span>
+            <span class="info-icon" onclick="event.stopPropagation()"
+                  data-tip="Stacked area chart of the top 5 manipulation tactics detected in emails received from her. Shifts in the colour bands show when specific tactics appeared, intensified, or faded.">i</span>
+          </div>
+          <div style="display:flex; align-items:center; justify-content:flex-end; gap:var(--space-2)">
+            <div class="period-toggle" id="patterns-toggle-received">
+              <button class="active" onclick="setPatternsTimePeriod('quarter', this, 'received'); event.stopPropagation()">Quarters</button>
+              <button onclick="setPatternsTimePeriod('month', this, 'received'); event.stopPropagation()">Months</button>
+              <button onclick="setPatternsTimePeriod('year', this, 'received'); event.stopPropagation()">Years</button>
+            </div>
+            <span id="patterns-chevron-received" style="font-size:12px;color:var(--text-muted)">▲</span>
+          </div>
+        </div>
+        <div id="patterns-time-body-received">
+          <img id="chart-patterns-time-received"
+               src="/charts/manipulation-patterns-time?by=quarter&direction=received"
+               alt="Received patterns over time" loading="lazy">
+        </div>
+      </div>
+
+      <!-- Sent -->
+      <div class="card chart-card mb-6" id="patterns-time-card-sent">
+        <div class="card-header" style="cursor:pointer; flex-direction:column; align-items:stretch; gap:var(--space-2)" onclick="togglePatternsTime('sent')">
+          <div style="display:flex; align-items:center; justify-content:space-between">
+            <span class="card-title">📤 Sent Patterns</span>
+            <span class="info-icon" onclick="event.stopPropagation()"
+                  data-tip="Stacked area chart of the top 5 manipulation tactics detected in emails you sent. Comparing this with the Received chart highlights contrasts in communication style over time.">i</span>
+          </div>
+          <div style="display:flex; align-items:center; justify-content:flex-end; gap:var(--space-2)">
+            <div class="period-toggle" id="patterns-toggle-sent">
+              <button class="active" onclick="setPatternsTimePeriod('quarter', this, 'sent'); event.stopPropagation()">Quarters</button>
+              <button onclick="setPatternsTimePeriod('month', this, 'sent'); event.stopPropagation()">Months</button>
+              <button onclick="setPatternsTimePeriod('year', this, 'sent'); event.stopPropagation()">Years</button>
+            </div>
+            <span id="patterns-chevron-sent" style="font-size:12px;color:var(--text-muted)">▲</span>
+          </div>
+        </div>
+        <div id="patterns-time-body-sent">
+          <img id="chart-patterns-time-sent"
+               src="/charts/manipulation-patterns-time?by=quarter&direction=sent"
+               alt="Sent patterns over time" loading="lazy">
+        </div>
+      </div>
+
+    </div>
+
+  </div>
+  <!-- /Charts -->
+
+  <!-- ── Filters ─────────────────────────────────────────────────────── -->
+  <div class="card mb-6">
+    <div class="card-body">
+      <form method="get" action="/analysis/manipulation"
+            style="display:flex;gap:var(--space-4);flex-wrap:wrap;align-items:flex-end">
+        <div class="form-group">
+          <label class="form-label">Min score</label>
+          <select name="min_score" class="form-input" onchange="this.form.submit()">
+            <option value="0.1" {% if min_score == 0.1 %}selected{% endif %}>0.1+</option>
+            <option value="0.3" {% if min_score == 0.3 %}selected{% endif %}>0.3+</option>
+            <option value="0.5" {% if min_score == 0.5 %}selected{% endif %}>0.5+</option>
+            <option value="0.7" {% if min_score == 0.7 %}selected{% endif %}>0.7+</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Direction</label>
+          <select name="direction" class="form-input" onchange="this.form.submit()">
+            <option value="all"      {% if direction == 'all'      %}selected{% endif %}>All</option>
+            <option value="received" {% if direction == 'received' %}selected{% endif %}>Received</option>
+            <option value="sent"     {% if direction == 'sent'     %}selected{% endif %}>Sent</option>
+          </select>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- ── Email list ──────────────────────────────────────────────────── -->
+  {% if results %}
+  {% for r in results %}
+  <div class="card mb-4">
+    <div class="card-header">
+      <div style="flex:1">
+        <div style="display:flex;align-items:center;gap:var(--space-2);flex-wrap:wrap;margin-bottom:4px">
+          <span class="badge {% if r.direction == 'sent' %}badge-sent{% else %}badge-received{% endif %}">
+            {% if r.direction == 'sent' %}↑ Sent{% else %}↓ Received{% endif %}
+          </span>
+          <span class="text-xs text-muted">{{ r.date }}</span>
+          <span class="text-sm font-medium">{{ r.subject or '(no subject)' }}</span>
+          <span class="text-xs text-muted">{{ r.from_address }}</span>
+        </div>
+      </div>
+      <div style="display:flex;align-items:center;gap:var(--space-3)">
+        {% if r.model %}
+        <span class="text-xs text-muted" style="font-style:italic;white-space:nowrap" title="{{ r.provider }}">{{ r.model }}</span>
+        {% endif %}
+        <div style="display:flex;align-items:center;gap:4px">
+          <span class="text-xs text-muted">Score:</span>
+          <div class="tone-bar-track" style="width:80px">
+            <div class="tone-bar-fill manipulation" data-value="{{ r.score }}" style="width:{{ (r.score * 100)|round }}%"></div>
+          </div>
+          <span class="text-sm font-medium" style="color:var(--manipulation)">{{ "%.2f"|format(r.score) }}</span>
+        </div>
+        <a href="/emails/{{ r.email_id }}" class="btn btn-secondary btn-sm">View email</a>
+      </div>
+    </div>
+
+    {% if r.patterns or r.summary %}
+    <div class="card-body">
+      {% if r.summary %}
+      <p class="text-sm text-secondary mb-3">{{ r.summary }}</p>
+      {% endif %}
+      {% if r.patterns %}
+      <div style="display:flex;flex-wrap:wrap;gap:var(--space-2)">
+        {% for pattern in r.patterns %}
+        {% set ptype = pattern.type if pattern is mapping else pattern %}
+        {% set pscore = pattern.score if pattern is mapping else None %}
+        <span class="badge badge-medium" style="background:rgba(245,158,11,0.15);color:#92400e">
+          {{ ptype | replace('_', ' ') }}{% if pscore %} <strong>{{ "%.2f"|format(pscore) }}</strong>{% endif %}
+        </span>
+        {% endfor %}
+      </div>
+      {% endif %}
+    </div>
+    {% endif %}
+  </div>
+  {% endfor %}
+
+  {% else %}
+  <div class="empty-state">
+    <div class="empty-state-icon">🎭</div>
+    <div class="empty-state-title">No manipulation patterns found</div>
+    <p class="empty-state-text">
+      {% if min_score > 0.3 %}
+        Try lowering the minimum score threshold.
+      {% else %}
+        Run <code>python cli.py analyze manipulation</code> to detect manipulation patterns.
+      {% endif %}
+    </p>
+  </div>
+  {% endif %}
+
+</div>
+
+<script>
+/* ── Period toggles ──────────────────────────────────────────────────── */
+function setTimelinePeriod(by, btn) {
+  document.querySelectorAll('#timeline-toggle button').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  const dir = '{{ direction }}' !== 'all' ? '&direction={{ direction }}' : '';
+  document.getElementById('chart-timeline').src =
+    '/charts/manipulation-timeline?by=' + by + dir + '&_t=' + Date.now();
+}
+
+function setPatternsTimePeriod(by, btn, dir) {
+  document.querySelectorAll('#patterns-toggle-' + dir + ' button').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  document.getElementById('chart-patterns-time-' + dir).src =
+    '/charts/manipulation-patterns-time?by=' + by + '&direction=' + dir + '&_t=' + Date.now();
+}
+
+/* ── Collapsible patterns-over-time ─────────────────────────────────── */
+function togglePatternsTime(dir) {
+  const body    = document.getElementById('patterns-time-body-' + dir);
+  const chevron = document.getElementById('patterns-chevron-' + dir);
+  if (body.style.display === 'none') {
+    body.style.display = 'block';
+    chevron.textContent = '▲';
+  } else {
+    body.style.display = 'none';
+    chevron.textContent = '▼';
+  }
+}
+</script>
+{% endblock %}

@@ -1,0 +1,49 @@
+{% if thread_emails %}
+<div class="thread-panel">
+  <div class="analysis-section-title" style="margin-bottom:var(--space-3)">
+    🧵 Fil de discussion ({{ thread_emails|length }} autre{{ 's' if thread_emails|length != 1 else '' }})
+  </div>
+
+  {% for te in thread_emails %}
+  <div class="thread-email-item">
+    <div style="flex-shrink:0;margin-top:2px">
+      {% if te.direction == 'sent' %}
+      <span class="direction-icon sent" title="Sent" style="font-size:0.9rem">↑</span>
+      {% else %}
+      <span class="direction-icon received" title="Received" style="font-size:0.9rem">↓</span>
+      {% endif %}
+    </div>
+
+    <div style="min-width:0;flex:1">
+      <div style="display:flex;justify-content:space-between;align-items:baseline;gap:var(--space-2)">
+        <span class="thread-email-from truncate">
+          {{ te.from_name or te.from_address }}
+        </span>
+        <span class="thread-email-meta" style="flex-shrink:0">
+          {{ te.date[:10] if te.date else '' }}
+        </span>
+      </div>
+      <div class="truncate text-sm" style="margin-top:1px;color:var(--text-secondary)">
+        {{ te.subject or '(no subject)' }}
+      </div>
+      {% if te.delta_text %}
+      <div class="text-xs text-muted"
+           style="margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%">
+        {{ te.delta_text[:80] }}{% if te.delta_text|length > 80 %}…{% endif %}
+      </div>
+      {% endif %}
+    </div>
+
+    <div style="flex-shrink:0">
+      <a href="/emails/{{ te.id }}"
+         class="btn btn-ghost btn-sm"
+         style="padding:2px 6px;font-size:11px">→</a>
+    </div>
+  </div>
+  {% endfor %}
+</div>
+{% else %}
+<div class="thread-panel">
+  <div class="text-sm text-muted">Cet email n'a pas d'autres messages dans le même fil.</div>
+</div>
+{% endif %}

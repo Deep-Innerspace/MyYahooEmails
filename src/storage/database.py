@@ -9,7 +9,7 @@ from src.config import db_path
 
 
 def _connect(path: Path) -> sqlite3.Connection:
-    conn = sqlite3.connect(str(path))
+    conn = sqlite3.connect(str(path), check_same_thread=False)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA foreign_keys=ON")
@@ -191,6 +191,80 @@ CREATE TABLE IF NOT EXISTS fetch_state (
     UNIQUE (folder, contact_email)
 );
 
+-- Perspective-aware notes (legal or book) on any entity
+CREATE TABLE IF NOT EXISTS notes (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    entity_type TEXT NOT NULL,      -- 'email', 'contradiction', 'timeline_event',
+                                    --  'court_event', 'analysis_result', 'chapter'
+    entity_id   INTEGER NOT NULL,
+    perspective TEXT NOT NULL DEFAULT 'legal',  -- 'legal' or 'book'
+    category    TEXT NOT NULL DEFAULT 'general',
+    text        TEXT NOT NULL,
+    created_at  TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at  TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Book chapters
+CREATE TABLE IF NOT EXISTS chapters (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    title       TEXT NOT NULL,
+    position    INTEGER NOT NULL DEFAULT 0,
+    date_start  TEXT,
+    date_end    TEXT,
+    summary     TEXT NOT NULL DEFAULT '',
+    created_at  TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at  TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Emails assigned to chapters
+CREATE TABLE IF NOT EXISTS chapter_emails (
+    chapter_id  INTEGER NOT NULL REFERENCES chapters(id) ON DELETE CASCADE,
+    email_id    INTEGER NOT NULL REFERENCES emails(id) ON DELETE CASCADE,
+    position    INTEGER NOT NULL DEFAULT 0,
+    is_key_moment INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (chapter_id, email_id)
+);
+
+-- Quote bank (text selections from email bodies)
+CREATE TABLE IF NOT EXISTS quotes (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    email_id     INTEGER NOT NULL REFERENCES emails(id) ON DELETE CASCADE,
+    text         TEXT NOT NULL,
+    context_note TEXT NOT NULL DEFAULT '',
+    tags         TEXT NOT NULL DEFAULT '[]',  -- JSON array
+    created_at   TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Pivotal moments (auto-detected or user-curated)
+CREATE TABLE IF NOT EXISTS pivotal_moments (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    email_id     INTEGER NOT NULL REFERENCES emails(id) ON DELETE CASCADE,
+    moment_type  TEXT NOT NULL DEFAULT 'manual',
+    description  TEXT NOT NULL DEFAULT '',
+    significance TEXT NOT NULL DEFAULT 'medium',
+    auto_detected INTEGER NOT NULL DEFAULT 0,
+    created_at   TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Bookmarks (shared across perspectives)
+CREATE TABLE IF NOT EXISTS bookmarks (
+    email_id    INTEGER PRIMARY KEY REFERENCES emails(id) ON DELETE CASCADE,
+    created_at  TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Report generation history
+CREATE TABLE IF NOT EXISTS generated_reports (
+    id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+    report_type         TEXT NOT NULL,
+    perspective         TEXT NOT NULL DEFAULT 'legal',
+    format              TEXT NOT NULL DEFAULT 'docx',
+    file_path           TEXT NOT NULL,
+    include_legal_notes INTEGER NOT NULL DEFAULT 0,
+    include_book_notes  INTEGER NOT NULL DEFAULT 0,
+    parameters          TEXT NOT NULL DEFAULT '{}',
+    created_at          TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
 -- Full-text search index on email content
 CREATE VIRTUAL TABLE IF NOT EXISTS emails_fts USING fts5(
     subject,
@@ -232,6 +306,11 @@ CREATE INDEX IF NOT EXISTS idx_analysis_results_email ON analysis_results(email_
 CREATE INDEX IF NOT EXISTS idx_contradictions_run ON contradictions(run_id);
 CREATE INDEX IF NOT EXISTS idx_timeline_events_date ON timeline_events(event_date);
 CREATE INDEX IF NOT EXISTS idx_court_events_date  ON court_events(event_date);
+CREATE INDEX IF NOT EXISTS idx_notes_entity      ON notes(entity_type, entity_id);
+CREATE INDEX IF NOT EXISTS idx_notes_perspective ON notes(perspective);
+CREATE INDEX IF NOT EXISTS idx_quotes_email      ON quotes(email_id);
+CREATE INDEX IF NOT EXISTS idx_pivotal_email     ON pivotal_moments(email_id);
+CREATE INDEX IF NOT EXISTS idx_chapter_emails    ON chapter_emails(chapter_id);
 """
 
 

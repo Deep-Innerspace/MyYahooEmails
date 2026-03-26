@@ -57,6 +57,78 @@
 
 ---
 
+## 2026-03-20 — Groq rate limiter: two-layer design with Retry-After
+
+**Decision**: Implement rate limiting inside `GroqProvider.complete()` as two independent layers: a proactive rolling token bucket and a reactive 429 handler that prioritises the `Retry-After` response header.
+
+**Rationale**: Previous implementation had no rate limiting at all. The Groq API hit its token/min ceiling silently, killing analysis runs with no retry. Groq documentation specifies: use `Retry-After` header when available; fall back to custom retry logic otherwise. A proactive bucket prevents most 429s; the reactive layer handles edge cases.
+
+**Design choices**:
+- Token bucket is **module-level** (not instance-level) so it persists across multiple `GroqProvider` instances in the same process
+- Token estimate uses `len(prompt)//4 + max_tokens//2` — conservative on input, realistic on output (actual output is well below ceiling)
+- Limit is **config-driven** (`rate_limit_tokens_per_min`) so it can be tuned without code changes
+- Set to 10,000 (not 12,000) to leave a 2,000-token safety margin
+
+**Impact**: `src/llm/groq_provider.py` fully rewritten. `src/config.py` gained `groq_token_rate_limit()`. Both `config.yaml` files updated. Analysis now runs stably at ~20 emails/min (1 batch/min).
+
+---
+
+## 2026-03-20 — GitHub repository created (private)
+
+**Decision**: Push project to `Deep-Innerspace/MyYahooEmails` as a **private** repository on GitHub.
+
+**Rationale**: Project contains sensitive personal/legal data (divorce case emails, contact details). SSH authentication configured via ed25519 key for secure, passwordless git operations.
+
+**Impact**: Remote: `git@github.com:Deep-Innerspace/MyYahooEmails.git`. Initial commit: 42 files, 4,564 lines. `config.yaml`, `.env`, and `data/` remain gitignored.
+
+---
+
+## 2026-03-20 — Groq TPD discovery: rolling 24h window, config-driven threshold
+
+**Decision**: Distinguish TPM (per-minute) vs TPD (per-day) rate limit hits by comparing `Retry-After` against a configurable `daily_limit_threshold_secs` (default: 300 s). On TPD hit, raise `GroqDailyLimitError` immediately instead of retrying.
+
+**Rationale**: Groq's `Retry-After` for a TPM hit is typically 10–60 s; for a TPD hit it's typically 3,000–86,400 s (hours). Retrying in a loop against a TPD hit wastes compute and burns the small remaining TPM quota. The threshold of 300 s cleanly separates the two cases in practice.
+
+**Critical finding**: Groq TPD resets on a **rolling 24-hour window** — NOT at midnight. This means:
+- If a run hits TPD at 9 AM, quota won't clear until the same amount consumed 24h earlier drops off the window
+- The `x-ratelimit-*` response headers expose TPM and RPD remaining but do NOT expose TPD remaining
+- TPD exhaustion is only detectable by a 429 with a long Retry-After
+
+**Reusable pattern for other Groq projects**:
+```python
+retry_after = exc.response.headers.get("retry-after")
+if retry_after and float(retry_after) > DAILY_THRESHOLD:
+    raise DailyLimitError(retry_after)   # abort cleanly
+elif retry_after:
+    time.sleep(float(retry_after))       # TPM hit, short wait
+```
+
+**Impact**: `_DAILY_LIMIT_THRESHOLD` in `groq_provider.py` now reads from `config.yaml` via `groq_daily_limit_threshold_secs()`. Four new config keys added. `GroqDailyLimitError` custom exception propagates to CLI for clean user-facing message.
+
+---
+
+## 2026-03-20 — Groq rate-check diagnostic tool
+
+**Decision**: Add `tools/groq_rate_check.py` as a standalone runnable script (not a CLI command) that probes the Groq API with a minimal call and reports live quota status.
+
+**Rationale**: Before launching or resuming a long analysis run, it's valuable to know whether Groq has available quota without burning a real batch. The `x-ratelimit-*` headers are returned on every successful response and contain precise TPM/RPD remaining values. Using `client.with_raw_response` in the Groq Python SDK gives direct access to the underlying httpx response headers.
+
+**Key implementation detail**: A tiny probe prompt (`"Reply with the single word: OK"` with `max_tokens=5`) costs ~44 tokens — negligible against any limit. The `with_raw_response` context reads headers before parsing the response body.
+
+**Reusable pattern for other Groq projects**:
+```python
+from groq import Groq
+client = Groq(api_key=...)
+raw = client.with_raw_response.chat.completions.create(...)
+remaining_tokens = raw.headers.get("x-ratelimit-remaining-tokens")
+remaining_requests = raw.headers.get("x-ratelimit-remaining-requests")
+parsed = raw.parse()  # get the actual response content
+```
+
+**Impact**: New file `tools/groq_rate_check.py`. Exit code 0 = OK, 1 = rate limited (scriptable in CI or scheduled tasks). `--verbose` flag prints all raw rate-limit headers.
+
+---
+
 ## 2026-03-19 — All folders fetch (`--all-folders` flag)
 
 **Decision**: Added `--all-folders` flag that fetches every Yahoo folder except system ones (Trash, Draft, Bulk, Spam, Deleted Messages).
@@ -64,3 +136,265 @@
 **Rationale**: User's emails span 91+ Yahoo folders (many created via search rules). It's impossible to know in advance which folders contain relevant emails. Skipping system folders avoids deleted/draft content while capturing everything else.
 
 **Implementation**: `_SKIP_FOLDERS` set in `cli.py`; `get_folder_names()` returns all folders; CLI loops through each, fetching UIDs per alias and deduplicating before download.
+
+---
+
+## 2026-03-21 — Phase 3: Groq as default provider for all analysis during development
+
+**Decision**: Use Groq (free tier) as the default provider for ALL analysis types during development — including contradictions, manipulation, and court correlation (originally planned for Claude).
+
+**Rationale**: User explicitly required cost minimization during development. All analysis results are tagged with the LLM used (`provider_name`, `model_id` in `analysis_runs`), can be deleted via `runs delete`, and re-run with a different provider using `--provider claude`. This allows cheap Groq runs for testing, then re-running with Claude for production quality.
+
+**Impact**: `config.yaml.example` sets `contradictions: groq`, `manipulation: groq`, `court_correlation: groq`. Users switch to Claude by changing config or using `--provider claude` flag.
+
+---
+
+## 2026-03-21 — Two-pass contradiction detection design
+
+**Decision**: Implement contradiction detection as a two-pass pipeline: Pass 1 screens classification summaries grouped by topic (cheap), Pass 2 confirms flagged pairs using full delta_text (expensive, higher accuracy).
+
+**Rationale**: With 1,326 emails, comparing all pairs is O(n²) ≈ 879k pairs — impossible in a single LLM call. Grouping by topic reduces the search space drastically (contradictions are most likely within the same topic). Pass 1 uses short summaries (~100 tokens each) in batches; Pass 2 only confirms the flagged subset with full text. `--skip-confirmation` flag allows Pass 1-only mode for faster iteration.
+
+**Dependencies**: Requires a prior classify run (uses topic assignments to group). Defaults to most recent completed classify run; `--run-id` flag overrides.
+
+---
+
+## 2026-03-21 — Shared aggregator pattern for Phase 4
+
+**Decision**: Create a single `src/statistics/aggregator.py` module with 10 SQL aggregation functions that are shared between CLI stats commands and report builders.
+
+**Rationale**: Without this, the same SQL queries would be duplicated in cli.py (for terminal display) and in builder.py (for report generation). The aggregator returns Python dicts/lists; display formatting is the caller's responsibility. This also makes it easy to add new consumers (e.g., Phase 5 web dashboard).
+
+**Impact**: Refactored existing `stats overview` and `stats frequency` CLI commands to call `aggregator.overview_stats()` and `aggregator.frequency_data()`. Four new stats commands and four report builders all use the same aggregator functions.
+
+---
+
+## 2026-03-21 — Renderer-agnostic report dataclasses
+
+**Decision**: Report data is structured as `Report` and `ReportSection` dataclasses (in `builder.py`) that are renderer-agnostic. Separate renderers (`docx_renderer.py`, `pdf_renderer.py`) consume these structures.
+
+**Rationale**: Decouples content from presentation. Adding a new format (e.g., HTML for web dashboard) only requires a new renderer, not changes to the builders. Each `ReportSection` has: title, level (1-3), paragraphs, optional table dict, optional chart PNG path, and nested subsections.
+
+**Impact**: `render_docx()` and `render_pdf()` both accept the same `Report` object. PDF requires system deps (`brew install pango`); DOCX works out of the box.
+
+---
+
+## 2026-03-21 — WeasyPrint lazy import for graceful degradation
+
+**Decision**: Import `weasyprint.HTML` inside `render_pdf()` (lazy) rather than at module level, with a helpful error message if system dependencies are missing.
+
+**Rationale**: WeasyPrint requires Pango, Cairo, and GObject system libraries (`brew install pango` on macOS). If imported at module level, even DOCX generation would fail when these are absent. Lazy import means the PDF renderer only fails when actually called, and DOCX works regardless.
+
+**Impact**: `src/reports/pdf_renderer.py` wraps the import in try/except OSError, re-raising with installation instructions.
+
+---
+
+## 2026-03-22 — Dual-perspective web dashboard (single app, cookie-based)
+
+**Decision**: Implement Legal and Book perspectives as a single FastAPI application with a cookie-based perspective switcher, not two separate apps or URL-prefix-separated sections.
+
+**Rationale**: Both perspectives share the same database, same emails, same analysis. Only the UI emphasis, sidebar navigation, dashboard sections, and available features differ. A cookie (`perspective=legal|book`) drives CSS class on `<body>` (navy vs green theming), Jinja2 `{% if perspective == 'legal' %}` conditionals for navigation, and perspective-aware notes.
+
+**Impact**: `get_perspective()` reads cookie (default: legal). `POST /set-perspective` sets 30-day cookie + redirect. CSS variables change sidebar color, accent. Template conditionals show/hide Legal Analysis / Book Writing nav sections.
+
+---
+
+## 2026-03-22 — HTMX for interactivity (no JS framework)
+
+**Decision**: Use HTMX for all interactive behavior — tab switching, email detail panel loading, filter updates, notes CRUD, pagination — with zero JavaScript framework.
+
+**Rationale**: Server-rendered HTML with HTMX partials is simpler to build and maintain than a React/Vue SPA. The dashboard is a personal tool, not a public product. HTMX's `hx-get`, `hx-post`, `hx-target`, `hx-swap` handle all the needed interactivity. No build step, no node_modules, no API layer to maintain.
+
+**Key pattern**: Routes check `request.headers.get("HX-Request")` to return partial or full-page template. Email browser uses `hx-get="/emails/{id}" hx-target="#detail-panel"` for inline detail loading.
+
+**Impact**: 30+ Jinja2 templates (14 pages + 10+ partials), zero JS framework code, `app.js` is only ~30 lines (perspective switch + quote selection).
+
+---
+
+## 2026-03-22 — Chart endpoints reuse existing matplotlib generators
+
+**Decision**: Web chart endpoints (`/charts/*`) call existing `src/reports/charts.py` functions via `tempfile.TemporaryDirectory()` and stream the resulting PNG as `FileResponse`.
+
+**Rationale**: Zero modification to existing Phase 4 code. The chart functions write PNGs to disk (designed for report embedding). Web routes create a temp dir, call the function, read the file, and stream bytes. If chart functions are ever updated, web gets the changes for free.
+
+**Impact**: 5 chart endpoints added. No code duplication between CLI reports and web charts.
+
+---
+
+## 2026-03-22 — SQLite `check_same_thread=False` for FastAPI
+
+**Decision**: Added `check_same_thread=False` to `sqlite3.connect()` in `database.py`.
+
+**Rationale**: FastAPI runs route handlers in a thread pool. SQLite's default `check_same_thread=True` raises errors when a connection created in one thread is used in another. Since the app is single-user and single-process, thread safety is adequate with `check_same_thread=False`.
+
+**Impact**: `src/storage/database.py` `_connect()` function updated. All existing CLI usage unaffected.
+
+---
+
+## 2026-03-22 — Perspective-aware notes system
+
+**Decision**: Notes have a `perspective` column (legal/book) so the same email can have separate legal annotations and book annotations. Both tabs always visible regardless of current perspective.
+
+**Rationale**: A divorce email might need a legal note ("contradicts testimony on X date") AND a book note ("illustrates emotional escalation pattern — good Chapter 3 material"). Keeping them separate prevents cross-contamination while allowing the user to see both perspectives.
+
+**Impact**: `notes` table with `entity_type + entity_id + perspective + category + content`. `note_list.html` partial shows tabbed Legal/Book view. Add-note form defaults to current perspective.
+
+---
+
+## 2026-03-23 — Excel round-trip as primary analysis path (ChatGPT as provider)
+
+**Decision**: Use an Excel export → ChatGPT Plus → Excel import workflow as the primary analysis path for classify and tone, instead of the Groq scheduled-task approach.
+
+**Rationale**: Groq's free tier imposes a 100k tokens/day rolling limit, requiring ~28 days to complete all three analysis types. ChatGPT Plus (gpt-5.4-thinking) has a 196k token context window and 3,000 messages/week limit — effectively unlimited for this corpus. The Excel round-trip adds manual steps but eliminates the multi-week wait and TPD management overhead. Results are imported back with full traceability (provider_name, model_id tagged on every run).
+
+**Impact**: New files `src/analysis/excel_export.py` and `src/analysis/excel_import.py`. New CLI commands `analyze export` and `analyze import-results`. New dependency: `openpyxl`. Achieved 98% classify + 98% tone coverage in a single session.
+
+---
+
+## 2026-03-23 — ChatGPT gpt-5.4-thinking as primary analysis provider
+
+**Decision**: Use OpenAI ChatGPT Plus with model `gpt-5.4-thinking` (gpt-5.4) for all Excel round-trip analysis.
+
+**Rationale**: Available via ChatGPT Plus subscription at no additional API cost. 196k context window accommodates ~230 emails per batch with instructions comfortably. "thinking" model produces high-quality topic classification and tone analysis on French legal text. Results are tagged in DB as `provider_name=openai, model_id=gpt-5.4-thinking`.
+
+**Impact**: Classification and tone analysis at 98% coverage achieved without any API spend. Multiple batches can be processed in parallel using separate ChatGPT conversations.
+
+---
+
+## 2026-03-23 — 230 emails per batch as optimal ChatGPT batch size
+
+**Decision**: Use batches of ~230 emails as the standard batch size for Excel round-trip exports to ChatGPT.
+
+**Rationale**: At ~230 emails × ~500 chars delta_text average + instruction overhead, batches fit comfortably within ChatGPT's 196k context window while leaving room for the model's output. Smaller batches would require more manual steps; larger batches risk hitting context limits or degrading output quality.
+
+**Impact**: 6 classify batches (runs #17–22, #29) + 8 tone batches (runs #23–28, #30–31) covered the full corpus. Standard export command: `analyze export --limit 230 --offset <N*230>`.
+
+---
+
+## 2026-03-23 — ASC date order as standard for all Excel exports
+
+**Decision**: All Excel batch exports use `ORDER BY e.date ASC` (oldest emails first) as the consistent standard.
+
+**Rationale**: Early in the session, batch 01 was exported with DESC order (most recent first). When the export was corrected to ASC, the sort inconsistency combined with missing `--offset` caused tone batch duplication — batches 02–09 all exported the same 230 emails. Establishing ASC as the single standard prevents future inconsistencies and ensures chronological coverage from the start of the corpus.
+
+**Impact**: `excel_export.py` uses `ORDER BY e.date ASC` unconditionally. All future exports are consistent and offset-paginated correctly.
+
+---
+
+## 2026-03-24 — Manipulation blank rows stored as total_score=0.0 (not skipped)
+
+**Decision**: When `_parse_manipulation()` encounters a blank `total_score` row in an imported XLSX, store a zero-score result (`total_score=0.0, patterns=[], dominant_pattern=null`) rather than returning `None` and skipping the row.
+
+**Rationale**: For manipulation analysis, a blank row means "ChatGPT reviewed this email and found no manipulation" — a meaningful, valid result. Skipping it means: (1) it does not count toward coverage %, (2) it reappears in the next export batch wasting ChatGPT quota, (3) there is no record it was ever reviewed. This is different from classify/tone, where blank means "the model was undecided / email too ambiguous" and skipping is correct behaviour.
+
+**Rule**: For analysis types where the absence of a finding is itself a result (manipulation, and likely timeline), blank rows must be stored as zero/empty results. For classify/tone, blank means "not processed" and should be skipped.
+
+**Impact**: `src/analysis/excel_import.py` `_parse_manipulation()` updated. All 230 rows per batch are now stored (both manipulative and clean emails).
+
+---
+
+## 2026-03-24 — Contradictions export uses classified summaries, not delta_text
+
+**Decision**: The contradictions XLSX export uses two sheets: an "Emails" sheet with classified summaries (email_id, date, direction, subject, summary, topics) and a "Contradictions" output sheet for ChatGPT to fill. The Emails sheet uses stored classification summaries, NOT delta_text.
+
+**Rationale**: Full delta_text for 200+ emails would often exceed ChatGPT's context window, and is unnecessary for contradiction detection — what matters is what each email was *about*, not its verbatim content. Classification summaries (~50–100 tokens each vs. 300–1,000+ for delta_text) make batches 3–5x more token-efficient and allow grouping more emails per context window. The trade-off is that the LLM cannot quote exact phrases, but contradiction detection at the summary level is sufficient for the first pass; Pass 2 confirmation (if run) uses full text.
+
+**Impact**: `src/analysis/excel_export.py` contradictions export path selects from `analysis_results` (classify summaries) rather than the `emails` table's `delta_text`. `--topic` and `--date-from`/`--date-to` flags added to support splitting large topics across multiple batches.
+
+---
+
+## 2026-03-24 — mark-uncovered command for residual unclassified emails
+
+**Decision**: Add `python cli.py analyze mark-uncovered` to tag remaining unclassified emails as either "trop_court" (too short, no meaningful content after delta stripping) or "non_classifiable" (ambiguous, multiple topics with no dominant one). Both topics are created on first run if absent.
+
+**Rationale**: After ChatGPT batches achieve ~98–99% coverage, a small tail of emails remains unclassified — typically very short acknowledgments ("OK", "Reçu") or emails where the delta_text is essentially empty. These need to be tracked to reach 100% coverage and prevent them from appearing in future export batches. However, they should be excluded from topic distribution analysis because they are not substantively classifiable. A rule-based "manual" run is the appropriate mechanism.
+
+**Impact**: New CLI command `analyze mark-uncovered`. Creates topics "trop_court" and "non_classifiable" if absent. Creates an `analysis_run` with `provider_name="manual"`, `model_id="rule-based"`. Web dashboard topic analysis tab excludes these two topics from distribution charts and shows a live count of how many emails fall into each.
+
+---
+
+## 2026-03-24 — Groq reserved for oversized emails only; ChatGPT as primary provider
+
+**Decision**: Groq (128k context) is reserved exclusively for emails that exceed the Excel cell limit (32,767 chars) and therefore cannot be exported to ChatGPT batches. For all other emails, ChatGPT Plus (gpt-5.4-thinking, 196k context) via the Excel round-trip pipeline is the primary provider.
+
+**Rationale**: In practice, oversized emails are rare (<1% of the corpus). Groq's 100k tokens/day limit and multi-week processing timeline are unnecessary complications when ChatGPT Plus can handle the entire corpus at no additional cost via the Excel pipeline. Maintaining two active analysis paths adds operational complexity with minimal benefit.
+
+**Impact**: Groq's scheduled tasks (daily-classify-tone, daily-timeline) are no longer needed for the primary analysis workflow. Groq is still configured and available for oversized emails or re-runs on specific emails. Config `task_providers` unchanged — just the operational practice changes.
+
+---
+
+## 2026-03-24 — Body-level tooltip to escape card overflow:hidden
+
+**Problem**: Chart info icons (ⓘ) used CSS `::after` pseudo-elements for tooltips. These were visually clipped by `.card { overflow: hidden }` in `style.css`.
+
+**Decision**: Replaced CSS pseudo-element tooltips with a single JS-driven floating `<div id="info-tooltip">` appended inside `<body>` (in `base.html`). Positioned via `position: fixed` so it is completely outside the card stacking context and never clipped.
+
+**Details**:
+- JS in `base.html` attaches `mouseenter`/`mouseleave` to all `.info-icon` elements on page load
+- Also attaches on `htmx:afterSwap` events so dynamically-loaded HTMX partials get tooltips automatically
+- Arrow caret position recalculated per icon so it always points to the triggering element
+- Tooltip flips below icon if not enough space above (viewport-aware)
+
+**Impact**: All pages with charts now have properly visible tooltips. `manipulation.html` local duplicate CSS/JS removed — now inherits from global system.
+
+---
+
+## 2026-03-24 — Groq API usage: manual-only for analysis
+
+**Decision**: All Groq-based analysis tasks (classify, tone, timeline, contradictions, manipulation, court_correlation) are now run **manually only** — no scheduled tasks.
+
+**Rationale**: Groq free-tier TPD (100k tokens/day rolling 24h window) is easily exhausted. Scheduled background runs caused unexpected daily limit hits that blocked manual interactive use. The ChatGPT Excel pipeline (gpt-5.4-thinking) is the primary analysis method; Groq is reserved for oversized emails (>32,767 chars) that cannot be exported to Excel.
+
+**Impact**: All 4 previously-configured cron/scheduled tasks deleted. Groq invoked only via explicit `python cli.py analyze <type>` commands.
+
+---
+
+## 2026-03-24 — contradictions.topic as TEXT column (not FK)
+
+**Decision**: Added `topic TEXT` column to the `contradictions` table alongside the existing `topic_id INTEGER` FK column.
+
+**Rationale**: The Excel importer writes the topic as a free-text string (e.g. "enfants", "ecole") as filled by ChatGPT. Resolving these to `topic_id` FK values at import time would require a lookup that could silently fail for sub-topic names ChatGPT invents (e.g. "education", "procedure" instead of the canonical topic names). Keeping a `topic TEXT` column is more robust for the import path; the automated pipeline continues using `topic_id`.
+
+**Fix applied**: `ALTER TABLE contradictions ADD COLUMN topic TEXT` (live migration, 2026-03-24).
+
+---
+
+## 2026-03-24 — ChatGPT contradiction prompt strategy: topic-specific + batch context
+
+**Decision**: Create per-topic prompt files (`tools/chatgpt_prompt_<topic>.txt`) rather than one generic prompt, with a "BATCH CONTEXT" header the user fills in before each upload.
+
+**Rationale**: For topics split across multiple batches (enfants = 5 batches), ChatGPT needs to know it is seeing a time-slice — not the full history. Without this, it may under-report contradictions because "the context might be elsewhere". The per-topic prompt also includes domain-specific contradiction examples (custody schedules, school enrolments, child support) that improve precision vs. generic examples.
+
+**Impact**: `tools/chatgpt_prompt_contradictions.md` (generic reference + all-batch table), `tools/chatgpt_prompt_enfants.txt` (ready-to-paste, with fill-in batch context block). Future topics should get their own `.txt` file following the same pattern.
+
+---
+
+## 2026-03-24 — Import batches sequentially, never in parallel
+
+**Decision**: Always run `python cli.py analyze import-results` for one file at a time, never in a loop sent to background.
+
+**Rationale**: SQLite WAL mode does not support concurrent writes from multiple processes. Running a `for` loop as a background task while also importing in the foreground caused `database is locked` errors on all rows, leaving runs with `status=partial` and 0 imported rows. Cleanup required: delete duplicate `analysis_runs` rows and the orphaned `contradictions` rows they created.
+
+**Impact**: Import command must always be run sequentially. Never use `run_in_background=true` for import loops.
+
+---
+
+## 2026-03-25 — Timeline extraction strategy: in-session Claude analysis
+
+**Decision**: Perform timeline event extraction in-session (Claude acting as analyst) rather than uploading batches to ChatGPT or running Groq.
+
+**Rationale**: Timeline analysis requires careful forensic reading of each email to extract dated, typed events (legal filings, financial transactions, child facts, accusations, etc.). Claude can do this accurately within the context window. The Excel export/import pipeline is reused — Claude reads the export, fills a RESULTS dict, writes the filled XLSX, then imports it. This avoids ChatGPT upload overhead and Groq rate limits, while keeping full traceability (provider=claude, model=claude-sonnet-4-6).
+
+**Pattern**: Read batch in ~50-email chunks via bash → build RESULTS = {email_id: (date, type, significance, description)} → Python script writes filled XLSX → `python cli.py analyze import-results ... --type timeline --provider claude --model claude-sonnet-4-6`.
+
+**Fill rate**: 14–21% per batch is acceptable — many emails are logistics/forwarding/weekly reports with no extractable temporal fact anchor. Target 20–35%.
+
+---
+
+## 2026-03-25 — HTMX modal: hx-on::after-swap over global htmx:afterSwap handler
+
+**Decision**: Use `hx-on::after-swap` inline attribute on "View email" links instead of relying solely on the global `document.addEventListener('htmx:afterSwap', ...)` handler in `app.js`.
+
+**Rationale**: The global handler with `evt.detail.target.id === 'email-modal'` check was not reliably firing when the triggering link was inside content that had itself been dynamically swapped by HTMX (the `#timeline-list` partial). Using `hx-on::after-swap` on the element itself fires directly when that specific element's swap completes, regardless of nesting.
+
+**Impact**: `href` also changed to `#` to prevent browser navigation if HTMX is ever slow to intercept. The global handler in `app.js` is retained as a fallback.

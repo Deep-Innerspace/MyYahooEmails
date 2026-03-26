@@ -1,0 +1,28 @@
+{% if chapters %}
+<ul class="chapter-list" id="chapter-list">
+  {% for ch in chapters %}
+  <li class="chapter-list-item"
+      hx-get="/chapters/{{ ch.id }}"
+      hx-target="#chapter-detail-panel"
+      hx-swap="innerHTML"
+      hx-trigger="click">
+    <span class="chapter-position">{{ ch.position }}</span>
+    <div class="chapter-list-info">
+      <div class="chapter-list-title">{{ ch.title }}</div>
+      {% if ch.date_from or ch.date_to %}
+      <div class="text-xs text-muted">
+        {{ ch.date_from[:10] if ch.date_from else '…' }}
+        {% if ch.date_to %} → {{ ch.date_to[:10] }}{% endif %}
+      </div>
+      {% endif %}
+    </div>
+  </li>
+  {% endfor %}
+</ul>
+{% else %}
+<div class="empty-state" style="padding:var(--space-6)">
+  <div class="empty-state-icon">📖</div>
+  <div class="empty-state-title">No chapters yet</div>
+  <p class="empty-state-text">Create your first chapter using the form above.</p>
+</div>
+{% endif %}

@@ -1,0 +1,196 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{% block title %}MyYahooEmails{% endblock %} — Dashboard</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap">
+  <link rel="stylesheet" href="/static/css/style.css?v=3">
+</head>
+<body class="perspective-{{ perspective }}" data-perspective="{{ perspective }}">
+
+  <!-- Loading bar (HTMX indicator) -->
+  <div id="loading-bar" class="htmx-indicator"></div>
+
+  <!-- ─── Sidebar ──────────────────────────────────────────────────────── -->
+  <nav class="sidebar" id="sidebar">
+    <div class="sidebar-header">
+      <div class="sidebar-logo">
+        MyYahooEmails
+        <span>Email Analysis Platform</span>
+      </div>
+    </div>
+
+    <!-- Perspective Toggle -->
+    <div class="perspective-toggle">
+      <span class="perspective-toggle-label">Perspective</span>
+      <form action="/set-perspective" method="post" class="perspective-buttons" id="perspective-form">
+        <button type="submit" name="perspective" value="legal"
+                class="perspective-btn {% if perspective == 'legal' %}active{% endif %}">
+          ⚖️ Legal
+        </button>
+        <button type="submit" name="perspective" value="book"
+                class="perspective-btn {% if perspective == 'book' %}active{% endif %}">
+          📖 Book
+        </button>
+      </form>
+    </div>
+
+    <!-- Navigation -->
+    <div class="sidebar-nav">
+      <span class="nav-section-label">Navigation</span>
+
+      <a href="/" class="nav-link {% if page == 'dashboard' %}active{% endif %}">
+        <span class="nav-icon">📊</span>
+        Dashboard
+      </a>
+
+      <a href="/emails/" class="nav-link {% if page == 'emails' %}active{% endif %}">
+        <span class="nav-icon">✉️</span>
+        Emails
+      </a>
+
+      <a href="/timeline/" class="nav-link {% if page == 'timeline' %}active{% endif %}">
+        <span class="nav-icon">📅</span>
+        Timeline
+      </a>
+
+      <a href="/analysis/" class="nav-link {% if page == 'analysis' %}active{% endif %}">
+        <span class="nav-icon">🔬</span>
+        Analysis
+      </a>
+
+      <a href="/contacts/" class="nav-link {% if page == 'contacts' %}active{% endif %}">
+        <span class="nav-icon">👥</span>
+        Contacts
+      </a>
+
+      <a href="/reports/" class="nav-link {% if page == 'reports' %}active{% endif %}">
+        <span class="nav-icon">📄</span>
+        Reports
+      </a>
+
+      <!-- Legal perspective only -->
+      {% if perspective == 'legal' %}
+      <span class="nav-section-label">Legal Analysis</span>
+
+      <a href="/analysis/contradictions" class="nav-link {% if page == 'contradictions' %}active{% endif %}">
+        <span class="nav-icon">⚡</span>
+        Contradictions
+      </a>
+
+      <a href="/analysis/manipulation" class="nav-link {% if page == 'manipulation' %}active{% endif %}">
+        <span class="nav-icon">🎭</span>
+        Manipulation
+      </a>
+
+      <a href="/court-events/" class="nav-link {% if page == 'court' %}active{% endif %}">
+        <span class="nav-icon">🏛️</span>
+        Court Events
+      </a>
+      {% endif %}
+
+      <!-- Book perspective only -->
+      {% if perspective == 'book' %}
+      <span class="nav-section-label">Book Writing</span>
+
+      <a href="/narrative" class="nav-link {% if page == 'narrative' %}active{% endif %}">
+        <span class="nav-icon">🌊</span>
+        Narrative Arc
+      </a>
+
+      <a href="/chapters" class="nav-link {% if page == 'chapters' %}active{% endif %}">
+        <span class="nav-icon">📚</span>
+        Chapters
+      </a>
+
+      <a href="#" class="nav-link {% if page == 'themes' %}active{% endif %}">
+        <span class="nav-icon">🧵</span>
+        Thematic Threads
+      </a>
+
+      <a href="/quotes" class="nav-link {% if page == 'quotes' %}active{% endif %}">
+        <span class="nav-icon">💬</span>
+        Quote Bank
+      </a>
+
+      <a href="/pivotal-moments" class="nav-link {% if page == 'pivotal' %}active{% endif %}">
+        <span class="nav-icon">⭐</span>
+        Pivotal Moments
+      </a>
+      {% endif %}
+
+      <span class="nav-section-label">System</span>
+      <a href="/settings/" class="nav-link {% if page == 'settings' %}active{% endif %}">
+        <span class="nav-icon">⚙️</span>
+        Settings
+      </a>
+    </div>
+  </nav>
+
+  <!-- ─── Main Content ──────────────────────────────────────────────────── -->
+  <main class="main-content">
+    {% block content %}{% endblock %}
+  </main>
+
+  <script src="https://unpkg.com/htmx.org@1.9.12"></script>
+  <script src="/static/js/app.js?v=2"></script>
+
+  <!-- ─── Global info-icon tooltip (body-level: escapes card overflow:hidden) -->
+  <div id="info-tooltip"></div>
+  <script>
+  (function () {
+    const tip = document.getElementById('info-tooltip');
+    let hideTimer;
+
+    function attachTip(icon) {
+      icon.addEventListener('mouseenter', () => {
+        clearTimeout(hideTimer);
+        tip.textContent = icon.dataset.tip || '';
+        tip.classList.add('visible');
+        positionTip(icon);
+      });
+      icon.addEventListener('mousemove', () => positionTip(icon));
+      icon.addEventListener('mouseleave', () => {
+        hideTimer = setTimeout(() => tip.classList.remove('visible'), 80);
+      });
+    }
+
+    function positionTip(icon) {
+      const r  = icon.getBoundingClientRect();
+      const tw = tip.offsetWidth  || 260;
+      const th = tip.offsetHeight || 60;
+      const vw = window.innerWidth;
+
+      let x = r.left + r.width / 2 - tw / 2;
+      let y = r.top  - th - 10;
+
+      if (x < 8)           x = 8;
+      if (x + tw > vw - 8) x = vw - tw - 8;
+      if (y < 8)           y = r.bottom + 10;   // flip below if no room above
+
+      // Position caret arrow relative to icon centre
+      const arrowX = (r.left + r.width / 2) - x;
+      tip.style.setProperty('--arrow-x', arrowX + 'px');
+      tip.style.left = x + 'px';
+      tip.style.top  = y + 'px';
+    }
+
+    // Attach to icons already in DOM
+    document.querySelectorAll('.info-icon').forEach(icon => {
+      icon.dataset.tipBound = '1';
+      attachTip(icon);
+    });
+
+    // Re-attach after HTMX swaps (partials reloaded dynamically)
+    document.body.addEventListener('htmx:afterSwap', () => {
+      document.querySelectorAll('.info-icon:not([data-tip-bound])').forEach(icon => {
+        icon.dataset.tipBound = '1';
+        attachTip(icon);
+      });
+    });
+  })();
+  </script>
+</body>
+</html>

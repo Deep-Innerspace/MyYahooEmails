@@ -14,8 +14,9 @@ llm:
     classify: groq                # Topic classification (cheap, high volume)
     tone: groq                    # Tone analysis (cheap, high volume)
     timeline: groq                # Event extraction
-    contradictions: claude        # Deep reasoning needed
-    manipulation: claude          # Deep reasoning needed
+    contradictions: groq          # Deep reasoning (switch to claude for production)
+    manipulation: groq            # Deep reasoning (switch to claude for production)
+    court_correlation: groq       # Narrative synthesis (switch to claude for production)
     reply_draft: claude           # Reply generation
 
   # Provider-specific settings
@@ -26,6 +27,27 @@ llm:
       model: gpt-4o-mini
     groq:
       model: llama-3.3-70b-versatile
+      # ── Groq free-tier rate limits ───────────────────────────────────────
+      # Groq enforces TWO independent dimensions simultaneously:
+      #
+      #   Per-minute (TPM / RPM):
+      #     tokens_per_min  : ~12 000 tokens/min  → set conservatively to 10 000
+      #     requests_per_min: 30 req/min           → rarely the bottleneck
+      #
+      #   Per-day (TPD / RPD):
+      #     tokens_per_day  : 100 000 tokens/day  → long analysis runs will hit this
+      #     requests_per_day: 1 000 req/day
+      #
+      # The proactive token bucket uses rate_limit_tokens_per_min to throttle
+      # before hitting the API.  The reactive 429 handler reads Retry-After:
+      #   - short Retry-After (≤ 300 s) → per-minute limit, sleep and retry
+      #   - long  Retry-After (> 300 s) → daily limit, abort run cleanly
+      #
+      # Run  python tools/groq_rate_check.py  at any time to see live quota.
+      rate_limit_tokens_per_min: 10000   # Conservative TPM ceiling (free tier ~12K/min)
+      rate_limit_tokens_per_day: 100000  # TPD ceiling — analysis run aborts when hit
+      rate_limit_requests_per_min: 30    # RPM ceiling (informational — rarely binding)
+      daily_limit_threshold_secs: 300    # Retry-After > this → treat as daily limit hit
     ollama:
       base_url: http://localhost:11434
       model: mistral
@@ -64,7 +86,15 @@ database:
 
 # Analysis settings
 analysis:
-  batch_size: 20                  # Emails per LLM batch
+  batch_size: 20                  # Emails per LLM batch (classify/tone)
+  contradiction_batch_size: 50    # Summaries per LLM call in contradiction Pass 1
+  court_correlation_window: 14    # Days before/after each court event
   max_retries: 3
   retry_delay_seconds: 5
   skip_if_analyzed: true          # Skip already-processed emails (use --force to override)
+
+# Report generation (Phase 4)
+reports:
+  output_dir: data/exports          # Default output directory for reports
+  language: fr                       # Report language
+  page_size: A4                      # PDF page size

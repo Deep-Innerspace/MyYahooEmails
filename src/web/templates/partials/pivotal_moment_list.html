@@ -1,0 +1,47 @@
+{% if moments %}
+<div id="pivotal-moment-list">
+  {% for m in moments %}
+  <div class="pivotal-card" id="moment-{{ m.id }}"
+       style="background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:var(--space-4);margin-bottom:var(--space-3)">
+    <div style="display:flex;align-items:flex-start;gap:var(--space-3)">
+      <div style="flex:1">
+        {% if m.email_date %}
+        <div class="text-xs text-muted" style="margin-bottom:4px">{{ m.email_date[:10] }}</div>
+        {% endif %}
+        {% if m.email_subject %}
+        <div class="text-sm" style="font-weight:600;margin-bottom:4px">
+          <a href="/emails/{{ m.email_id }}">{{ m.email_subject }}</a>
+        </div>
+        {% endif %}
+        {% if m.description %}
+        <div class="text-sm text-secondary">{{ m.description }}</div>
+        {% endif %}
+        <div style="margin-top:var(--space-2)">
+          <span class="badge {% if m.significance == 'high' %}badge-high{% elif m.significance == 'medium' %}badge-medium{% else %}badge-low{% endif %}">
+            {{ m.significance }}
+          </span>
+          {% if m.direction %}
+          <span class="badge {% if m.direction == 'sent' %}badge-sent{% else %}badge-received{% endif %}" style="margin-left:4px">
+            {% if m.direction == 'sent' %}↑{% else %}↓{% endif %} {{ m.direction }}
+          </span>
+          {% endif %}
+        </div>
+      </div>
+      <button class="btn btn-secondary btn-sm" style="color:var(--severity-high);flex-shrink:0"
+              hx-delete="/pivotal-moments/{{ m.id }}"
+              hx-target="#moment-{{ m.id }}"
+              hx-swap="outerHTML"
+              hx-confirm="Remove this pivotal moment?">
+        Remove
+      </button>
+    </div>
+  </div>
+  {% endfor %}
+</div>
+{% else %}
+<div class="empty-state" style="padding:var(--space-6) 0">
+  <div class="empty-state-icon">⭐</div>
+  <div class="empty-state-title">No pivotal moments yet</div>
+  <p class="empty-state-text">Mark key emails as pivotal moments from the email detail view.</p>
+</div>
+{% endif %}

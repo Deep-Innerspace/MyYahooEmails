@@ -81,3 +81,37 @@ def analysis_batch_size() -> int:
 
 def analysis_skip_if_done() -> bool:
     return bool(cfg().get("analysis", {}).get("skip_if_analyzed", True))
+
+def contradiction_batch_size() -> int:
+    """Summaries per LLM call in contradiction detection Pass 1."""
+    return int(cfg().get("analysis", {}).get("contradiction_batch_size", 50))
+
+def court_correlation_window() -> int:
+    """Default days before/after court events to examine."""
+    return int(cfg().get("analysis", {}).get("court_correlation_window", 14))
+
+def report_output_dir() -> Path:
+    """Default output directory for generated reports."""
+    p = cfg().get("reports", {}).get("output_dir", "data/exports")
+    path = _ROOT / p
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+def _groq_cfg() -> Dict[str, Any]:
+    return cfg().get("llm", {}).get("providers", {}).get("groq", {})
+
+def groq_token_rate_limit() -> int:
+    """Max tokens/min (TPM) — proactive token-bucket ceiling."""
+    return int(_groq_cfg().get("rate_limit_tokens_per_min", 10000))
+
+def groq_daily_token_limit() -> int:
+    """Max tokens/day (TPD) — used to detect daily-limit 429s."""
+    return int(_groq_cfg().get("rate_limit_tokens_per_day", 100000))
+
+def groq_request_rate_limit() -> int:
+    """Max requests/min (RPM) — informational, rarely the binding constraint."""
+    return int(_groq_cfg().get("rate_limit_requests_per_min", 30))
+
+def groq_daily_limit_threshold_secs() -> int:
+    """Retry-After seconds above which a 429 is treated as a daily-limit hit."""
+    return int(_groq_cfg().get("daily_limit_threshold_secs", 300))

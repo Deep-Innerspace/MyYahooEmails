@@ -1,0 +1,160 @@
+{% extends "base.html" %}
+{% block title %}Emails{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <div>
+    <h1 class="page-title">Emails</h1>
+    <p class="page-subtitle">Browse and search {{ total }} emails</p>
+  </div>
+</div>
+
+<div class="page-body" style="padding-bottom: var(--space-4);">
+
+  <!-- ─── Filter bar ──────────────────────────────────────────────────── -->
+  <form id="search-form" action="/emails/" method="get">
+    <div class="filter-bar">
+      <div class="filter-row">
+
+        <!-- Search -->
+        <div class="search-input-wrapper" style="flex:2; min-width:220px">
+          <span class="search-input-icon">🔍</span>
+          <input
+            type="search"
+            name="q"
+            value="{{ query }}"
+            placeholder="Search emails…"
+            autocomplete="off"
+            hx-get="/emails/search"
+            hx-target="#email-results"
+            hx-trigger="keyup changed delay:500ms"
+            hx-include="#search-form"
+            hx-indicator="#loading-bar"
+          >
+        </div>
+
+        <!-- Direction -->
+        <div class="filter-group" style="max-width:130px">
+          <label class="form-label">Direction</label>
+          <select name="direction"
+                  hx-get="/emails/search"
+                  hx-target="#email-results"
+                  hx-trigger="change"
+                  hx-include="#search-form"
+                  hx-indicator="#loading-bar">
+            <option value="" {% if not direction %}selected{% endif %}>All</option>
+            <option value="sent" {% if direction == 'sent' %}selected{% endif %}>Sent</option>
+            <option value="received" {% if direction == 'received' %}selected{% endif %}>Received</option>
+          </select>
+        </div>
+
+        <!-- Date from -->
+        <div class="filter-group" style="max-width:140px">
+          <label class="form-label">From</label>
+          <input type="date" name="date_from" value="{{ date_from }}"
+                 hx-get="/emails/search"
+                 hx-target="#email-results"
+                 hx-trigger="change"
+                 hx-include="#search-form"
+                 hx-indicator="#loading-bar">
+        </div>
+
+        <!-- Date to -->
+        <div class="filter-group" style="max-width:140px">
+          <label class="form-label">To</label>
+          <input type="date" name="date_to" value="{{ date_to }}"
+                 hx-get="/emails/search"
+                 hx-target="#email-results"
+                 hx-trigger="change"
+                 hx-include="#search-form"
+                 hx-indicator="#loading-bar">
+        </div>
+
+        <!-- Bookmarked -->
+        <div class="filter-group" style="max-width:120px; justify-content:flex-end">
+          <label class="form-label" style="display:flex;align-items:center;gap:6px;cursor:pointer">
+            <input type="checkbox" name="bookmarked" value="true"
+                   {% if bookmarked %}checked{% endif %}
+                   style="width:auto"
+                   hx-get="/emails/search"
+                   hx-target="#email-results"
+                   hx-trigger="change"
+                   hx-include="#search-form"
+                   hx-indicator="#loading-bar">
+            ⭐ Bookmarked
+          </label>
+        </div>
+
+      </div>
+
+      <!-- Topic filters (second row) -->
+      {% if all_topics %}
+      <div class="filter-row" style="margin-top: var(--space-3)">
+        <div class="filter-group">
+          <label class="form-label">Topics</label>
+          <div class="topic-checkboxes">
+            {% for topic in all_topics %}
+            <label class="topic-checkbox-item">
+              <input type="checkbox" name="topics" value="{{ topic.name }}"
+                     {% if topic.name in selected_topics %}checked{% endif %}
+                     style="width:auto"
+                     hx-get="/emails/search"
+                     hx-target="#email-results"
+                     hx-trigger="change"
+                     hx-include="#search-form"
+                     hx-indicator="#loading-bar">
+              <span class="topic-pill" style="background-color:{{ topic.color }}22; color:{{ topic.color }}; border-color:{{ topic.color }}44">
+                {{ topic.name }}
+              </span>
+            </label>
+            {% endfor %}
+          </div>
+        </div>
+
+        <!-- Topic mode -->
+        <div class="filter-group" style="max-width:140px">
+          <label class="form-label">Mode</label>
+          <div style="display:flex;gap:var(--space-2);align-items:center;padding-top:6px">
+            <label style="display:flex;align-items:center;gap:4px;cursor:pointer;font-size:var(--font-size-sm)">
+              <input type="radio" name="topic_mode" value="or"
+                     {% if topic_mode == 'or' %}checked{% endif %}
+                     style="width:auto">
+              OR
+            </label>
+            <label style="display:flex;align-items:center;gap:4px;cursor:pointer;font-size:var(--font-size-sm)">
+              <input type="radio" name="topic_mode" value="and"
+                     {% if topic_mode == 'and' %}checked{% endif %}
+                     style="width:auto">
+              AND
+            </label>
+          </div>
+        </div>
+      </div>
+      {% endif %}
+
+    </div>
+  </form>
+
+  <!-- ─── Two-panel layout ────────────────────────────────────────────── -->
+  <div class="emails-layout">
+
+    <!-- Left: email list -->
+    <div class="emails-list-pane">
+      <div id="email-results">
+        {% include "partials/email_list.html" %}
+      </div>
+    </div>
+
+    <!-- Right: detail panel -->
+    <div>
+      <div id="detail-panel" class="detail-panel">
+        <div class="detail-panel-placeholder">
+          <span style="font-size:2rem">✉️</span>
+          <span>Click an email to read it</span>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</div>
+{% endblock %}

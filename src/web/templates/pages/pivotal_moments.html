@@ -1,0 +1,66 @@
+{% extends "base.html" %}
+{% block title %}Pivotal Moments{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <div>
+    <h1 class="page-title">Pivotal Moments</h1>
+    <p class="page-subtitle">{{ total }} key moment{{ 's' if total != 1 else '' }} marked</p>
+  </div>
+  <a href="/narrative" class="btn btn-secondary">← Narrative Arc</a>
+</div>
+
+<div class="page-body">
+
+  {% if perspective != 'book' %}
+  <div class="alert alert-info mb-4">
+    This page is optimised for the Book perspective.
+    <a href="#" onclick="document.getElementById('perspective-form').querySelector('[value=book]').click()">Switch to Book</a>
+  </div>
+  {% endif %}
+
+  <!-- Add pivotal moment form -->
+  <div class="card mb-6">
+    <div class="card-header">
+      <span class="card-title">Mark a Pivotal Moment</span>
+    </div>
+    <div class="card-body">
+      <form hx-post="/pivotal-moments"
+            hx-target="#pivotal-moment-list"
+            hx-swap="outerHTML">
+        <div style="display:grid;grid-template-columns:1fr 1fr auto;gap:var(--space-4);align-items:end">
+          <div class="form-group">
+            <label class="form-label">Email ID <span style="color:var(--severity-high)">*</span></label>
+            <input type="number" name="email_id" class="form-input"
+                   placeholder="e.g. 1234" required>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Significance</label>
+            <select name="significance" class="form-input">
+              <option value="high">High</option>
+              <option value="medium" selected>Medium</option>
+              <option value="low">Low</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <button type="submit" class="btn btn-primary" style="height:40px">Add</button>
+          </div>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Description (optional)</label>
+          <textarea name="description" class="form-input" rows="2"
+                    placeholder="Why is this moment pivotal?"></textarea>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <p class="text-sm text-muted mb-4">
+    Tip: You can also mark emails as pivotal from the email detail view.
+  </p>
+
+  <!-- Pivotal moment list -->
+  {% include "partials/pivotal_moment_list.html" %}
+
+</div>
+{% endblock %}

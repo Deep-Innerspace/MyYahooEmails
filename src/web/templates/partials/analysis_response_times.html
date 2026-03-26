@@ -1,0 +1,95 @@
+<!-- Response Times partial -->
+<div class="card mb-6">
+  <div class="card-header">
+    <span class="card-title">Response Time Patterns</span>
+    <span class="info-icon" data-tip="Average hours between receiving an email and sending a reply (and vice versa), tracked over time. A sharp rise in their response time may indicate evasion or legal coaching; a drop in yours may reflect increasing urgency.">i</span>
+    <select name="by"
+            hx-get="/analysis/response-times"
+            hx-target="#analysis-content"
+            hx-trigger="change"
+            style="font-size:var(--font-size-sm);padding:4px 8px;border:1px solid var(--border);border-radius:var(--radius)">
+      <option value="quarter" {% if by == 'quarter' %}selected{% endif %}>Quarterly</option>
+      <option value="month" {% if by == 'month' %}selected{% endif %}>Monthly</option>
+      <option value="year" {% if by == 'year' %}selected{% endif %}>Yearly</option>
+    </select>
+  </div>
+  <div class="card-body" style="padding:0">
+    <img src="{{ chart_url }}" alt="Response time chart" loading="lazy"
+         style="width:100%;height:auto;display:block">
+  </div>
+</div>
+
+{% set yr = rt.your_response %}
+{% set tr = rt.their_response %}
+
+<div class="stat-grid">
+  <div class="stat-card">
+    <div class="stat-label">Your avg response time</div>
+    <div class="stat-value" style="color:var(--sent-color)">
+      {% if yr.avg_hours >= 24 %}
+        {{ "%.1f"|format(yr.avg_hours / 24) }}d
+      {% else %}
+        {{ yr.avg_hours }}h
+      {% endif %}
+    </div>
+    <div class="stat-sub">median: {% if yr.median_hours >= 24 %}{{ "%.1f"|format(yr.median_hours / 24) }}d{% else %}{{ yr.median_hours }}h{% endif %} · {{ yr.count }} replies</div>
+  </div>
+
+  <div class="stat-card">
+    <div class="stat-label">Their avg response time</div>
+    <div class="stat-value" style="color:var(--received-color)">
+      {% if tr.avg_hours >= 24 %}
+        {{ "%.1f"|format(tr.avg_hours / 24) }}d
+      {% else %}
+        {{ tr.avg_hours }}h
+      {% endif %}
+    </div>
+    <div class="stat-sub">median: {% if tr.median_hours >= 24 %}{{ "%.1f"|format(tr.median_hours / 24) }}d{% else %}{{ tr.median_hours }}h{% endif %} · {{ tr.count }} replies</div>
+  </div>
+
+  {% if yr.count and tr.count %}
+  <div class="stat-card">
+    <div class="stat-label">Response ratio</div>
+    <div class="stat-value">
+      {% set ratio = tr.avg_hours / yr.avg_hours if yr.avg_hours > 0 else 0 %}
+      {% if ratio > 1 %}
+        {{ "%.1f"|format(ratio) }}×
+      {% else %}
+        {{ "%.2f"|format(ratio) }}×
+      {% endif %}
+    </div>
+    <div class="stat-sub">their avg / your avg</div>
+  </div>
+  {% endif %}
+</div>
+
+{% if rt.by_period %}
+<div class="table-wrapper mt-6">
+  <table>
+    <thead>
+      <tr>
+        <th>Period</th>
+        <th>Your avg (h)</th>
+        <th>Their avg (h)</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for p in rt.by_period %}
+      <tr>
+        <td class="text-sm">{{ p.period }}</td>
+        <td style="color:var(--sent-color)">{{ p.your_avg }}</td>
+        <td style="color:var(--received-color)">{{ p.their_avg }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endif %}
+
+{% if not yr.count and not tr.count %}
+<div class="empty-state">
+  <div class="empty-state-icon">⏱️</div>
+  <div class="empty-state-title">No response time data</div>
+  <p class="empty-state-text">Response times are computed from threaded emails. Make sure threads have been reconstructed.</p>
+</div>
+{% endif %}

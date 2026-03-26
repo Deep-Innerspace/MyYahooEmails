@@ -1,0 +1,79 @@
+{% extends "base.html" %}
+{% block title %}Analysis{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <div>
+    <h1 class="page-title">Analysis</h1>
+    <p class="page-subtitle">Tone trends, topic evolution, and response patterns</p>
+  </div>
+</div>
+
+<div class="page-body">
+
+  <!-- Tab bar -->
+  <div class="tab-bar">
+    <button class="tab-btn {% if active_tab == 'tone' %}active{% endif %}"
+            hx-get="/analysis/tone"
+            hx-target="#analysis-content"
+            hx-trigger="click"
+            onclick="setActiveTab(this)">
+      Tone Trends
+    </button>
+    <button class="tab-btn {% if active_tab == 'topics' %}active{% endif %}"
+            hx-get="/analysis/topics"
+            hx-target="#analysis-content"
+            hx-trigger="click"
+            onclick="setActiveTab(this)">
+      Topic Evolution
+    </button>
+    <button class="tab-btn {% if active_tab == 'response' %}active{% endif %}"
+            hx-get="/analysis/response-times"
+            hx-target="#analysis-content"
+            hx-trigger="click"
+            onclick="setActiveTab(this)">
+      Response Times
+    </button>
+    {% if perspective == 'legal' %}
+    <button class="tab-btn"
+            onclick="window.location='/analysis/contradictions'">
+      Contradictions
+    </button>
+    <button class="tab-btn"
+            onclick="window.location='/analysis/manipulation'">
+      Manipulation
+    </button>
+    {% endif %}
+    {% if perspective == 'book' %}
+    <button class="tab-btn"
+            onclick="window.location='/narrative'">
+      Character Evolution
+    </button>
+    {% endif %}
+  </div>
+
+  <!-- Content area -->
+  <div id="analysis-content" hx-indicator="#loading-bar">
+    {% if active_tab == 'tone' %}
+      {% with tone_data=tone_data,
+              direction=tone_direction,
+              by=tone_by,
+              avg_aggression_received=avg_aggression_received,
+              avg_manipulation_received=avg_manipulation_received,
+              avg_aggression_sent=avg_aggression_sent,
+              avg_manipulation_sent=avg_manipulation_sent,
+              chart_url=chart_url %}
+        {% include "partials/analysis_tone.html" %}
+      {% endwith %}
+    {% endif %}
+  </div>
+
+</div>
+
+<script>
+function setActiveTab(btn) {
+  document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+}
+</script>
+{% endblock %}

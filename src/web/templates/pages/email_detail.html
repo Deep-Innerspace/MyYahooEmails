@@ -1,0 +1,320 @@
+{% extends "base.html" %}
+{% block title %}{{ email.subject[:50] }}{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <div style="min-width:0;flex:1">
+    <a href="/emails/" class="btn btn-ghost btn-sm" style="margin-bottom:var(--space-2)">← Retour aux emails</a>
+    <h1 class="page-title" style="font-size:var(--font-size-xl)">{{ email.subject }}</h1>
+    <div class="email-meta-row" style="margin-top:var(--space-2)">
+      <span class="badge {% if email.direction == 'sent' %}badge-sent{% else %}badge-received{% endif %}">
+        {% if email.direction == 'sent' %}↑ Sent{% else %}↓ Received{% endif %}
+      </span>
+      <span class="text-sm text-muted">{{ email.date }}</span>
+      {% if email.language %}
+      <span class="badge badge-primary">{{ email.language|upper }}</span>
+      {% endif %}
+      {% if email.has_attachments %}
+      <span class="badge" style="background:#f0fdf4;color:#166534;border-color:#a7f3d0">📎 Pièces jointes</span>
+      {% endif %}
+      {% if email.pivotal_moment %}
+      <span class="badge" style="background:#fef3c7;color:#92400e;border-color:#fde68a">⭐ Moment pivotal</span>
+      {% endif %}
+    </div>
+  </div>
+  <div style="flex-shrink:0">
+    {% include "partials/bookmark_btn.html" %}
+  </div>
+</div>
+
+<div class="page-body">
+  <div style="display:grid;grid-template-columns:1fr 340px;gap:var(--space-6);align-items:start">
+
+    <!-- ─── Left: email content ─────────────────────────────────────────── -->
+    <div>
+
+      <!-- Meta -->
+      <div class="card" style="margin-bottom:var(--space-4)">
+        <div class="card-body" style="padding:var(--space-4) var(--space-6)">
+          <div style="display:grid;grid-template-columns:auto 1fr;gap:var(--space-2) var(--space-4);font-size:var(--font-size-sm)">
+            <span class="text-muted font-semibold">De</span>
+            <span>
+              {% if email.from_name %}<strong>{{ email.from_name }}</strong> &lt;{{ email.from_address }}&gt;
+              {% else %}{{ email.from_address }}{% endif %}
+            </span>
+
+            <span class="text-muted font-semibold">À</span>
+            <span class="truncate">{{ email.to_addresses }}</span>
+
+            {% if email.folder %}
+            <span class="text-muted font-semibold">Dossier</span>
+            <span>{{ email.folder }}</span>
+            {% endif %}
+
+            {% if email.contact_name %}
+            <span class="text-muted font-semibold">Contact</span>
+            <span>{{ email.contact_name }}</span>
+            {% endif %}
+          </div>
+
+          <!-- Topic badges -->
+          {% if email.topics %}
+          <div style="margin-top:var(--space-3);display:flex;flex-wrap:wrap;gap:4px">
+            {% for t in email.topics %}
+            <span class="topic-pill" style="background-color:{{ t.color }}22;color:{{ t.color }};border-color:{{ t.color }}44">
+              {{ t.name }}
+              <span style="opacity:0.6">({{ "%.0f"|format(t.confidence * 100) }}%)</span>
+            </span>
+            {% endfor %}
+          </div>
+          {% endif %}
+        </div>
+      </div>
+
+      <!-- Body -->
+      <div class="card" style="margin-bottom:var(--space-4)">
+        <div class="card-header">
+          <span class="card-title">Corps du message</span>
+          <div style="display:flex;gap:var(--space-2)">
+            <button class="btn btn-secondary btn-sm" id="toggle-full-btn"
+                    onclick="toggleFullBody()">Voir le complet</button>
+            <button class="btn btn-secondary btn-sm"
+                    hx-get="/emails/{{ email.id }}/thread"
+                    hx-target="#thread-panel"
+                    hx-swap="innerHTML"
+                    hx-indicator="#loading-bar">
+              🧵 Fil ({{ email.thread_emails|length }})
+            </button>
+          </div>
+        </div>
+        <div class="card-body" style="padding:0">
+          <div class="email-body" id="email-body" data-email-id="{{ email.id }}"
+               style="padding:var(--space-5) var(--space-6)">
+{% if highlight_terms %}
+{% set body_text = email.delta_text %}
+{{ body_text }}
+{% else %}
+{{ email.delta_text }}
+{% endif %}
+          </div>
+
+          {% if email.body_text and email.body_text != email.delta_text %}
+          <div id="full-body" style="display:none;padding:var(--space-5) var(--space-6);border-top:1px solid var(--border)">
+            <div class="text-xs text-muted font-semibold" style="margin-bottom:var(--space-3);text-transform:uppercase;letter-spacing:0.08em">
+              Corps complet (avec citations)
+            </div>
+            <div class="email-body">{{ email.body_text }}</div>
+          </div>
+          {% endif %}
+        </div>
+      </div>
+
+      <!-- Thread panel (HTMX target) -->
+      <div id="thread-panel" class="card" style="margin-bottom:var(--space-4)"></div>
+
+      <!-- Book-only: Quote form -->
+      <div class="book-only">
+        <div class="card" id="quote-form" style="display:none;margin-bottom:var(--space-4)">
+          <div class="card-header">
+            <span class="card-title">💬 Sauvegarder une citation</span>
+          </div>
+          <div class="card-body">
+            <form action="#" method="post">
+              <input type="hidden" name="email_id" value="{{ email.id }}">
+              <div class="form-group">
+                <label class="form-label">Citation sélectionnée</label>
+                <textarea id="quote-text" name="text" rows="3"></textarea>
+              </div>
+              <div class="form-group">
+                <label class="form-label">Note de contexte</label>
+                <input type="text" name="context_note" placeholder="Contexte ou importance de cette citation…">
+              </div>
+              <div style="display:flex;gap:var(--space-3)">
+                <button type="submit" class="btn btn-primary">Sauvegarder</button>
+                <button type="button" class="btn btn-secondary"
+                        onclick="document.getElementById('quote-form').style.display='none'">
+                  Annuler
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      </div>
+
+      <!-- Notes panel -->
+      <div class="card">
+        <div class="card-header">
+          <span class="card-title">📝 Notes</span>
+        </div>
+        <div id="notes-email-{{ email.id }}">
+          {% include "partials/note_list.html" with context %}
+        </div>
+      </div>
+
+    </div>
+
+    <!-- ─── Right: Analysis sidebar ──────────────────────────────────────── -->
+    <div>
+
+      <!-- Tone analysis -->
+      {% if email.analysis.get('tone') %}
+      {% set tone_data = email.analysis['tone']['data'] %}
+      <div class="card" style="margin-bottom:var(--space-4)">
+        <div class="card-header">
+          <span class="card-title">🎭 Analyse de ton</span>
+          <span class="text-xs text-muted">{{ email.analysis['tone']['model'] }}</span>
+        </div>
+        <div class="card-body">
+          {% if tone_data.get('tone') %}
+          <div style="margin-bottom:var(--space-4)">
+            <span class="badge badge-primary" style="font-size:0.8rem">{{ tone_data.tone }}</span>
+          </div>
+          {% endif %}
+
+          {% if tone_data.get('aggression_level') is not none %}
+          <div class="tone-bar-wrapper">
+            <span class="tone-bar-label">Agressivité</span>
+            <div class="tone-bar-track">
+              <div class="tone-bar-fill aggression"
+                   data-value="{{ tone_data.aggression_level }}" style="width:0%"></div>
+            </div>
+            <span class="tone-bar-value" style="color:var(--aggression)">
+              {{ "%.2f"|format(tone_data.aggression_level) }}
+            </span>
+          </div>
+          {% endif %}
+
+          {% if tone_data.get('manipulation_score') is not none %}
+          <div class="tone-bar-wrapper">
+            <span class="tone-bar-label">Manipulation</span>
+            <div class="tone-bar-track">
+              <div class="tone-bar-fill manipulation"
+                   data-value="{{ tone_data.manipulation_score }}" style="width:0%"></div>
+            </div>
+            <span class="tone-bar-value" style="color:var(--manipulation)">
+              {{ "%.2f"|format(tone_data.manipulation_score) }}
+            </span>
+          </div>
+          {% endif %}
+
+          {% if tone_data.get('legal_posturing') is not none %}
+          <div class="tone-bar-wrapper">
+            <span class="tone-bar-label">Legal Posture</span>
+            <div class="tone-bar-track">
+              <div class="tone-bar-fill legal"
+                   data-value="{{ tone_data.legal_posturing }}" style="width:0%"></div>
+            </div>
+            <span class="tone-bar-value">{{ "%.2f"|format(tone_data.legal_posturing) }}</span>
+          </div>
+          {% endif %}
+
+          {% if tone_data.get('key_phrases') %}
+          <div style="margin-top:var(--space-4)">
+            <div class="analysis-section-title">Phrases clés</div>
+            <ul style="margin:0;padding-left:var(--space-4);font-size:var(--font-size-xs);color:var(--text-secondary)">
+              {% for phrase in tone_data.key_phrases[:5] %}
+              <li style="margin-bottom:2px">{{ phrase }}</li>
+              {% endfor %}
+            </ul>
+          </div>
+          {% endif %}
+        </div>
+      </div>
+      {% endif %}
+
+      <!-- Classification -->
+      {% if email.topics %}
+      <div class="card" style="margin-bottom:var(--space-4)">
+        <div class="card-header">
+          <span class="card-title">🏷️ Classification</span>
+          {% if email.analysis.get('classify') %}
+          <span class="text-xs text-muted">{{ email.analysis['classify']['model'] }}</span>
+          {% endif %}
+        </div>
+        <div class="card-body">
+          {% for t in email.topics %}
+          <div class="tone-bar-wrapper">
+            <span class="topic-pill" style="background-color:{{ t.color }}22;color:{{ t.color }};border-color:{{ t.color }}44;min-width:90px">
+              {{ t.name }}
+            </span>
+            <div class="tone-bar-track">
+              <div class="tone-bar-fill" style="background:{{ t.color }};width:{{ (t.confidence * 100)|round|int }}%"></div>
+            </div>
+            <span class="tone-bar-value">{{ "%.0f"|format(t.confidence * 100) }}%</span>
+          </div>
+          {% endfor %}
+        </div>
+      </div>
+      {% endif %}
+
+      <!-- Manipulation -->
+      {% if email.analysis.get('manipulation') %}
+      {% set manip_data = email.analysis['manipulation']['data'] %}
+      <div class="card" style="margin-bottom:var(--space-4)">
+        <div class="card-header">
+          <span class="card-title">⚠️ Manipulation</span>
+          <span class="text-xs text-muted">{{ email.analysis['manipulation']['model'] }}</span>
+        </div>
+        <div class="card-body">
+          {% set manip_score = manip_data.get('total_score', manip_data.get('overall_score')) %}
+          {% if manip_score is not none %}
+          <div class="tone-bar-wrapper">
+            <span class="tone-bar-label">Score global</span>
+            <div class="tone-bar-track">
+              <div class="tone-bar-fill manipulation"
+                   data-value="{{ manip_score }}" style="width:{{ (manip_score * 100)|round }}%"></div>
+            </div>
+            <span class="tone-bar-value">{{ "%.2f"|format(manip_score) }}</span>
+          </div>
+          {% endif %}
+
+          {% if manip_data.get('patterns') %}
+          <div style="margin-top:var(--space-3)">
+            <div class="analysis-section-title">Patterns détectés</div>
+            <div style="display:flex;flex-wrap:wrap;gap:4px;margin-top:4px">
+            {% for pattern in manip_data.patterns %}
+              {% set ptype = pattern.type if pattern is mapping else pattern %}
+              {% set pscore = pattern.score if pattern is mapping else None %}
+              <span class="badge badge-medium" style="background:rgba(245,158,11,0.15);color:#92400e;font-size:11px">
+                {{ ptype | replace('_', ' ') }}{% if pscore %} {{ "%.2f"|format(pscore) }}{% endif %}
+              </span>
+            {% endfor %}
+            </div>
+          </div>
+          {% endif %}
+        </div>
+      </div>
+      {% endif %}
+
+      <!-- Pivotal moment info -->
+      {% if email.pivotal_moment %}
+      <div class="card" style="margin-bottom:var(--space-4);border-color:#fde68a">
+        <div class="card-header" style="background:#fef3c7">
+          <span class="card-title">⭐ Moment pivotal</span>
+          <span class="badge badge-medium">{{ email.pivotal_moment.significance }}</span>
+        </div>
+        <div class="card-body">
+          <p class="text-sm">{{ email.pivotal_moment.description }}</p>
+        </div>
+      </div>
+      {% endif %}
+
+    </div>
+  </div>
+</div>
+
+<script>
+function toggleFullBody() {
+  const full = document.getElementById('full-body');
+  const btn = document.getElementById('toggle-full-btn');
+  if (!full) return;
+  if (full.style.display === 'none') {
+    full.style.display = 'block';
+    btn.textContent = 'Voir le delta';
+  } else {
+    full.style.display = 'none';
+    btn.textContent = 'Voir le complet';
+  }
+}
+</script>
+{% endblock %}

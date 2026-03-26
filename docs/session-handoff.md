@@ -4,93 +4,108 @@
 
 ---
 
-## Last Updated: 2026-03-19
+**Last Updated: 2026-03-25**
 
 ## What Was Accomplished This Session
 
-### Phase 1 — Foundation ✅ (complete in prior sessions)
-- Yahoo IMAP fetch with `--all-folders` across 91 folders
-- Multi-address contact handling (primary + aliases)
-- MIME parser with bilingual quote stripping and delta extraction
-- Thread reconstruction, FTS5 search, full CLI
+### Contradictions — 10 Topics Imported ✅
+All remaining contradiction topics processed and imported. Full breakdown:
 
-### Phase 2 — Intelligence ✅ (complete)
-- Abstract LLM provider layer: Claude, Groq, OpenAI, Ollama
-- Router maps tasks → providers via `config.yaml`
-- Analysis pipeline: `classifier.py`, `tone.py`, `timeline.py`
-- Analysis run tracking: `analysis_runs` + `analysis_results` tables
-- 4 French-legal prompt templates
-- New CLI commands: `analyze classify/tone/timeline/all/results/stats`
+| Batch file | Run | Pairs | Notes |
+|------------|-----|-------|-------|
+| contradictions_logement_filled.xlsx | #108 | 2 | |
+| contradictions_ecole_1_filled.xlsx | #110 | 0 | ChatGPT found no contradictions |
+| contradictions_ecole_2_filled.xlsx | #111 | 0 | ChatGPT found no contradictions |
+| contradictions_vacances_filled.xlsx | #102 | 5 | (prior session) |
+| contradictions_sante_filled.xlsx | #103 | 5 | (prior session) |
+| contradictions_procedure_filled.xlsx | #105 | 3 | (prior session) |
+| contradictions_education_filled.xlsx | #107 | 4 | (prior session) |
+| contradictions_activites_filled.xlsx | #92 | 1 | (prior session) |
+| contradictions_divorce_filled.xlsx | #97 | 0 | (prior session) |
+| contradictions_famille_filled.xlsx | #? | ? | (prior session) |
 
-### Infrastructure
-- SQLite timestamp bug fixed: removed `detect_types` from `_connect()`
-- Duplicate contacts (test IDs 1&2) cleaned up
-- Groq rate limit discovered and managed via scheduled tasks
-- Scheduled tasks created:
-  - `daily-classify-tone` at 6:03 AM (200 emails/day each)
-  - `daily-timeline` at 7:07 AM (50 emails/day)
+**Remaining**: `contradictions_finances_1_filled.xlsx` and `contradictions_finances_2_filled.xlsx` are in `data/imports/` but **NOT YET imported** (verification step was interrupted). Import these first in the next session.
 
-### Skill & Docs Created (this session)
-- `update-project-state` skill created (for future session handoffs)
-- `docs/architecture.md` — module map, schema summary, design constraints
-- `docs/decision-log.md` — all key decisions recorded
-- `docs/findings.md` — first analysis run observations
+### Timeline Extraction — Batches 01–03 Done
+In-session forensic timeline extraction (Claude acting as analyst) + import:
+
+| Batch | Run | Date range | Emails | Events extracted |
+|-------|-----|-----------|--------|-----------------|
+| batch01 | #109 | 2014-05-01 → 2014-11-25 | 230 | 48 |
+| batch02 | #112 | 2014-11-26 → 2015-03-18 | 230 | 33 |
+| batch03 | #113 | 2015-03-19 → ? | 230 | ? (imported by user) |
+
+**Current coverage**: 130 emails processed, 166 events found (3.3%)
+**Remaining**: batches 04–17 (14 batches × 230 emails = ~3,200 emails)
+
+### Bug Fix — "View Email" on Timeline Events
+- **Problem**: clicking "View email →" on a timeline event badge did nothing (modal never opened)
+- **Root cause**: `htmx:afterSwap` global handler in `app.js` was not reliably firing when the link was inside a dynamically swapped HTMX partial (`#timeline-list`)
+- **Fix**: in `src/web/templates/partials/timeline_list.html`, changed `href="/emails/..."` → `href="#"` and added `hx-on::after-swap="document.getElementById('email-modal-overlay').classList.add('open')"` directly on the link (HTMX 1.9.x inline handler, fires immediately on the triggering element's swap)
+
+### Topic Deduplication — Verified Clean
+- User reported possible `education` / `éducation` duplicate in timeline filter
+- DB inspection: only `éducation` (id=42) exists — no unaccented duplicate
+- The `20037` ID seen in earlier output was an artifact of terminal concatenation (`200` curl output + `37` from Python printing on same line)
+- No action needed
+
+---
 
 ## Current Database State
 
 | Metric | Value |
 |--------|-------|
-| Total emails | 1,326 |
-| Sent | 351 |
-| Received | 975 |
-| Threads | 612 |
-| With attachments | 287 |
-| Date range | 2011-03-21 → 2026-03-18 |
-| Language: French | 1,229 |
-| Language: English | 73 |
+| Total emails | 3,922 |
+| Classification | 3,922/3,922 (100%) ✅ |
+| Tone analysis | 3,922/3,922 (100%) ✅ |
+| Manipulation | 3,922/3,922 (100%) ✅ |
+| Timeline processed | 130/3,922 (3.3%) — 166 events found |
+| Contradiction pairs | 45 total (enfants 27, vacances 12, éducation 10, procédure 4, santé 5, logement 2, école 2, finances 1, (none) 2) |
+| Court events | 0 |
 
-## Analysis Coverage
-
-| Type | Count | Coverage |
-|------|-------|----------|
-| Classified (topics) | 159 | 12% |
-| Tone analysed | 10 | 0.8% |
-| Timeline processed | 8 | 0.6% |
-| Timeline events found | 26 | — |
-
-**Top topics**: enfants (95), finances (76), divorce (38), logement (28), contradictions (11)
-
-## Active Analysis Runs
-
-- Run 6: `tone` via Groq — status `running` (0 emails — stale, likely killed by rate limit)
-- Run 5: `classify` via Groq — status `partial` (159 emails — daily limit hit)
-- Run 4: `timeline` via Groq — status `complete` (10 emails — test run)
-- Runs 1–3: test runs (10 emails each)
-
-> **Note**: Runs 1 and 6 are in `running` state but appear stale (killed by process exit or rate limit). They are safe to leave — they won't block new runs.
+---
 
 ## Resume Point for Next Session
 
-### Immediate priorities
-1. **Let scheduled tasks run** — classify+tone at 6:03 AM, timeline at 7:07 AM. After 3–4 days the corpus should reach ~80%+ coverage.
-2. **Check coverage** after first scheduled runs: `python cli.py analyze stats`
-3. **Optionally clean up stale runs**: `python cli.py runs delete 1` and `python cli.py runs delete 6`
+### Step 1 — Import Finances Contradictions (2 files, ready to import)
+```bash
+python cli.py analyze import-results data/imports/contradictions_finances_1_filled.xlsx \
+  --type contradictions --provider openai --model gpt-5.4-thinking
 
-### Phase 3 (next major work)
-- Contradiction detection (`analyze contradictions --provider claude`)
-- Manipulation pattern analysis (`analyze manipulation --provider claude`)
-- Court event import: `python cli.py events import court_events.csv`
+python cli.py analyze import-results data/imports/contradictions_finances_2_filled.xlsx \
+  --type contradictions --provider openai --model gpt-5.4-thinking
+```
 
-### Phase 4 (after Phase 3)
-- Response time statistics, frequency trends
-- Word/PDF report generation
+### Step 2 — Timeline Batches 04–17 (in-session analysis)
+Exports are all pre-generated in `data/exports/timeline/timeline_batch04.xlsx` through `timeline_batch17.xlsx`.
 
-### Phase 5 (later)
-- FastAPI web dashboard
+**Pattern for each batch:**
+1. Read batch Excel: `.venv/bin/python3 -c "import openpyxl; wb=openpyxl.load_workbook('data/exports/timeline/timeline_batch0N.xlsx'); ws=wb['Emails']; ..."`
+2. Analyze 230 emails in-session (Claude as analyst) — fill RESULTS dict
+3. Write filled file: `data/imports/timeline_batch0N_filled.xlsx`
+4. Import: `python cli.py analyze import-results data/imports/timeline_batch0N_filled.xlsx --type timeline --provider claude --model claude-sonnet-4-6`
 
-## Open Questions / Known Issues
+**Import command reference:**
+```bash
+python cli.py analyze import-results data/imports/timeline_batchNN_filled.xlsx \
+  --type timeline --provider claude --model claude-sonnet-4-6
+```
 
-- Runs 1 and 6 are stuck in `running` state — they were killed mid-run. Not blocking.
-- `tone` analysis at only 0.8% coverage — scheduled task will catch up over days
-- No court events imported yet — user needs to prepare `court_events.csv`
-- IMAP fetch may need re-run after a few months to catch new emails
+**Target fill rate**: 20–35% of emails per batch (logistics/weekly reports are naturally sparse)
+
+### Step 3 — Court Events Entry
+```bash
+python cli.py events import court_events.csv   # CSV: date, type, jurisdiction, description, outcome
+python cli.py analyze court-correlation --narrative
+```
+
+### Step 4 — Reports
+```bash
+python cli.py report full --format docx
+```
+
+### Quick Start
+```bash
+.venv/bin/python cli.py analyze stats
+.venv/bin/python cli.py web --reload    # http://127.0.0.1:8000
+```

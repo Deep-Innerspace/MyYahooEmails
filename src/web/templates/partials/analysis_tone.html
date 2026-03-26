@@ -1,0 +1,72 @@
+<!-- Tone Trends partial -->
+<div class="card mb-6">
+  <div class="card-header">
+    <span class="card-title">Tone Trends</span>
+    <span class="info-icon" data-tip="Rolling averages of aggression and manipulation scores over time, split by direction. Peaks indicate periods when the correspondence became more hostile or coercive. Adjust the period granularity and direction filter to isolate patterns.">i</span>
+    <div style="display:flex;gap:var(--space-2);align-items:center">
+      <select name="direction"
+              hx-get="/analysis/tone"
+              hx-target="#analysis-content"
+              hx-trigger="change"
+              hx-include="[name='direction'],[name='by']"
+              style="font-size:var(--font-size-sm);padding:4px 8px;border:1px solid var(--border);border-radius:var(--radius)">
+        <option value="both" {% if direction == 'both' %}selected{% endif %}>Both directions</option>
+        <option value="received" {% if direction == 'received' %}selected{% endif %}>Received only</option>
+        <option value="sent" {% if direction == 'sent' %}selected{% endif %}>Sent only</option>
+      </select>
+      <select name="by"
+              hx-get="/analysis/tone"
+              hx-target="#analysis-content"
+              hx-trigger="change"
+              hx-include="[name='direction'],[name='by']"
+              style="font-size:var(--font-size-sm);padding:4px 8px;border:1px solid var(--border);border-radius:var(--radius)">
+        <option value="month" {% if by == 'month' %}selected{% endif %}>Monthly</option>
+        <option value="quarter" {% if by == 'quarter' %}selected{% endif %}>Quarterly</option>
+        <option value="year" {% if by == 'year' %}selected{% endif %}>Yearly</option>
+      </select>
+    </div>
+  </div>
+  <div class="card-body" style="padding:0">
+    <img src="{{ chart_url }}" alt="Tone trends chart" loading="lazy"
+         style="width:100%;height:auto;display:block">
+  </div>
+</div>
+
+{% if tone_data %}
+<div class="stat-grid" style="grid-template-columns:repeat(4,1fr)">
+  <div class="stat-card">
+    <div class="stat-label">Aggression — Received</div>
+    <div class="stat-value" style="color:var(--aggression)">
+      {{ "%.3f"|format(avg_aggression_received) }}
+    </div>
+    <div class="stat-sub">0 = neutral, 1 = extreme</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-label">Manipulation — Received</div>
+    <div class="stat-value" style="color:var(--manipulation)">
+      {{ "%.3f"|format(avg_manipulation_received) }}
+    </div>
+    <div class="stat-sub">0 = none, 1 = heavy</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-label">Aggression — Sent</div>
+    <div class="stat-value" style="color:#3b82f6">
+      {{ "%.3f"|format(avg_aggression_sent) }}
+    </div>
+    <div class="stat-sub">0 = neutral, 1 = extreme</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-label">Manipulation — Sent</div>
+    <div class="stat-value" style="color:#8b5cf6">
+      {{ "%.3f"|format(avg_manipulation_sent) }}
+    </div>
+    <div class="stat-sub">0 = none, 1 = heavy</div>
+  </div>
+</div>
+{% else %}
+<div class="empty-state">
+  <div class="empty-state-icon">🎭</div>
+  <div class="empty-state-title">No tone analysis yet</div>
+  <p class="empty-state-text">Run <code>python cli.py analyze tone</code> to generate tone data.</p>
+</div>
+{% endif %}

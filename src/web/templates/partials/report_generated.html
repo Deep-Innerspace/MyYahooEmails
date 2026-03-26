@@ -1,0 +1,9 @@
+<div class="alert alert-success" style="margin-bottom:var(--space-4)">
+  <strong>Report generated successfully!</strong>
+  <div class="text-sm mt-2">
+    {{ report_type | title }} report ({{ format | upper }}) is ready.
+  </div>
+</div>
+<a href="{{ download_url }}" class="btn btn-primary" download="{{ filename }}">
+  Download {{ filename }}
+</a>

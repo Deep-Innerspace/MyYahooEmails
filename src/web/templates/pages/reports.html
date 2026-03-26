@@ -1,0 +1,200 @@
+{% extends "base.html" %}
+{% block title %}Reports{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <div>
+    <h1 class="page-title">Reports</h1>
+    <p class="page-subtitle">Generate Word and PDF reports from your analysis data</p>
+  </div>
+</div>
+
+<div class="page-body">
+
+  <!-- Legal reports section -->
+  <div class="legal-only">
+    <h2 class="section-title mb-4">
+      <span class="section-title-icon">⚖️</span>
+      Legal Reports
+    </h2>
+    <div class="report-grid mb-8">
+
+      <div class="report-card">
+        <div class="report-card-title">Timeline Report</div>
+        <div class="report-card-desc">Chronological timeline of all events, court proceedings, and email-extracted milestones.</div>
+        <form hx-post="/reports/generate"
+              hx-target="#report-status"
+              hx-swap="innerHTML"
+              hx-indicator="#loading-bar">
+          <input type="hidden" name="report_type" value="timeline">
+          <input type="hidden" name="perspective" value="legal">
+          <div style="display:flex;gap:var(--space-2);margin-bottom:var(--space-3)">
+            <select name="format" class="form-input" style="flex:1">
+              <option value="docx">Word (.docx)</option>
+              <option value="pdf">PDF</option>
+            </select>
+          </div>
+          <div style="margin-bottom:var(--space-3)">
+            <label style="display:flex;align-items:center;gap:8px;font-size:var(--font-size-sm)">
+              <input type="checkbox" name="include_legal_notes" value="true"> Include legal notes
+            </label>
+          </div>
+          <button type="submit" class="btn btn-primary" style="width:100%">Generate</button>
+        </form>
+      </div>
+
+      <div class="report-card">
+        <div class="report-card-title">Tone Analysis Report</div>
+        <div class="report-card-desc">Aggression and manipulation trends over time, key phrases, and most aggressive emails.</div>
+        <form hx-post="/reports/generate"
+              hx-target="#report-status"
+              hx-swap="innerHTML"
+              hx-indicator="#loading-bar">
+          <input type="hidden" name="report_type" value="tone">
+          <input type="hidden" name="perspective" value="legal">
+          <div style="display:flex;gap:var(--space-2);margin-bottom:var(--space-3)">
+            <select name="format" class="form-input" style="flex:1">
+              <option value="docx">Word (.docx)</option>
+              <option value="pdf">PDF</option>
+            </select>
+          </div>
+          <div style="margin-bottom:var(--space-3)">
+            <label style="display:flex;align-items:center;gap:8px;font-size:var(--font-size-sm)">
+              <input type="checkbox" name="include_legal_notes" value="true"> Include legal notes
+            </label>
+          </div>
+          <button type="submit" class="btn btn-primary" style="width:100%">Generate</button>
+        </form>
+      </div>
+
+      <div class="report-card">
+        <div class="report-card-title">Contradictions Report</div>
+        <div class="report-card-desc">All detected contradictions with evidence pairs and severity ratings.</div>
+        <form hx-post="/reports/generate"
+              hx-target="#report-status"
+              hx-swap="innerHTML"
+              hx-indicator="#loading-bar">
+          <input type="hidden" name="report_type" value="contradictions">
+          <input type="hidden" name="perspective" value="legal">
+          <div style="display:flex;gap:var(--space-2);margin-bottom:var(--space-3)">
+            <select name="format" class="form-input" style="flex:1">
+              <option value="docx">Word (.docx)</option>
+              <option value="pdf">PDF</option>
+            </select>
+          </div>
+          <div style="margin-bottom:var(--space-3)">
+            <label style="display:flex;align-items:center;gap:8px;font-size:var(--font-size-sm)">
+              <input type="checkbox" name="include_legal_notes" value="true"> Include legal notes
+            </label>
+          </div>
+          <button type="submit" class="btn btn-primary" style="width:100%">Generate</button>
+        </form>
+      </div>
+
+      <div class="report-card">
+        <div class="report-card-title">Full Dossier</div>
+        <div class="report-card-desc">Complete legal dossier: overview, timeline, tone analysis, contradictions, and methodology appendix.</div>
+        <form hx-post="/reports/generate"
+              hx-target="#report-status"
+              hx-swap="innerHTML"
+              hx-indicator="#loading-bar">
+          <input type="hidden" name="report_type" value="full">
+          <input type="hidden" name="perspective" value="legal">
+          <div style="display:flex;gap:var(--space-2);margin-bottom:var(--space-3)">
+            <select name="format" class="form-input" style="flex:1">
+              <option value="docx">Word (.docx)</option>
+              <option value="pdf">PDF</option>
+            </select>
+          </div>
+          <div style="margin-bottom:var(--space-3)">
+            <label style="display:flex;align-items:center;gap:8px;font-size:var(--font-size-sm)">
+              <input type="checkbox" name="include_legal_notes" value="true"> Include legal notes
+            </label>
+          </div>
+          <button type="submit" class="btn btn-primary" style="width:100%">Generate</button>
+        </form>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- Book reports section -->
+  <div class="book-only">
+    <h2 class="section-title mb-4">
+      <span class="section-title-icon">📖</span>
+      Book Reports
+    </h2>
+    <div class="report-grid mb-8">
+
+      <div class="report-card">
+        <div class="report-card-title">Narrative Timeline</div>
+        <div class="report-card-desc">Story-focused timeline with emotional arc and narrative context.</div>
+        <form hx-post="/reports/generate"
+              hx-target="#report-status"
+              hx-swap="innerHTML"
+              hx-indicator="#loading-bar">
+          <input type="hidden" name="report_type" value="timeline">
+          <input type="hidden" name="perspective" value="book">
+          <div style="display:flex;gap:var(--space-2);margin-bottom:var(--space-3)">
+            <select name="format" class="form-input" style="flex:1">
+              <option value="docx">Word (.docx)</option>
+              <option value="pdf">PDF</option>
+            </select>
+          </div>
+          <div style="margin-bottom:var(--space-3)">
+            <label style="display:flex;align-items:center;gap:8px;font-size:var(--font-size-sm)">
+              <input type="checkbox" name="include_book_notes" value="true"> Include book notes
+            </label>
+          </div>
+          <button type="submit" class="btn btn-primary" style="width:100%">Generate</button>
+        </form>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- Generation status -->
+  <div id="report-status" class="mb-6"></div>
+
+  <!-- Generated reports history -->
+  {% if generated_reports %}
+  <div class="card">
+    <div class="card-header">
+      <span class="card-title">Generated Reports</span>
+    </div>
+    <div class="table-wrapper" style="border-radius:0;border:none;box-shadow:none">
+      <table>
+        <thead>
+          <tr>
+            <th>Type</th>
+            <th>Format</th>
+            <th>Perspective</th>
+            <th>Generated</th>
+            <th>Download</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for r in generated_reports %}
+          <tr>
+            <td class="text-sm">{{ r.report_type | title }}</td>
+            <td><span class="badge badge-secondary">{{ r.format | upper }}</span></td>
+            <td class="text-sm text-muted">{{ r.perspective or '—' }}</td>
+            <td class="text-xs text-muted">{{ r.generated_at[:16] if r.generated_at else '—' }}</td>
+            <td>
+              {% set filename = r.output_path.split('/')[-1] if r.output_path else '' %}
+              {% if filename %}
+              <a href="/reports/download/{{ filename }}" class="btn btn-secondary btn-sm" download>
+                Download
+              </a>
+              {% endif %}
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+  {% endif %}
+
+</div>
+{% endblock %}

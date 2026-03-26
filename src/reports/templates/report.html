@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<style>
+    @page {
+        size: A4;
+        margin: 2cm;
+        @bottom-center {
+            content: counter(page) " / " counter(pages);
+            font-size: 8pt;
+            color: #9ca3af;
+        }
+    }
+    body {
+        font-family: 'Helvetica Neue', 'Helvetica', 'Arial', sans-serif;
+        font-size: 10.5pt;
+        line-height: 1.5;
+        color: #1f2937;
+    }
+
+    /* Title page */
+    .title-page {
+        text-align: center;
+        padding-top: 8cm;
+        page-break-after: always;
+    }
+    .title-page h1 {
+        font-size: 26pt;
+        color: #1e3a5f;
+        border: none;
+        margin-bottom: 0.5cm;
+    }
+    .title-page .subtitle {
+        font-size: 14pt;
+        color: #6b7280;
+        margin-bottom: 1cm;
+    }
+    .title-page .date {
+        font-size: 10pt;
+        font-style: italic;
+        color: #9ca3af;
+    }
+
+    /* TOC */
+    .toc {
+        page-break-after: always;
+    }
+    .toc h2 {
+        color: #1e3a5f;
+        border-bottom: 2px solid #1e3a5f;
+    }
+    .toc-entry {
+        margin: 4px 0;
+        color: #374151;
+    }
+    .toc-level-2 { margin-left: 20px; }
+    .toc-level-3 { margin-left: 40px; }
+
+    /* Headings */
+    h1 {
+        color: #1e3a5f;
+        border-bottom: 2px solid #1e3a5f;
+        padding-bottom: 4px;
+        font-size: 18pt;
+        margin-top: 1.5cm;
+    }
+    h2 {
+        color: #1e3a5f;
+        font-size: 14pt;
+        margin-top: 1cm;
+        border-bottom: 1px solid #d1d5db;
+        padding-bottom: 3px;
+    }
+    h3 {
+        color: #374151;
+        font-size: 12pt;
+        margin-top: 0.8cm;
+    }
+    h4 {
+        color: #4b5563;
+        font-size: 11pt;
+    }
+
+    /* Tables */
+    table {
+        width: 100%;
+        border-collapse: collapse;
+        margin: 0.8em 0;
+        font-size: 9pt;
+    }
+    th {
+        background: #1e3a5f;
+        color: white;
+        padding: 6px 8px;
+        text-align: left;
+        font-weight: 600;
+    }
+    td {
+        border: 1px solid #e5e7eb;
+        padding: 5px 8px;
+    }
+    tr:nth-child(even) {
+        background: #f9fafb;
+    }
+
+    /* Charts */
+    .chart {
+        display: block;
+        width: 100%;
+        max-width: 650px;
+        margin: 0.8em auto;
+    }
+
+    /* Severity colors */
+    .severity-high, .severity-haute { color: #dc2626; font-weight: bold; }
+    .severity-medium, .severity-moyenne { color: #f59e0b; font-weight: 600; }
+    .severity-low, .severity-basse { color: #6b7280; }
+
+    /* Missing data */
+    .missing-data {
+        color: #9ca3af;
+        font-style: italic;
+        padding: 1em;
+        background: #f9fafb;
+        border-left: 3px solid #d1d5db;
+    }
+
+    p {
+        margin: 0.4em 0;
+    }
+</style>
+</head>
+<body>
+
+<!-- Title page -->
+<div class="title-page">
+    <h1>{{ report.title }}</h1>
+    <p class="subtitle">{{ report.subtitle }}</p>
+    <p class="date">Généré le {{ report.date }}</p>
+</div>
+
+<!-- TOC -->
+<div class="toc">
+    <h2>Table des matières</h2>
+    {% for section in report.sections %}
+    <p class="toc-entry toc-level-{{ section.level }}">{{ section.title }}</p>
+    {% for sub in section.subsections %}
+    <p class="toc-entry toc-level-{{ sub.level }}">{{ sub.title }}</p>
+    {% endfor %}
+    {% endfor %}
+</div>
+
+<!-- Sections -->
+{% for section in report.sections %}
+{{ render_section(section) }}
+{% endfor %}
+
+</body>
+</html>

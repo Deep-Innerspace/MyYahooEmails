@@ -51,6 +51,10 @@ class LLMProvider(ABC):
                 msg = str(e).lower()
                 if any(k in msg for k in ("auth", "api key", "invalid", "403", "401")):
                     raise
+                # Don't retry on daily limit exhaustion (retry_after_secs signals
+                # GroqDailyLimitError); caller must abort the run and wait for reset
+                if hasattr(e, "retry_after_secs"):
+                    raise
                 if attempt < max_retries - 1:
                     wait = retry_delay * (2 ** attempt)
                     time.sleep(wait)

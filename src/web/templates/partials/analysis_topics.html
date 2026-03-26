@@ -1,0 +1,62 @@
+<!-- Topic Evolution partial -->
+<div class="card mb-6">
+  <div class="card-header">
+    <span class="card-title">Topic Evolution</span>
+    <span class="info-icon" data-tip="Prevalence of each legal topic across time periods. Wider bands or higher counts in a period signal when that topic dominated the correspondence — useful for aligning with proceedings calendar.">i</span>
+    <select name="by"
+            hx-get="/analysis/topics"
+            hx-target="#analysis-content"
+            hx-trigger="change"
+            style="font-size:var(--font-size-sm);padding:4px 8px;border:1px solid var(--border);border-radius:var(--radius)">
+      <option value="quarter" {% if by == 'quarter' %}selected{% endif %}>Quarterly</option>
+      <option value="month" {% if by == 'month' %}selected{% endif %}>Monthly</option>
+      <option value="year" {% if by == 'year' %}selected{% endif %}>Yearly</option>
+    </select>
+  </div>
+  <div class="card-body" style="padding:0">
+    <img src="{{ chart_url }}" alt="Topic evolution chart" loading="lazy"
+         style="width:100%;height:auto;display:block">
+  </div>
+</div>
+
+{% if excluded_trop_court or excluded_non_classifiable %}
+<div style="margin-bottom:1rem;padding:0.65rem 1rem;background:var(--bg-alt);border-left:3px solid var(--accent);border-radius:var(--radius);font-size:var(--font-size-sm);color:var(--text-muted)">
+  ℹ️ <strong>Excluded from this view:</strong>
+  {% if excluded_trop_court %}<span style="margin-left:0.4rem"><em>trop_court</em> — {{ excluded_trop_court }} email{% if excluded_trop_court != 1 %}s{% endif %} (content too short to classify)</span>{% endif %}
+  {% if excluded_non_classifiable %}<span style="margin-left:0.8rem"><em>non_classifiable</em> — {{ excluded_non_classifiable }} email{% if excluded_non_classifiable != 1 %}s{% endif %} (ambiguous or system content)</span>{% endif %}
+  <span style="margin-left:0.8rem;color:var(--text-muted)">— these count in overall coverage % but are not shown in charts or the table below.</span>
+</div>
+{% endif %}
+
+{% if topic_list %}
+<div class="table-wrapper">
+  <table>
+    <thead>
+      <tr>
+        <th>Topic</th>
+        <th>Total Emails</th>
+        <th>Peak Period</th>
+        <th>Peak Count</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for t in topic_list %}
+      <tr>
+        <td>
+          <span class="topic-pill">{{ t.name }}</span>
+        </td>
+        <td><strong>{{ t.total }}</strong></td>
+        <td class="text-muted text-sm">{{ t.top_period or '—' }}</td>
+        <td class="text-sm">{{ t.top_count or '—' }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% else %}
+<div class="empty-state">
+  <div class="empty-state-icon">🏷️</div>
+  <div class="empty-state-title">No topic data yet</div>
+  <p class="empty-state-text">Run <code>python cli.py analyze classify</code> to classify emails into topics.</p>
+</div>
+{% endif %}

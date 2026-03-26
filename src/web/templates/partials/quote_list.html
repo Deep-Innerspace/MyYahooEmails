@@ -1,0 +1,35 @@
+{% if quotes %}
+<div id="quote-list">
+  {% for q in quotes %}
+  <div class="quote-card" id="quote-{{ q.id }}">
+    <div class="quote-text">"{{ q.text }}"</div>
+    <div style="display:flex;align-items:center;gap:var(--space-2);flex-wrap:wrap;margin-top:var(--space-2)">
+      {% if q.tags %}
+      {% for tag in q.tags %}
+      <span class="topic-pill">{{ tag }}</span>
+      {% endfor %}
+      {% endif %}
+      {% if q.email_id %}
+      <a href="/emails/{{ q.email_id }}" class="quote-source text-xs">
+        {% if q.email_date %}{{ q.email_date[:10] }}{% endif %}
+        {% if q.email_subject %} — {{ q.email_subject[:50] }}{% endif %}
+      </a>
+      {% endif %}
+      <button class="btn btn-secondary btn-sm" style="margin-left:auto;color:var(--severity-high)"
+              hx-delete="/quotes/{{ q.id }}"
+              hx-target="#quote-{{ q.id }}"
+              hx-swap="outerHTML"
+              hx-confirm="Delete this quote?">
+        Delete
+      </button>
+    </div>
+  </div>
+  {% endfor %}
+</div>
+{% else %}
+<div class="empty-state" style="padding:var(--space-6) 0">
+  <div class="empty-state-icon">💬</div>
+  <div class="empty-state-title">No quotes yet</div>
+  <p class="empty-state-text">Add notable quotes from emails to build your quote bank.</p>
+</div>
+{% endif %}
