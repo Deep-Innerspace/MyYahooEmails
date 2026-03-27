@@ -786,7 +786,13 @@ def events_list():
     """List all court and external events."""
     from src.storage.database import get_db
     with get_db() as conn:
-        rows = conn.execute("SELECT * FROM court_events ORDER BY event_date").fetchall()
+        rows = conn.execute(
+            """SELECT pe.id, pe.event_date, pe.event_type, pe.description, pe.outcome,
+                      COALESCE(p.jurisdiction,'') AS jurisdiction, p.name AS procedure_name
+               FROM procedure_events pe
+               LEFT JOIN procedures p ON p.id = pe.procedure_id
+               ORDER BY pe.event_date"""
+        ).fetchall()
 
     if not rows:
         console.print("[yellow]No events recorded.[/yellow]")
@@ -1541,7 +1547,7 @@ def analyze_stats():
             "JOIN analysis_runs r ON r.id=ar.run_id WHERE r.analysis_type='manipulation'"
         ).fetchone()[0]
         contradiction_pairs = conn.execute("SELECT COUNT(*) FROM contradictions").fetchone()[0]
-        court_events_count = conn.execute("SELECT COUNT(*) FROM court_events").fetchone()[0]
+        court_events_count = conn.execute("SELECT COUNT(*) FROM procedure_events").fetchone()[0]
 
         # Top topics (exclude system topics)
         top_topics = conn.execute(
@@ -1569,7 +1575,7 @@ def analyze_stats():
     table.add_row("[bold]Phase 3 — Deep Analysis[/bold]", "", "")
     table.add_row("Manipulation analysed", str(manipulation_analyzed), pct(manipulation_analyzed))
     table.add_row("Contradiction pairs", str(contradiction_pairs), "—")
-    table.add_row("Court events in DB", str(court_events_count), "—")
+    table.add_row("Procedure events in DB", str(court_events_count), "—")
     console.print(table)
 
     if top_topics:

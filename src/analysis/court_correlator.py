@@ -28,10 +28,12 @@ def _get_court_events(limit: Optional[int] = None) -> List[Dict]:
     with get_db() as conn:
         limit_clause = f"LIMIT {limit}" if limit else ""
         rows = conn.execute(
-            f"""SELECT id, event_date, event_type, jurisdiction,
-                       description, outcome, notes
-                FROM court_events
-                ORDER BY event_date ASC
+            f"""SELECT pe.id, pe.event_date, pe.event_type,
+                       COALESCE(p.jurisdiction, '') AS jurisdiction,
+                       pe.description, pe.outcome, pe.notes
+                FROM procedure_events pe
+                LEFT JOIN procedures p ON p.id = pe.procedure_id
+                ORDER BY pe.event_date ASC
                 {limit_clause}"""
         ).fetchall()
         return [dict(r) for r in rows]
@@ -142,7 +144,10 @@ def get_court_event_correlation(event_id: int, window_days: int = 14) -> Optiona
     """
     with get_db() as conn:
         ev_row = conn.execute(
-            "SELECT * FROM court_events WHERE id = ?", (event_id,)
+            """SELECT pe.id, pe.event_date, pe.event_type, pe.description, pe.outcome,
+                      pe.notes, COALESCE(p.jurisdiction,'') AS jurisdiction
+               FROM procedure_events pe LEFT JOIN procedures p ON p.id=pe.procedure_id
+               WHERE pe.id = ?""", (event_id,)
         ).fetchone()
         if not ev_row:
             return None

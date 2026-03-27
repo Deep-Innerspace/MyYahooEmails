@@ -1,6 +1,6 @@
 # MyYahooEmails — Architecture Reference
 
-> Last updated: 2026-03-22
+> Last updated: 2026-03-27
 
 ## High-Level Data Flow
 
@@ -95,15 +95,15 @@ Yahoo IMAP (read-only)
 | `src/web/routes/reports.py` | Report generation hub + download endpoint |
 | `src/web/routes/settings.py` | Analysis runs overview, coverage stats, run deletion |
 | `src/web/routes/book.py` | Narrative Arc, Chapters CRUD, Quote Bank, Pivotal Moments |
-| `src/web/routes/court_events.py` | Court events list |
+| `src/web/routes/court_events.py` | Court events list (to be replaced by procedures in Phase 6e) |
 | `cli.py` | All CLI commands (click groups) + `web` command |
 
 ## Database Schema Summary
 
 ### Core tables
 - **contacts** — `id, name, email, aliases (JSON), role, notes`
-- **emails** — full MIME metadata + `body_text, body_html, delta_text, delta_hash, direction, language`
-- **attachments** — binary content linked to emails
+- **emails** — full MIME metadata + `body_text, body_html, delta_text, delta_hash, direction, language, corpus` ('personal'|'legal')
+- **attachments** — linked to emails; BLOB content (personal) or on-demand download metadata (legal): `mime_section, imap_uid, folder, downloaded, download_path, category`
 - **threads** — grouped by References chain + normalized subject
 
 ### Analysis tables
@@ -114,10 +114,15 @@ Yahoo IMAP (read-only)
 - **contradictions** — conflicting email pairs with severity + explanation
 - **timeline_events** — extracted dated events with type + significance
 
+### Legal procedures (Phase 6 — replaces court_events)
+- **procedures** — legal proceedings: type, jurisdiction, case_number, initiated_by, party lawyers, status
+- **procedure_events** — events within procedures: filing, hearing, judgment, etc. with date_precision
+- **lawyer_invoices** — cost tracking: amount_ht/ttc, tva_rate, per-lawyer per-procedure
+
 ### Context tables
-- **court_events** — manually entered hearings, filings, decisions
 - **external_events** — other key life dates
 - **fetch_state** — `(folder, contact_email) → last_uid` for resumable IMAP fetch
+- **schema_version** — migration tracking (migration_id, description, applied_at)
 
 ### Web Dashboard (Phase 5)
 - **notes** — perspective-aware annotations (`entity_type, entity_id, perspective, category, content`)

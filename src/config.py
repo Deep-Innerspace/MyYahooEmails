@@ -90,6 +90,18 @@ def court_correlation_window() -> int:
     """Default days before/after court events to examine."""
     return int(cfg().get("analysis", {}).get("court_correlation_window", 14))
 
+def attachment_download_dir() -> Path:
+    """Directory for on-demand downloaded attachments."""
+    path = _ROOT / "data" / "attachments"
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def lawyer_contacts() -> List[Dict[str, Any]]:
+    """Return contacts with role in ('my_lawyer', 'her_lawyer')."""
+    return [c for c in contacts() if c.get("role") in ("my_lawyer", "her_lawyer")]
+
+
 def report_output_dir() -> Path:
     """Default output directory for generated reports."""
     p = cfg().get("reports", {}).get("output_dir", "data/exports")

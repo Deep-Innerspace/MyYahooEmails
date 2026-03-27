@@ -1,4 +1,4 @@
-"""Court events route — list of court events (legal perspective)."""
+"""Court events route — list of procedure events (legal perspective, Phase 6)."""
 import sqlite3
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import HTMLResponse
@@ -20,11 +20,14 @@ async def court_events_page(
     conn: sqlite3.Connection = Depends(get_conn),
     perspective: str = Depends(get_perspective),
 ):
-    """Court events list."""
+    """Procedure events list (replaces court_events after Phase 6a migration)."""
     try:
         rows = conn.execute(
-            """SELECT id, event_date, event_type, jurisdiction, description, outcome
-               FROM court_events ORDER BY event_date DESC"""
+            """SELECT pe.id, pe.event_date, pe.event_type, pe.description, pe.outcome,
+                      pe.date_precision, p.name AS procedure_name, p.jurisdiction
+               FROM procedure_events pe
+               LEFT JOIN procedures p ON p.id = pe.procedure_id
+               ORDER BY pe.event_date DESC"""
         ).fetchall()
         events = [dict(r) for r in rows]
     except Exception:

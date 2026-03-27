@@ -398,3 +398,43 @@ parsed = raw.parse()  # get the actual response content
 **Rationale**: The global handler with `evt.detail.target.id === 'email-modal'` check was not reliably firing when the triggering link was inside content that had itself been dynamically swapped by HTMX (the `#timeline-list` partial). Using `hx-on::after-swap` on the element itself fires directly when that specific element's swap completes, regardless of nesting.
 
 **Impact**: `href` also changed to `#` to prevent browser navigation if HTMX is ever slow to intercept. The global handler in `app.js` is retained as a fallback.
+
+---
+
+## 2026-03-27 — Corpus column approach for lawyer emails (not separate tables)
+
+**Decision**: Add a `corpus` column (`'personal'` | `'legal'`) to the existing `emails` table rather than creating a separate `lawyer_emails` table.
+
+**Rationale**: The email structure is identical for both corpora — what differs is the analysis on top. A single table enables: full code reuse (fetch, parse, thread, FTS5, search), cross-corpus timeline correlation queries via simple JOINs, and a unified FTS5 index. The cost is adding `WHERE corpus = ?` to ~35-40 queries, managed via a centralized `corpus_clause()` helper.
+
+**Impact**: All existing 3,922 emails default to `corpus='personal'`. 131 emails to/from known lawyer addresses auto-reclassified to `corpus='legal'`. New tables (`procedures`, `procedure_events`, `lawyer_invoices`) reference `emails.id` across both corpora.
+
+---
+
+## 2026-03-27 — Lightweight migration system (schema_version + _MIGRATIONS list)
+
+**Decision**: Introduce a `schema_version` table and `_MIGRATIONS` list of `(id, description, sql)` tuples in `database.py`. `init_db()` runs `_SCHEMA` first (for fresh DBs), then `_run_migrations()` (for existing DBs), then `_INDEXES` (last, so new columns exist).
+
+**Rationale**: The project had no migration framework — only `CREATE TABLE IF NOT EXISTS` which can't add columns to existing tables. SQLite's `ALTER TABLE ADD COLUMN` requires `DEFAULT` values for `NOT NULL` columns. This lightweight approach avoids Alembic overhead while supporting incremental schema evolution. Duplicate column errors are caught and silently skipped for idempotency.
+
+**Impact**: 10 initial migrations applied: corpus column, 6 attachment columns, 3 new tables, court_events drop, lawyer email reclassification. Order: schema → migrations → indexes (critical — indexes on new columns must come after migrations).
+
+---
+
+## 2026-03-27 — Drop court_events, replace with procedures + procedure_events
+
+**Decision**: Drop the `court_events` table entirely (confirmed empty, 0 rows) and replace with a richer two-table model: `procedures` (the legal proceeding) + `procedure_events` (events within a proceeding).
+
+**Rationale**: A flat `court_events` table can't represent the structure of French divorce law: multiple parallel procedures (divorce principal, garde, pension, appel), each with their own jurisdiction, case number, parties' lawyers, and sequence of events. The two-table model allows grouping events by procedure, tracking which lawyer represented which party per procedure, and linking events to source emails and attachments.
+
+**Impact**: `court_events` dropped. `procedures` table: type, jurisdiction, case_number, initiated_by, party_a/b_lawyer_id, status. `procedure_events` table: event_type (filing/hearing/judgment/etc.), date_precision, source_email_id, source_attachment_id. `court_correlator.py` will be refactored in Phase 6e.
+
+---
+
+## 2026-03-27 — Extend attachments table (not replace) for on-demand download
+
+**Decision**: Add 6 columns to the existing `attachments` table rather than creating a new `email_attachments` table. Existing 1,464 BLOB rows get `downloaded=1` automatically via DEFAULT.
+
+**Rationale**: The existing attachments table has 1,464 rows with actual BLOB content — can't simply replace it. Extending it keeps one codebase for attachment handling across both corpora. Personal corpus: content in BLOB column (already downloaded). Legal corpus: `downloaded=0`, `mime_section`+`imap_uid`+`folder` stored for on-demand IMAP re-fetch. Both served through the same web endpoint.
+
+**Impact**: New columns: `mime_section` (IMAP part ID), `imap_uid`, `folder`, `downloaded` (bool), `download_path` (filesystem), `category` (document classification). Existing rows: `downloaded=1`, other new columns NULL.

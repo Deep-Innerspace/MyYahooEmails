@@ -177,14 +177,18 @@ tests/
 ## Database Schema (Key Tables)
 
 - **contacts** — `id, name, email, aliases (JSON list), role, notes`
-- **emails** — `id, message_id (UNIQUE), thread_id, date, from_address, to_addresses (JSON), subject, subject_normalized, body_text, body_html, delta_text, delta_hash, direction, language, has_attachments, contact_id, folder, uid`
+- **emails** — `id, message_id (UNIQUE), thread_id, date, from_address, to_addresses (JSON), subject, subject_normalized, body_text, body_html, delta_text, delta_hash, direction, language, has_attachments, contact_id, folder, uid, corpus` ('personal'|'legal')
 - **threads** — grouped by subject_normalized + References chain
 - **topics** — predefined + AI-discovered; linked via **email_topics** (email_id, topic_id, confidence, run_id)
 - **analysis_runs** — `id, analysis_type, provider_name, model_id, prompt_hash, prompt_version, status`
 - **analysis_results** — one row per (run, email); stores full LLM JSON output
 - **contradictions** — pairs of conflicting emails with severity + explanation
 - **timeline_events** — extracted events with date, type, significance
-- **court_events** — manually entered hearings, filings, decisions
+- **procedures** — legal proceedings with type, jurisdiction, case number, parties' lawyers, status
+- **procedure_events** — events within procedures (hearings, judgments, filings) with date precision
+- **lawyer_invoices** — cost tracking per lawyer per procedure (amount_ht, amount_ttc, tva_rate)
+- **attachments** — email attachments with on-demand download support (mime_section, imap_uid, folder, downloaded, download_path, category)
+- **schema_version** — migration tracking (migration_id, description, applied_at)
 - **fetch_state** — `(folder, contact_email)` → `last_uid` for resumable fetching
 - **emails_fts** — FTS5 virtual table mirroring subject + body_text + delta_text + addresses
 - **notes** — perspective-aware annotations (`entity_type, entity_id, perspective, category, content`)
@@ -328,15 +332,72 @@ Two-layer protection:
 - Creates both topics if they don't exist; creates a run with provider="manual", model="rule-based"
 - These count toward classification coverage % but are excluded from topic distribution charts in the web dashboard
 
-### Current Analysis Coverage (as of 2026-03-26)
-- Total emails: 3,922
+### Current Analysis Coverage (as of 2026-03-27)
+- Total emails: 3,922 (3,791 personal + 131 legal corpus)
 - Classification: 3,922/3,922 (100%) ✅ COMPLETE
 - Tone analysis: 3,922/3,922 (100%) ✅ COMPLETE
 - Manipulation: 3,922/3,922 (100%) ✅ COMPLETE — runs #62–78 + all 17 batches via ChatGPT gpt-5.4-thinking
 - Timeline extraction: 3,922/3,922 (100%) ✅ COMPLETE — 915 events found — 21 runs total (runs #4, #14, #109, #112, #113, #118–#133)
 - Contradictions: 45 pairs total across 9 topics ✅ COMPLETE — (enfants 7, vacances 12, éducation 10, procédure 4, santé 5, logement 2, école 2, finances 1, (none) 2)
   - All 17 batch files imported (including finances_1 + finances_2 — run#114 + run#115/117)
-- Court events: 0 — not yet entered
+- Procedures: 0 — tables created, awaiting LLM extraction from lawyer emails
+
+### 🔲 Phase 6 — Lawyer Correspondence Module (IN PROGRESS — branch: `feature/lawyer-corpus`)
+
+**Goal**: Extend the system to manage emails with lawyers (2-3 per party, 2014-present) for procedure tracking, document management, cost analysis, and cross-corpus timeline correlation.
+
+#### ✅ Phase 6a — Schema + Migration Infrastructure (COMPLETE)
+- **Migration system**: `schema_version` table + `_MIGRATIONS` list in `database.py` — lightweight, idempotent
+- **`corpus` column** on `emails`: `'personal'` (default) or `'legal'` — 131 lawyer emails auto-reclassified
+- **`attachments` table extended**: 6 new columns (`mime_section`, `imap_uid`, `folder`, `downloaded`, `download_path`, `category`) for on-demand IMAP download
+- **`court_events` dropped** (was empty), replaced by `procedures` + `procedure_events` + `lawyer_invoices`
+- **New dataclasses**: `Procedure`, `ProcedureEvent`, `LawyerInvoice` in `models.py`
+- **Config**: `attachment_download_dir()`, `lawyer_contacts()` helpers; new roles `my_lawyer`, `her_lawyer`, `opposing_counsel`
+- DB backup: `data/emails.db.backup-pre-6a`
+
+#### 🔲 Phase 6b — Fetch Pipeline Extension
+- Corpus-aware `store_email()` in threader.py
+- Attachment metadata-only mode for legal corpus (no BLOB download)
+- `fetch_mime_part()` in imap_client.py for on-demand part download
+- `--corpus` option + `fetch lawyers` convenience command
+
+#### 🔲 Phase 6g — Corpus Filter + Sidebar Restructure (moved early — highest risk)
+- Centralized `corpus_clause()` helper for ~35-40 query updates
+- Sidebar: Legal > Case Analysis (Contradictions, Manipulation) + Legal > Legal Strategy (Procedures, Documents, Legal Costs)
+- Corpus tabs (Personal | Legal | All) on email browser
+- `get_corpus()` dependency in deps.py
+
+#### 🔲 Phase 6g.1 — Email Management (Delete + Reclassify)
+- Review ~220 third-party emails (schools, housing, family)
+- Delete irrelevant, reclassify between personal/legal
+- Bulk actions (select + delete/reclassify)
+
+#### 🔲 Phase 6c — Attachment UI + On-Demand Download
+- Attachment list in email detail (replaces 📎-only indicator)
+- Serve from BLOB (personal) or filesystem (legal)
+- On-demand IMAP FETCH for un-downloaded legal attachments
+
+#### 🔲 Phase 6d — Document Classification
+- Manual + auto-suggest (filename regex) for 15 categories
+- Categories: invoice, court_filing, conclusion_draft, conclusion_final, judgment, ordonnance, expert_report, convocation, pv_audience, correspondence_adverse, convention, attestation, mise_en_demeure, requete, other
+
+#### 🔲 Phase 6e — Procedures Model
+- CRUD for procedures + procedure_events (replaces court_events)
+- LLM extraction from lawyer emails
+- Web UI: procedure list with events timeline
+
+#### 🔲 Phase 6f — Cost Tracking
+- `lawyer_invoices` CRUD + cost dashboard
+- Auto-extraction from email body (regex for EUR/TTC/HT)
+- Charts: per-lawyer, per-procedure, monthly burn rate
+
+#### 🔲 Phase 6h — Unified Timeline
+- Merge both corpora + procedure events + cost events
+- Color-coded by source type
+
+#### 🔲 Phase 6i — Judgment PDF Analysis
+- PDF text extraction + LLM parsing (parties, judge, ruling, obligations)
+- New dependency: `pdfplumber`
 
 ### Web Dashboard Bug Fixes (2026-03-25)
 - **"View email" modal on timeline**: `hx-on::after-swap` added directly to "View email" link in `partials/timeline_list.html`; `href` changed to `#` to prevent fallback navigation. The global `htmx:afterSwap` handler in `app.js` was not reliably firing when the link resided inside a dynamically-swapped HTMX partial.

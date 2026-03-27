@@ -87,7 +87,7 @@ def overview_stats(conn: sqlite3.Connection) -> Dict[str, Any]:
             (atype,),
         ).fetchone()[0]
     r["contradiction_count"] = conn.execute("SELECT COUNT(*) FROM contradictions").fetchone()[0]
-    r["court_events_count"] = conn.execute("SELECT COUNT(*) FROM court_events").fetchone()[0]
+    r["procedure_events_count"] = conn.execute("SELECT COUNT(*) FROM procedure_events").fetchone()[0]
     r["timeline_events_count"] = conn.execute("SELECT COUNT(*) FROM timeline_events").fetchone()[0]
 
     return r
@@ -381,7 +381,7 @@ def merged_timeline(conn: sqlite3.Connection,
                     since: Optional[str] = None,
                     until: Optional[str] = None,
                     significance: Optional[str] = None) -> List[Dict]:
-    """Merge timeline_events + court_events into one chronological list."""
+    """Merge timeline_events + procedure_events into one chronological list."""
     sig_clause = ""
     sig_params: list = []
     if significance:
@@ -417,14 +417,16 @@ def merged_timeline(conn: sqlite3.Connection,
         sig_params + date_params_te,
     ).fetchall()
 
-    # Court events
+    # Procedure events (replaced court_events in Phase 6a)
     ce_rows = conn.execute(
-        f"""SELECT ce.event_date AS date, 'court' AS source,
-                   ce.event_type AS type, ce.description,
-                   'high' AS significance, NULL AS topic, NULL AS email_id
-            FROM court_events ce
+        f"""SELECT pe.event_date AS date, 'court' AS source,
+                   pe.event_type AS type,
+                   COALESCE(p.name || ' — ', '') || pe.description AS description,
+                   'high' AS significance, NULL AS topic, pe.source_email_id AS email_id
+            FROM procedure_events pe
+            LEFT JOIN procedures p ON p.id = pe.procedure_id
             WHERE 1=1 {date_clause_ce}
-            ORDER BY ce.event_date""",
+            ORDER BY pe.event_date""",
         date_params_ce,
     ).fetchall()
 

@@ -53,7 +53,8 @@ llm:
       model: mistral
 
 # Watched contacts (emails will be fetched for these addresses and ALL their aliases)
-# Format: name, email (primary), role (me | ex-wife | lawyer | other), aliases (optional list)
+# Format: name, email (primary), role, aliases (optional list)
+# Roles: me, ex-wife, my_lawyer, her_lawyer, opposing_counsel, other
 # Aliases = other addresses the same person has used over the years.
 # You can also add aliases later with: python cli.py contacts alias -i <id> --add <email>
 contacts:
@@ -66,6 +67,22 @@ contacts:
     aliases:
       - exwife.old@hotmail.fr
       - exwife.pro@entreprise.com
+
+  # Lawyer contacts — emails fetched into 'legal' corpus
+  # - name: Maître Dupont
+  #   email: dupont@avocat.fr
+  #   role: my_lawyer
+  #   aliases:
+  #     - dupont.perso@gmail.com
+
+  # - name: Maître Martin
+  #   email: martin@barreau.fr
+  #   role: my_lawyer
+
+  # Opposing party's lawyers (reference only, no email fetch)
+  # - name: Avocat adverse
+  #   email: adverse@cabinet.fr
+  #   role: opposing_counsel
 
 # Predefined topics (AI will also discover new ones)
 topics:

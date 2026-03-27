@@ -40,6 +40,7 @@ class Email:
     has_attachments: bool
     contact_id: Optional[int]   # FK to contacts (the other party)
     fetched_at: datetime
+    corpus: str = "personal"    # 'personal' or 'legal'
 
 
 @dataclass
@@ -49,7 +50,13 @@ class Attachment:
     filename: str
     content_type: str
     size_bytes: int
-    content: Optional[bytes]  # Stored lazily
+    content: Optional[bytes]  # BLOB for personal corpus (legacy)
+    mime_section: Optional[str] = None   # IMAP BODY part ID for re-fetch
+    imap_uid: Optional[int] = None       # UID on server
+    folder: Optional[str] = None         # IMAP folder
+    downloaded: bool = True              # True if content available
+    download_path: Optional[str] = None  # Filesystem path (on-demand downloads)
+    category: Optional[str] = None       # Document classification
 
 
 @dataclass
@@ -130,14 +137,53 @@ class TimelineEvent:
 
 
 @dataclass
-class CourtEvent:
+class Procedure:
     id: Optional[int]
-    event_date: datetime
-    event_type: str          # 'hearing', 'filing', 'decision', 'appeal', 'other'
-    jurisdiction: str        # e.g. 'TGI Paris', 'CAA Lyon'
-    description: str
-    outcome: str = ""
+    name: str
+    procedure_type: str      # 'divorce', 'custody', 'finances', 'appeal', 'liquidation', 'refere', 'jaf_modification'
+    jurisdiction: str        # e.g. 'TGI Paris', 'Cour d''appel Versailles'
+    case_number: str = ""
+    filing_date: Optional[str] = None
+    initiated_by: str = ""   # 'party_a' (Madame) or 'party_b' (Monsieur)
+    party_a_lawyer_id: Optional[int] = None
+    party_b_lawyer_id: Optional[int] = None
+    status: str = "active"   # 'active', 'closed', 'appealed', 'settled'
+    date_start: Optional[str] = None
+    date_end: Optional[str] = None
+    description: str = ""
+    outcome_summary: str = ""
     notes: str = ""
+
+
+@dataclass
+class ProcedureEvent:
+    id: Optional[int]
+    procedure_id: int
+    event_date: str
+    event_type: str          # 'filing', 'hearing', 'judgment', 'ordonnance', 'signification', 'appeal', 'mediation', 'expertise', 'depot_conclusions'
+    date_precision: str = "exact"  # 'exact', 'month', 'approximate'
+    description: str = ""
+    outcome: str = ""
+    source_email_id: Optional[int] = None
+    source_attachment_id: Optional[int] = None
+    notes: str = ""
+
+
+@dataclass
+class LawyerInvoice:
+    id: Optional[int]
+    procedure_id: Optional[int]
+    contact_id: int          # Which lawyer
+    email_id: Optional[int]
+    attachment_id: Optional[int] = None
+    invoice_date: str = ""
+    invoice_number: str = ""
+    amount_ht: Optional[float] = None
+    amount_ttc: Optional[float] = None
+    tva_rate: float = 0.20
+    description: str = ""
+    status: str = "paid"     # 'paid', 'pending', 'disputed'
+    payment_date: Optional[str] = None
 
 
 @dataclass

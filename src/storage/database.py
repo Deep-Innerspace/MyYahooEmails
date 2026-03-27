@@ -69,17 +69,24 @@ CREATE TABLE IF NOT EXISTS emails (
     language            TEXT NOT NULL DEFAULT 'unknown',
     has_attachments     INTEGER NOT NULL DEFAULT 0,
     contact_id          INTEGER REFERENCES contacts(id),
-    fetched_at          TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+    fetched_at          TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    corpus              TEXT NOT NULL DEFAULT 'personal'  -- 'personal' or 'legal'
 );
 
--- Attachments
+-- Attachments (metadata always stored; content via BLOB or on-demand IMAP download)
 CREATE TABLE IF NOT EXISTS attachments (
-    id           INTEGER PRIMARY KEY AUTOINCREMENT,
-    email_id     INTEGER NOT NULL REFERENCES emails(id) ON DELETE CASCADE,
-    filename     TEXT NOT NULL,
-    content_type TEXT NOT NULL,
-    size_bytes   INTEGER NOT NULL DEFAULT 0,
-    content      BLOB
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    email_id      INTEGER NOT NULL REFERENCES emails(id) ON DELETE CASCADE,
+    filename      TEXT NOT NULL,
+    content_type  TEXT NOT NULL,
+    size_bytes    INTEGER NOT NULL DEFAULT 0,
+    content       BLOB,
+    mime_section  TEXT,            -- IMAP BODY part ID for on-demand re-fetch
+    imap_uid      INTEGER,        -- UID on server for re-fetch
+    folder        TEXT,            -- IMAP folder for re-fetch
+    downloaded    INTEGER NOT NULL DEFAULT 1,  -- 1 if content available (BLOB or file)
+    download_path TEXT,            -- filesystem path (for on-demand downloads)
+    category      TEXT             -- document classification (invoice, judgment, etc.)
 );
 
 -- Conversation threads
@@ -161,15 +168,57 @@ CREATE TABLE IF NOT EXISTS timeline_events (
     created_at  TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
--- Court hearings, filings, decisions
-CREATE TABLE IF NOT EXISTS court_events (
-    id           INTEGER PRIMARY KEY AUTOINCREMENT,
-    event_date   TIMESTAMP NOT NULL,
-    event_type   TEXT NOT NULL DEFAULT 'hearing',
-    jurisdiction TEXT NOT NULL DEFAULT '',
-    description  TEXT NOT NULL,
-    outcome      TEXT NOT NULL DEFAULT '',
-    notes        TEXT NOT NULL DEFAULT ''
+-- Legal procedures (replaces court_events)
+CREATE TABLE IF NOT EXISTS procedures (
+    id               INTEGER PRIMARY KEY AUTOINCREMENT,
+    name             TEXT NOT NULL DEFAULT '',
+    procedure_type   TEXT NOT NULL DEFAULT 'divorce',  -- divorce, custody, finances, appeal, liquidation, refere, jaf_modification
+    jurisdiction     TEXT NOT NULL DEFAULT '',          -- e.g. 'TGI Paris', 'Cour d''appel Versailles'
+    case_number      TEXT NOT NULL DEFAULT '',
+    filing_date      TEXT,
+    initiated_by     TEXT NOT NULL DEFAULT '',          -- 'party_a' (Madame) or 'party_b' (Monsieur)
+    party_a_lawyer_id INTEGER REFERENCES contacts(id),
+    party_b_lawyer_id INTEGER REFERENCES contacts(id),
+    status           TEXT NOT NULL DEFAULT 'active',    -- active, closed, appealed, settled
+    date_start       TEXT,
+    date_end         TEXT,
+    description      TEXT NOT NULL DEFAULT '',
+    outcome_summary  TEXT NOT NULL DEFAULT '',
+    notes            TEXT NOT NULL DEFAULT '',
+    created_at       TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Events within procedures (hearings, filings, judgments, etc.)
+CREATE TABLE IF NOT EXISTS procedure_events (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    procedure_id    INTEGER NOT NULL REFERENCES procedures(id) ON DELETE CASCADE,
+    event_date      TEXT NOT NULL,
+    event_type      TEXT NOT NULL DEFAULT 'hearing',  -- filing, hearing, judgment, ordonnance, signification, appeal, mediation, expertise, depot_conclusions
+    date_precision  TEXT NOT NULL DEFAULT 'exact',    -- exact, month, approximate
+    description     TEXT NOT NULL,
+    outcome         TEXT NOT NULL DEFAULT '',
+    source_email_id INTEGER REFERENCES emails(id),
+    source_attachment_id INTEGER REFERENCES attachments(id),
+    notes           TEXT NOT NULL DEFAULT '',
+    created_at      TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Lawyer invoice tracking
+CREATE TABLE IF NOT EXISTS lawyer_invoices (
+    id                INTEGER PRIMARY KEY AUTOINCREMENT,
+    procedure_id      INTEGER REFERENCES procedures(id),
+    contact_id        INTEGER NOT NULL REFERENCES contacts(id),  -- which lawyer
+    email_id          INTEGER REFERENCES emails(id),             -- source email mentioning the invoice
+    attachment_id     INTEGER REFERENCES attachments(id),        -- the invoice document
+    invoice_date      TEXT NOT NULL,
+    invoice_number    TEXT NOT NULL DEFAULT '',
+    amount_ht         REAL,               -- before tax
+    amount_ttc        REAL,               -- total with tax
+    tva_rate          REAL DEFAULT 0.20,
+    description       TEXT NOT NULL DEFAULT '',
+    status            TEXT NOT NULL DEFAULT 'paid',  -- paid, pending, disputed
+    payment_date      TEXT,
+    created_at        TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
 -- Other external life events
@@ -195,7 +244,7 @@ CREATE TABLE IF NOT EXISTS fetch_state (
 CREATE TABLE IF NOT EXISTS notes (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
     entity_type TEXT NOT NULL,      -- 'email', 'contradiction', 'timeline_event',
-                                    --  'court_event', 'analysis_result', 'chapter'
+                                    --  'procedure', 'procedure_event', 'analysis_result', 'chapter'
     entity_id   INTEGER NOT NULL,
     perspective TEXT NOT NULL DEFAULT 'legal',  -- 'legal' or 'book'
     category    TEXT NOT NULL DEFAULT 'general',
@@ -301,11 +350,15 @@ CREATE INDEX IF NOT EXISTS idx_emails_from        ON emails(from_address);
 CREATE INDEX IF NOT EXISTS idx_emails_thread      ON emails(thread_id);
 CREATE INDEX IF NOT EXISTS idx_emails_contact     ON emails(contact_id);
 CREATE INDEX IF NOT EXISTS idx_emails_delta_hash  ON emails(delta_hash);
+CREATE INDEX IF NOT EXISTS idx_emails_corpus      ON emails(corpus);
 CREATE INDEX IF NOT EXISTS idx_analysis_results_run  ON analysis_results(run_id);
 CREATE INDEX IF NOT EXISTS idx_analysis_results_email ON analysis_results(email_id);
 CREATE INDEX IF NOT EXISTS idx_contradictions_run ON contradictions(run_id);
 CREATE INDEX IF NOT EXISTS idx_timeline_events_date ON timeline_events(event_date);
-CREATE INDEX IF NOT EXISTS idx_court_events_date  ON court_events(event_date);
+CREATE INDEX IF NOT EXISTS idx_procedure_events_date ON procedure_events(event_date);
+CREATE INDEX IF NOT EXISTS idx_procedure_events_proc ON procedure_events(procedure_id);
+CREATE INDEX IF NOT EXISTS idx_lawyer_invoices_contact ON lawyer_invoices(contact_id);
+CREATE INDEX IF NOT EXISTS idx_lawyer_invoices_proc ON lawyer_invoices(procedure_id);
 CREATE INDEX IF NOT EXISTS idx_notes_entity      ON notes(entity_type, entity_id);
 CREATE INDEX IF NOT EXISTS idx_notes_perspective ON notes(perspective);
 CREATE INDEX IF NOT EXISTS idx_quotes_email      ON quotes(email_id);
@@ -314,10 +367,80 @@ CREATE INDEX IF NOT EXISTS idx_chapter_emails    ON chapter_emails(chapter_id);
 """
 
 
+# ─────────────────────────── MIGRATIONS ──────────────────────────────────────
+
+# Each migration is (id, description, sql).  Applied once; tracked in schema_version.
+_MIGRATIONS = [
+    (1, "Add corpus column to emails", """
+        ALTER TABLE emails ADD COLUMN corpus TEXT NOT NULL DEFAULT 'personal';
+    """),
+    (2, "Add mime_section to attachments", """
+        ALTER TABLE attachments ADD COLUMN mime_section TEXT;
+    """),
+    (3, "Add imap_uid to attachments", """
+        ALTER TABLE attachments ADD COLUMN imap_uid INTEGER;
+    """),
+    (4, "Add folder to attachments", """
+        ALTER TABLE attachments ADD COLUMN folder TEXT;
+    """),
+    (5, "Add downloaded flag to attachments", """
+        ALTER TABLE attachments ADD COLUMN downloaded INTEGER NOT NULL DEFAULT 1;
+    """),
+    (6, "Add download_path to attachments", """
+        ALTER TABLE attachments ADD COLUMN download_path TEXT;
+    """),
+    (7, "Add category to attachments", """
+        ALTER TABLE attachments ADD COLUMN category TEXT;
+    """),
+    (8, "Add corpus index on emails", """
+        CREATE INDEX IF NOT EXISTS idx_emails_corpus ON emails(corpus);
+    """),
+    (9, "Drop empty court_events table", """
+        DROP TABLE IF EXISTS court_events;
+    """),
+    (10, "Reclassify lawyer emails to legal corpus", """
+        UPDATE emails SET corpus = 'legal'
+        WHERE from_address IN ('vclavocat@gmail.com', 'h.deblauwe@onyx-avocats.com', 'jtd@jtd-avocats.com')
+           OR to_addresses LIKE '%vclavocat@gmail.com%'
+           OR to_addresses LIKE '%h.deblauwe@onyx-avocats.com%'
+           OR to_addresses LIKE '%jtd@jtd-avocats.com%';
+    """),
+]
+
+
+def _run_migrations(conn: sqlite3.Connection) -> None:
+    """Apply pending migrations. Safe to call repeatedly."""
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS schema_version (
+            migration_id  INTEGER PRIMARY KEY,
+            description   TEXT NOT NULL,
+            applied_at    TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+    applied = {r[0] for r in conn.execute("SELECT migration_id FROM schema_version").fetchall()}
+    for mid, desc, sql in _MIGRATIONS:
+        if mid in applied:
+            continue
+        try:
+            conn.executescript(sql)
+        except sqlite3.OperationalError as e:
+            # Skip "duplicate column" errors for idempotency
+            if "duplicate column" in str(e).lower():
+                pass
+            else:
+                raise
+        conn.execute(
+            "INSERT INTO schema_version (migration_id, description) VALUES (?, ?)",
+            (mid, desc),
+        )
+    conn.commit()
+
+
 def init_db() -> None:
-    """Create all tables and indexes if they don't exist."""
+    """Create all tables and indexes if they don't exist, then run pending migrations."""
     with get_db() as conn:
         conn.executescript(_SCHEMA)
+        _run_migrations(conn)
         conn.executescript(_INDEXES)
 
 
@@ -390,3 +513,33 @@ def delta_hash_exists(delta_hash: str) -> bool:
             "SELECT id FROM emails WHERE delta_hash=?", (delta_hash,)
         ).fetchone()
         return row is not None
+
+
+def delete_email(email_id: int) -> bool:
+    """Delete an email and all cascaded data. Returns True if found."""
+    with get_db() as conn:
+        row = conn.execute("SELECT id FROM emails WHERE id=?", (email_id,)).fetchone()
+        if not row:
+            return False
+        conn.execute("DELETE FROM emails WHERE id=?", (email_id,))
+        return True
+
+
+def update_email_corpus(email_id: int, corpus: str) -> bool:
+    """Change the corpus of an email ('personal' or 'legal'). Returns True if found."""
+    if corpus not in ("personal", "legal"):
+        raise ValueError(f"Invalid corpus: {corpus!r}")
+    with get_db() as conn:
+        cur = conn.execute(
+            "UPDATE emails SET corpus=? WHERE id=?", (corpus, email_id)
+        )
+        return cur.rowcount > 0
+
+
+def update_attachment_downloaded(attachment_id: int, download_path: str) -> None:
+    """Mark an attachment as downloaded and record its filesystem path."""
+    with get_db() as conn:
+        conn.execute(
+            "UPDATE attachments SET downloaded=1, download_path=? WHERE id=?",
+            (download_path, attachment_id),
+        )
