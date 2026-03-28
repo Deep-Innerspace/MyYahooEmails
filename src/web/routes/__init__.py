@@ -11,7 +11,7 @@ from src.web.routes.contacts import router as contacts_router
 from src.web.routes.reports import router as reports_router
 from src.web.routes.settings import router as settings_router
 from src.web.routes.book import router as book_router
-from src.web.routes.court_events import router as court_events_router
+from src.web.routes.procedures import router as procedures_router
 from src.web.routes.attachments import router as attachments_router
 
 router = APIRouter()
@@ -25,5 +25,5 @@ router.include_router(contacts_router, prefix="/contacts")
 router.include_router(reports_router, prefix="/reports")
 router.include_router(settings_router, prefix="/settings")
 router.include_router(book_router)
-router.include_router(court_events_router, prefix="/court-events")
+router.include_router(procedures_router, prefix="/procedures")
 router.include_router(attachments_router, prefix="/attachments")
