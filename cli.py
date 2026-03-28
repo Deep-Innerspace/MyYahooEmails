@@ -775,7 +775,9 @@ def events_add(event_date, event_type, description, jurisdiction, outcome):
     init_db()
     with get_db() as conn:
         conn.execute(
-            "INSERT INTO court_events (event_date, event_type, jurisdiction, description, outcome) VALUES (?,?,?,?,?)",
+            """INSERT INTO procedure_events
+               (procedure_id, event_date, event_type, jurisdiction, description, outcome)
+               VALUES (NULL, ?, ?, ?, ?, ?)""",
             (event_date.date().isoformat(), event_type, jurisdiction, description, outcome),
         )
     console.print(f"[green]Court event added: {event_date.date()} — {description}[/green]")
@@ -788,7 +790,8 @@ def events_list():
     with get_db() as conn:
         rows = conn.execute(
             """SELECT pe.id, pe.event_date, pe.event_type, pe.description, pe.outcome,
-                      COALESCE(p.jurisdiction,'') AS jurisdiction, p.name AS procedure_name
+                      COALESCE(NULLIF(pe.jurisdiction,''), p.jurisdiction, '') AS jurisdiction,
+                      p.name AS procedure_name
                FROM procedure_events pe
                LEFT JOIN procedures p ON p.id = pe.procedure_id
                ORDER BY pe.event_date"""
@@ -823,9 +826,9 @@ def events_import(filepath):
         with get_db() as conn:
             for row in reader:
                 conn.execute(
-                    """INSERT OR IGNORE INTO court_events
-                       (event_date, event_type, jurisdiction, description, outcome)
-                       VALUES (?,?,?,?,?)""",
+                    """INSERT INTO procedure_events
+                       (procedure_id, event_date, event_type, jurisdiction, description, outcome)
+                       VALUES (NULL, ?, ?, ?, ?, ?)""",
                     (
                         row.get("date", "").strip(),
                         row.get("type", "other").strip(),

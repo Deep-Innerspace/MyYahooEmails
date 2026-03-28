@@ -56,7 +56,7 @@ async def narrative_page(
 def _get_chapters(conn: sqlite3.Connection):
     try:
         rows = conn.execute(
-            """SELECT id, title, position, date_from, date_to, summary, notes
+            """SELECT id, title, position, date_start, date_end, summary, notes
                FROM chapters ORDER BY position ASC"""
         ).fetchall()
         return [dict(r) for r in rows]
@@ -90,7 +90,7 @@ async def chapter_detail(
     """Chapter detail (HTMX partial)."""
     try:
         row = conn.execute(
-            "SELECT id, title, position, date_from, date_to, summary, notes FROM chapters WHERE id = ?",
+            "SELECT id, title, position, date_start, date_end, summary, notes FROM chapters WHERE id = ?",
             (chapter_id,),
         ).fetchone()
     except Exception:
@@ -103,15 +103,15 @@ async def chapter_detail(
 
     # Emails in this date range
     emails = []
-    if chapter.get("date_from") or chapter.get("date_to"):
+    if chapter.get("date_start") or chapter.get("date_end"):
         wheres = []
         params = []
-        if chapter.get("date_from"):
+        if chapter.get("date_start"):
             wheres.append("date >= ?")
-            params.append(chapter["date_from"])
-        if chapter.get("date_to"):
+            params.append(chapter["date_start"])
+        if chapter.get("date_end"):
             wheres.append("date <= ?")
-            params.append(chapter["date_to"] + " 23:59:59")
+            params.append(chapter["date_end"] + " 23:59:59")
         where_clause = "WHERE " + " AND ".join(wheres) if wheres else ""
         rows = conn.execute(
             f"SELECT id, date, subject, direction FROM emails {where_clause} ORDER BY date LIMIT 50",
@@ -150,7 +150,7 @@ async def create_chapter(
         # Get max position
         max_pos = conn.execute("SELECT COALESCE(MAX(position), 0) FROM chapters").fetchone()[0]
         conn.execute(
-            """INSERT INTO chapters (title, position, date_from, date_to, summary, notes)
+            """INSERT INTO chapters (title, position, date_start, date_end, summary, notes)
                VALUES (?, ?, ?, ?, ?, ?)""",
             (title, max_pos + 1, date_from or None, date_to or None, summary or None, notes or None),
         )
@@ -178,7 +178,7 @@ async def update_chapter(
 ):
     try:
         conn.execute(
-            """UPDATE chapters SET title=?, date_from=?, date_to=?, summary=?, notes=?
+            """UPDATE chapters SET title=?, date_start=?, date_end=?, summary=?, notes=?
                WHERE id=?""",
             (title, date_from or None, date_to or None, summary or None, notes or None, chapter_id),
         )

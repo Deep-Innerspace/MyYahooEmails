@@ -405,6 +405,38 @@ _MIGRATIONS = [
            OR to_addresses LIKE '%h.deblauwe@onyx-avocats.com%'
            OR to_addresses LIKE '%jtd@jtd-avocats.com%';
     """),
+    (11, "Add firm_name to contacts", """
+        ALTER TABLE contacts ADD COLUMN firm_name TEXT NOT NULL DEFAULT '';
+    """),
+    (12, "Add bar_jurisdiction to contacts", """
+        ALTER TABLE contacts ADD COLUMN bar_jurisdiction TEXT NOT NULL DEFAULT '';
+    """),
+    (13, "Add notes column to chapters", """
+        ALTER TABLE chapters ADD COLUMN notes TEXT NOT NULL DEFAULT '';
+    """),
+    (14, "Make procedure_id nullable and add jurisdiction to procedure_events", """
+        CREATE TABLE procedure_events_new (
+            id                   INTEGER PRIMARY KEY AUTOINCREMENT,
+            procedure_id         INTEGER REFERENCES procedures(id) ON DELETE CASCADE,
+            event_date           TEXT NOT NULL,
+            event_type           TEXT NOT NULL DEFAULT 'hearing',
+            date_precision       TEXT NOT NULL DEFAULT 'exact',
+            description          TEXT NOT NULL DEFAULT '',
+            outcome              TEXT NOT NULL DEFAULT '',
+            jurisdiction         TEXT NOT NULL DEFAULT '',
+            source_email_id      INTEGER REFERENCES emails(id),
+            source_attachment_id INTEGER REFERENCES attachments(id),
+            notes                TEXT NOT NULL DEFAULT '',
+            created_at           TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+        );
+        INSERT INTO procedure_events_new
+            SELECT id, procedure_id, event_date, event_type, date_precision,
+                   description, outcome, '', source_email_id, source_attachment_id,
+                   notes, created_at
+            FROM procedure_events;
+        DROP TABLE procedure_events;
+        ALTER TABLE procedure_events_new RENAME TO procedure_events;
+    """),
 ]
 
 

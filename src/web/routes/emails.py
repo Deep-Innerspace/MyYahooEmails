@@ -300,16 +300,33 @@ def _search_with_filters(conn, q, topics, topic_mode, direction, contact,
             )""")
             params.extend(topics)
 
-    # FTS search
+    # FTS search — fall back to LIKE when query contains FTS5-special chars (e.g. email addresses)
     if q:
-        fts_ids = conn.execute(
-            "SELECT rowid FROM emails_fts WHERE emails_fts MATCH ? LIMIT 2000",
-            (q,)
-        ).fetchall()
-        if not fts_ids:
-            return [], 0
-        id_list = ",".join(str(r[0]) for r in fts_ids)
-        conditions.append(f"e.id IN ({id_list})")
+        _FTS5_SPECIAL = set('@.+-*/^()[]{}~"')
+        use_like = any(c in _FTS5_SPECIAL for c in q)
+        if use_like:
+            like_q = f"%{q}%"
+            conditions.append(
+                "(e.from_address LIKE ? OR e.to_addresses LIKE ? OR e.subject LIKE ? OR e.body_text LIKE ?)"
+            )
+            params.extend([like_q, like_q, like_q, like_q])
+        else:
+            try:
+                fts_ids = conn.execute(
+                    "SELECT rowid FROM emails_fts WHERE emails_fts MATCH ? LIMIT 2000",
+                    (q,)
+                ).fetchall()
+                if not fts_ids:
+                    return [], 0
+                id_list = ",".join(str(r[0]) for r in fts_ids)
+                conditions.append(f"e.id IN ({id_list})")
+            except Exception:
+                # Last-resort fallback if FTS5 still rejects the query
+                like_q = f"%{q}%"
+                conditions.append(
+                    "(e.from_address LIKE ? OR e.to_addresses LIKE ? OR e.subject LIKE ? OR e.body_text LIKE ?)"
+                )
+                params.extend([like_q, like_q, like_q, like_q])
 
     where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
 

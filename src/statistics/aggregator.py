@@ -333,14 +333,17 @@ def contact_summary(conn: sqlite3.Connection,
     sort_col = "total_emails DESC" if sort_by == "count" else "last_email DESC"
 
     rows = conn.execute(
-        f"""SELECT c.id, c.name, c.email, c.role,
-                   COUNT(*) AS total_emails,
+        f"""SELECT c.id, c.name, c.email, c.aliases, c.role,
+                   c.firm_name, c.bar_jurisdiction, c.notes,
+                   COUNT(e.id) AS total_emails,
                    SUM(CASE WHEN e.direction='sent' THEN 1 ELSE 0 END) AS sent,
                    SUM(CASE WHEN e.direction='received' THEN 1 ELSE 0 END) AS received,
+                   SUM(CASE WHEN e.corpus='personal' THEN 1 ELSE 0 END) AS personal_emails,
+                   SUM(CASE WHEN e.corpus='legal' THEN 1 ELSE 0 END) AS legal_emails,
                    MIN(e.date) AS first_email,
                    MAX(e.date) AS last_email
             FROM contacts c
-            JOIN emails e ON e.contact_id = c.id
+            LEFT JOIN emails e ON e.contact_id = c.id
             {where}
             GROUP BY c.id
             ORDER BY {sort_col}""",
@@ -360,19 +363,60 @@ def contact_summary(conn: sqlite3.Connection,
             (r["id"],),
         ).fetchall()
 
+        try:
+            aliases = json.loads(r["aliases"]) if r["aliases"] else []
+        except (json.JSONDecodeError, TypeError):
+            aliases = []
+
         results.append({
             "id": r["id"],
             "name": r["name"],
             "email": r["email"],
+            "aliases": aliases,
             "role": r["role"],
-            "total": r["total_emails"],
-            "sent": r["sent"],
-            "received": r["received"],
+            "firm_name": r["firm_name"] or "",
+            "bar_jurisdiction": r["bar_jurisdiction"] or "",
+            "notes": r["notes"] or "",
+            "total": r["total_emails"] or 0,
+            "sent": r["sent"] or 0,
+            "received": r["received"] or 0,
+            "personal_emails": r["personal_emails"] or 0,
+            "legal_emails": r["legal_emails"] or 0,
             "first_email": str(r["first_email"])[:10] if r["first_email"] else None,
             "last_email": str(r["last_email"])[:10] if r["last_email"] else None,
             "top_topics": [t["name"] for t in top_topics],
         })
     return results
+
+
+def unassigned_senders(conn: sqlite3.Connection, min_count: int = 1) -> List[Dict]:
+    """Return from_addresses with email activity but no contact_id, sorted by email count."""
+    rows = conn.execute(
+        """SELECT from_address,
+                  COUNT(*) AS total,
+                  SUM(CASE WHEN direction='sent' THEN 1 ELSE 0 END) AS sent,
+                  SUM(CASE WHEN direction='received' THEN 1 ELSE 0 END) AS received,
+                  MIN(date) AS first_email,
+                  MAX(date) AS last_email
+           FROM emails
+           WHERE contact_id IS NULL
+           GROUP BY from_address
+           HAVING total >= ?
+           ORDER BY total DESC""",
+        (min_count,),
+    ).fetchall()
+    return [
+        {
+            "from_address": r["from_address"],
+            "total": r["total"],
+            "sent": r["sent"],
+            "received": r["received"],
+            "first_email": str(r["first_email"])[:10] if r["first_email"] else None,
+            "last_email": str(r["last_email"])[:10] if r["last_email"] else None,
+            "domain": r["from_address"].split("@")[-1] if "@" in r["from_address"] else "",
+        }
+        for r in rows
+    ]
 
 
 # ─────────────────────────── MERGED TIMELINE ─────────────────────────────

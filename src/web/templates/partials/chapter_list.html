@@ -9,10 +9,10 @@
     <span class="chapter-position">{{ ch.position }}</span>
     <div class="chapter-list-info">
       <div class="chapter-list-title">{{ ch.title }}</div>
-      {% if ch.date_from or ch.date_to %}
+      {% if ch.date_start or ch.date_end %}
       <div class="text-xs text-muted">
-        {{ ch.date_from[:10] if ch.date_from else '…' }}
-        {% if ch.date_to %} → {{ ch.date_to[:10] }}{% endif %}
+        {{ ch.date_start[:10] if ch.date_start else '…' }}
+        {% if ch.date_end %} → {{ ch.date_end[:10] }}{% endif %}
       </div>
       {% endif %}
     </div>

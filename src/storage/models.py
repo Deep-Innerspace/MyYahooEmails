@@ -10,8 +10,10 @@ class Contact:
     name: str
     email: str            # Primary email address
     aliases: List[str]    # Additional addresses for the same person
-    role: str             # 'me', 'ex-wife', 'lawyer', 'other'
+    role: str             # 'me', 'ex-wife', 'my_lawyer', 'her_lawyer', 'opposing_counsel', 'family', 'school', 'medical', 'housing', 'other'
     notes: str = ""
+    firm_name: str = ""           # Law firm name (for lawyer roles)
+    bar_jurisdiction: str = ""    # Bar jurisdiction / city (for lawyer roles)
 
 
 @dataclass
