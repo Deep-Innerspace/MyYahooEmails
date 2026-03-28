@@ -60,30 +60,48 @@ def _contact_where(conn: sqlite3.Connection, contact_email: Optional[str],
     return clause, list(addrs)
 
 
+def corpus_clause(corpus: Optional[str], table_alias: str = "e") -> Tuple[str, list]:
+    """Build WHERE fragment for corpus filtering. Returns (clause, params).
+    corpus='all' or None → no filter. corpus='personal'|'legal' → filter."""
+    if not corpus or corpus == "all":
+        return "", []
+    return f"AND {table_alias}.corpus = ?", [corpus]
+
+
 # ─────────────────────────── OVERVIEW ────────────────────────────────────
 
-def overview_stats(conn: sqlite3.Connection) -> Dict[str, Any]:
+def overview_stats(conn: sqlite3.Connection,
+                   corpus: Optional[str] = None) -> Dict[str, Any]:
     """Consolidated overview statistics as a dict."""
+    cc, cp = corpus_clause(corpus)
     r = {}
-    r["total"] = conn.execute("SELECT COUNT(*) FROM emails").fetchone()[0]
-    r["sent"] = conn.execute("SELECT COUNT(*) FROM emails WHERE direction='sent'").fetchone()[0]
-    r["received"] = conn.execute("SELECT COUNT(*) FROM emails WHERE direction='received'").fetchone()[0]
+    r["total"] = conn.execute(f"SELECT COUNT(*) FROM emails e WHERE 1=1 {cc}", cp).fetchone()[0]
+    r["sent"] = conn.execute(f"SELECT COUNT(*) FROM emails e WHERE direction='sent' {cc}", cp).fetchone()[0]
+    r["received"] = conn.execute(f"SELECT COUNT(*) FROM emails e WHERE direction='received' {cc}", cp).fetchone()[0]
     r["threads"] = conn.execute("SELECT COUNT(*) FROM threads").fetchone()[0]
-    r["french"] = conn.execute("SELECT COUNT(*) FROM emails WHERE language='fr'").fetchone()[0]
-    r["english"] = conn.execute("SELECT COUNT(*) FROM emails WHERE language='en'").fetchone()[0]
-    r["with_attachments"] = conn.execute("SELECT COUNT(*) FROM emails WHERE has_attachments=1").fetchone()[0]
+    r["french"] = conn.execute(f"SELECT COUNT(*) FROM emails e WHERE language='fr' {cc}", cp).fetchone()[0]
+    r["english"] = conn.execute(f"SELECT COUNT(*) FROM emails e WHERE language='en' {cc}", cp).fetchone()[0]
+    r["with_attachments"] = conn.execute(f"SELECT COUNT(*) FROM emails e WHERE has_attachments=1 {cc}", cp).fetchone()[0]
 
-    dates = conn.execute("SELECT MIN(date), MAX(date) FROM emails").fetchone()
+    dates = conn.execute(f"SELECT MIN(e.date), MAX(e.date) FROM emails e WHERE 1=1 {cc}", cp).fetchone()
     r["first_date"] = str(dates[0])[:10] if dates[0] else None
     r["last_date"] = str(dates[1])[:10] if dates[1] else None
     r["topics_count"] = conn.execute("SELECT COUNT(*) FROM topics").fetchone()[0]
     r["runs_count"] = conn.execute("SELECT COUNT(*) FROM analysis_runs").fetchone()[0]
 
-    # Phase 2+3 analysis coverage
+    # Corpus breakdown (always show both for context)
+    r["personal_count"] = conn.execute("SELECT COUNT(*) FROM emails WHERE corpus='personal'").fetchone()[0]
+    r["legal_count"] = conn.execute("SELECT COUNT(*) FROM emails WHERE corpus='legal'").fetchone()[0]
+
+    # Phase 2+3 analysis coverage — always scoped to personal corpus
+    # (legal emails are professional correspondence; their tone/manipulation analysis
+    #  is meaningless for the personal relationship evidence analysis)
     for atype in ("classify", "tone", "timeline", "manipulation"):
         r[f"{atype}_count"] = conn.execute(
-            "SELECT COUNT(DISTINCT email_id) FROM analysis_results ar "
-            "JOIN analysis_runs ru ON ru.id=ar.run_id WHERE ru.analysis_type=?",
+            """SELECT COUNT(DISTINCT ar.email_id) FROM analysis_results ar
+               JOIN analysis_runs ru ON ru.id=ar.run_id
+               JOIN emails e ON e.id=ar.email_id
+               WHERE ru.analysis_type=? AND e.corpus='personal'""",
             (atype,),
         ).fetchone()[0]
     r["contradiction_count"] = conn.execute("SELECT COUNT(*) FROM contradictions").fetchone()[0]
@@ -96,10 +114,12 @@ def overview_stats(conn: sqlite3.Connection) -> Dict[str, Any]:
 # ─────────────────────────── FREQUENCY ───────────────────────────────────
 
 def frequency_data(conn: sqlite3.Connection, by: str = "month",
-                   contact_email: Optional[str] = None) -> List[Dict]:
+                   contact_email: Optional[str] = None,
+                   corpus: Optional[str] = None) -> List[Dict]:
     """Email frequency grouped by time period. Returns list of dicts."""
     period_expr = _period_expr(by)
     contact_clause, contact_params = _contact_where(conn, contact_email)
+    cc, cp = corpus_clause(corpus)
 
     rows = conn.execute(
         f"""SELECT {period_expr} AS period,
@@ -107,9 +127,9 @@ def frequency_data(conn: sqlite3.Connection, by: str = "month",
                    SUM(CASE WHEN e.direction='received' THEN 1 ELSE 0 END) AS received,
                    COUNT(*) AS total
             FROM emails e
-            WHERE 1=1 {contact_clause}
+            WHERE 1=1 {contact_clause} {cc}
             GROUP BY period ORDER BY period""",
-        contact_params,
+        contact_params + cp,
     ).fetchall()
     return [dict(r) for r in rows]
 
@@ -119,7 +139,8 @@ def frequency_data(conn: sqlite3.Connection, by: str = "month",
 def response_times(conn: sqlite3.Connection,
                    contact_email: Optional[str] = None,
                    since: Optional[datetime] = None,
-                   by: Optional[str] = None) -> Dict[str, Any]:
+                   by: Optional[str] = None,
+                   corpus: Optional[str] = None) -> Dict[str, Any]:
     """
     Compute intra-thread response delays between parties.
 
@@ -130,6 +151,7 @@ def response_times(conn: sqlite3.Connection,
     """
     since_clause = "AND e1.date >= ?" if since else ""
     since_params = [since.isoformat()] if since else []
+    cc, cp = corpus_clause(corpus, table_alias="e1")
 
     # Get all cross-direction response pairs
     rows = conn.execute(
@@ -152,12 +174,12 @@ def response_times(conn: sqlite3.Connection,
                   AND e1.direction != e2.direction
                   AND (julianday(e2.date) - julianday(e1.date)) * 24.0 > 0
                   AND (julianday(e2.date) - julianday(e1.date)) * 24.0 < 8760
-                  {since_clause}
+                  {since_clause} {cc}
             )
             SELECT dir_from, dir_to, hours_delay
             FROM thread_pairs
             ORDER BY dir_from, hours_delay""",
-        since_params,
+        since_params + cp,
     ).fetchall()
 
     # Separate by who responded
@@ -208,7 +230,7 @@ def response_times(conn: sqlite3.Connection,
                       AND e1.direction != e2.direction
                       AND (julianday(e2.date) - julianday(e1.date)) * 24.0 > 0
                       AND (julianday(e2.date) - julianday(e1.date)) * 24.0 < 8760
-                      {since_clause}
+                      {since_clause} {cc}
                 )
                 SELECT period, dir_from, dir_to,
                        AVG(hours_delay) AS avg_hours,
@@ -216,7 +238,7 @@ def response_times(conn: sqlite3.Connection,
                 FROM thread_pairs
                 GROUP BY period, dir_from, dir_to
                 ORDER BY period""",
-            since_params,
+            since_params + cp,
         ).fetchall()
 
         # Pivot into {period: {your_avg, their_avg}}
@@ -239,12 +261,14 @@ def response_times(conn: sqlite3.Connection,
 
 def tone_trends(conn: sqlite3.Connection, by: str = "month",
                 contact_email: Optional[str] = None,
-                direction: Optional[str] = None) -> List[Dict]:
+                direction: Optional[str] = None,
+                corpus: Optional[str] = None) -> List[Dict]:
     """Aggression/manipulation averages over time, split by direction."""
     period_expr = _period_expr(by)
     contact_clause, contact_params = _contact_where(conn, contact_email)
     dir_clause = "AND e.direction = ?" if direction else ""
     dir_params = [direction] if direction else []
+    cc, cp = corpus_clause(corpus)
 
     rows = conn.execute(
         f"""SELECT {period_expr} AS period,
@@ -259,9 +283,10 @@ def tone_trends(conn: sqlite3.Connection, by: str = "month",
               AND r.status IN ('complete', 'partial')
               {contact_clause}
               {dir_clause}
+              {cc}
             GROUP BY period, e.direction
             ORDER BY period, e.direction""",
-        contact_params + dir_params,
+        contact_params + dir_params + cp,
     ).fetchall()
     return [
         {
@@ -282,11 +307,13 @@ SYSTEM_TOPICS = {"trop_court", "non_classifiable"}
 
 
 def topic_evolution(conn: sqlite3.Connection, by: str = "month",
-                    topic_name: Optional[str] = None) -> List[Dict]:
+                    topic_name: Optional[str] = None,
+                    corpus: Optional[str] = None) -> List[Dict]:
     """Topic prevalence over time (system topics excluded)."""
     period_expr = _period_expr(by)
     topic_clause = "AND t.name = ?" if topic_name else ""
     topic_params = [topic_name] if topic_name else []
+    cc, cp = corpus_clause(corpus)
 
     rows = conn.execute(
         f"""SELECT {period_expr} AS period,
@@ -295,22 +322,26 @@ def topic_evolution(conn: sqlite3.Connection, by: str = "month",
             FROM email_topics et
             JOIN topics t ON t.id = et.topic_id
             JOIN emails e ON e.id = et.email_id
-            WHERE t.name NOT IN ('trop_court', 'non_classifiable') {topic_clause}
+            WHERE t.name NOT IN ('trop_court', 'non_classifiable') {topic_clause} {cc}
             GROUP BY period, t.name
             ORDER BY period, t.name""",
-        topic_params,
+        topic_params + cp,
     ).fetchall()
     return [dict(r) for r in rows]
 
 
-def system_topic_counts(conn: sqlite3.Connection) -> dict:
+def system_topic_counts(conn: sqlite3.Connection,
+                        corpus: Optional[str] = None) -> dict:
     """Return counts for trop_court and non_classifiable topics."""
+    cc, cp = corpus_clause(corpus)
     rows = conn.execute(
-        """SELECT t.name, COUNT(DISTINCT et.email_id) AS cnt
+        f"""SELECT t.name, COUNT(DISTINCT et.email_id) AS cnt
            FROM email_topics et
            JOIN topics t ON t.id = et.topic_id
-           WHERE t.name IN ('trop_court', 'non_classifiable')
-           GROUP BY t.name"""
+           JOIN emails e ON e.id = et.email_id
+           WHERE t.name IN ('trop_court', 'non_classifiable') {cc}
+           GROUP BY t.name""",
+        cp,
     ).fetchall()
     result = {"trop_court": 0, "non_classifiable": 0}
     for r in rows:
@@ -575,10 +606,12 @@ def contradiction_summary(conn: sqlite3.Connection,
 
 # ─────────────────────────── TOP AGGRESSIVE ──────────────────────────────
 
-def top_aggressive_emails(conn: sqlite3.Connection, limit: int = 10) -> List[Dict]:
+def top_aggressive_emails(conn: sqlite3.Connection, limit: int = 10,
+                          corpus: Optional[str] = None) -> List[Dict]:
     """Most aggressive emails by tone score."""
+    cc, cp = corpus_clause(corpus)
     rows = conn.execute(
-        """SELECT e.id, e.date, e.direction, e.subject, e.from_address,
+        f"""SELECT e.id, e.date, e.direction, e.subject, e.from_address,
                   json_extract(ar.result_json, '$.aggression_level') AS aggression,
                   json_extract(ar.result_json, '$.manipulation_score') AS manipulation,
                   json_extract(ar.result_json, '$.tone') AS tone,
@@ -586,10 +619,10 @@ def top_aggressive_emails(conn: sqlite3.Connection, limit: int = 10) -> List[Dic
            FROM analysis_results ar
            JOIN analysis_runs r ON r.id = ar.run_id
            JOIN emails e ON e.id = ar.email_id
-           WHERE r.analysis_type = 'tone'
+           WHERE r.analysis_type = 'tone' {cc}
            ORDER BY aggression DESC
            LIMIT ?""",
-        (limit,),
+        cp + [limit],
     ).fetchall()
     results = []
     for r in rows:
@@ -614,24 +647,27 @@ def top_aggressive_emails(conn: sqlite3.Connection, limit: int = 10) -> List[Dic
 
 # ─────────────────────────── METHODOLOGY ─────────────────────────────────
 
-def daily_avg_by_year(conn: sqlite3.Connection) -> List[Dict]:
+def daily_avg_by_year(conn: sqlite3.Connection,
+                      corpus: Optional[str] = None) -> List[Dict]:
     """Average emails per day (sent + received) for each calendar year.
 
     Returns list of dicts with keys:
         year, sent_count, received_count, days_in_year,
         sent_per_day, received_per_day, ratio (sent/received, None if 0 received)
     """
+    cc, cp = corpus_clause(corpus, table_alias="e")
     rows = conn.execute(
-        """SELECT strftime('%Y', date) AS year,
-                  SUM(CASE WHEN direction='sent'     THEN 1 ELSE 0 END) AS sent_count,
-                  SUM(CASE WHEN direction='received' THEN 1 ELSE 0 END) AS received_count,
+        f"""SELECT strftime('%Y', e.date) AS year,
+                  SUM(CASE WHEN e.direction='sent'     THEN 1 ELSE 0 END) AS sent_count,
+                  SUM(CASE WHEN e.direction='received' THEN 1 ELSE 0 END) AS received_count,
                   COUNT(*) AS total_count,
-                  CAST(julianday(strftime('%Y', date) || '-12-31')
-                       - julianday(strftime('%Y', date) || '-01-01') + 1 AS REAL) AS days_in_year
-           FROM emails
-           WHERE date IS NOT NULL
+                  CAST(julianday(strftime('%Y', e.date) || '-12-31')
+                       - julianday(strftime('%Y', e.date) || '-01-01') + 1 AS REAL) AS days_in_year
+           FROM emails e
+           WHERE e.date IS NOT NULL {cc}
            GROUP BY year
-           ORDER BY year"""
+           ORDER BY year""",
+        cp,
     ).fetchall()
     result = []
     for r in rows:
@@ -653,11 +689,13 @@ def daily_avg_by_year(conn: sqlite3.Connection) -> List[Dict]:
 # ─────────────────────────── MANIPULATION CHARTS ─────────────────────────
 
 def manipulation_timeline(conn: sqlite3.Connection, by: str = "quarter",
-                          direction: Optional[str] = None) -> List[Dict]:
+                          direction: Optional[str] = None,
+                          corpus: Optional[str] = None) -> List[Dict]:
     """Avg manipulation score over time, split by direction (>0 scores only)."""
     period_expr = _period_expr(by)
     dir_clause = "AND e.direction = ?" if direction and direction != "all" else ""
     dir_params = [direction] if direction and direction != "all" else []
+    cc, cp = corpus_clause(corpus)
 
     rows = conn.execute(
         f"""SELECT {period_expr} AS period,
@@ -670,10 +708,10 @@ def manipulation_timeline(conn: sqlite3.Connection, by: str = "quarter",
             WHERE ru.analysis_type = 'manipulation'
               AND ru.status IN ('complete', 'partial')
               AND CAST(json_extract(ar.result_json, '$.total_score') AS REAL) > 0
-              {dir_clause}
+              {dir_clause} {cc}
             GROUP BY period, e.direction
             ORDER BY period, e.direction""",
-        dir_params,
+        dir_params + cp,
     ).fetchall()
     return [
         {
@@ -687,10 +725,12 @@ def manipulation_timeline(conn: sqlite3.Connection, by: str = "quarter",
 
 
 def manipulation_pattern_frequency(conn: sqlite3.Connection,
-                                   direction: Optional[str] = None) -> List[Dict]:
+                                   direction: Optional[str] = None,
+                                   corpus: Optional[str] = None) -> List[Dict]:
     """Count of each manipulation pattern type across all analysed emails."""
     dir_clause = "AND e.direction = ?" if direction and direction != "all" else ""
     dir_params = [direction] if direction and direction != "all" else []
+    cc, cp = corpus_clause(corpus)
 
     rows = conn.execute(
         f"""SELECT ar.result_json, e.direction
@@ -699,8 +739,8 @@ def manipulation_pattern_frequency(conn: sqlite3.Connection,
             JOIN emails e ON e.id = ar.email_id
             WHERE ru.analysis_type = 'manipulation'
               AND ru.status IN ('complete', 'partial')
-              {dir_clause}""",
-        dir_params,
+              {dir_clause} {cc}""",
+        dir_params + cp,
     ).fetchall()
 
     totals: dict = {}
@@ -723,10 +763,12 @@ def manipulation_pattern_frequency(conn: sqlite3.Connection,
 
 
 def manipulation_score_distribution(conn: sqlite3.Connection,
-                                    direction: Optional[str] = None) -> List[Dict]:
+                                    direction: Optional[str] = None,
+                                    corpus: Optional[str] = None) -> List[Dict]:
     """Score histogram: count of emails per 0.1-wide bucket, by direction."""
     dir_clause = "AND e.direction = ?" if direction and direction != "all" else ""
     dir_params = [direction] if direction and direction != "all" else []
+    cc, cp = corpus_clause(corpus)
 
     rows = conn.execute(
         f"""SELECT json_extract(ar.result_json, '$.total_score') AS score,
@@ -737,8 +779,8 @@ def manipulation_score_distribution(conn: sqlite3.Connection,
             WHERE ru.analysis_type = 'manipulation'
               AND ru.status IN ('complete', 'partial')
               AND json_extract(ar.result_json, '$.total_score') IS NOT NULL
-              {dir_clause}""",
-        dir_params,
+              {dir_clause} {cc}""",
+        dir_params + cp,
     ).fetchall()
 
     labels = [f"{i/10:.1f}–{(i+1)/10:.1f}" for i in range(10)]
@@ -760,11 +802,13 @@ def manipulation_score_distribution(conn: sqlite3.Connection,
 
 def manipulation_patterns_over_time(conn: sqlite3.Connection, by: str = "quarter",
                                     top_n: int = 5,
-                                    direction: str = "") -> Dict[str, Any]:
+                                    direction: str = "",
+                                    corpus: Optional[str] = None) -> Dict[str, Any]:
     """Top-N pattern counts grouped by time period (for stacked area chart)."""
     period_expr = _period_expr(by)
     dir_clause  = "AND e.direction = ?" if direction in ("sent", "received") else ""
-    params      = (direction,) if dir_clause else ()
+    dir_params  = [direction] if dir_clause else []
+    cc, cp = corpus_clause(corpus)
 
     rows = conn.execute(
         f"""SELECT {period_expr} AS period, ar.result_json
@@ -774,9 +818,9 @@ def manipulation_patterns_over_time(conn: sqlite3.Connection, by: str = "quarter
             WHERE ru.analysis_type = 'manipulation'
               AND ru.status IN ('complete', 'partial')
               AND CAST(json_extract(ar.result_json, '$.total_score') AS REAL) > 0
-              {dir_clause}
+              {dir_clause} {cc}
             ORDER BY period""",
-        params,
+        dir_params + cp,
     ).fetchall()
 
     period_patterns: dict = {}

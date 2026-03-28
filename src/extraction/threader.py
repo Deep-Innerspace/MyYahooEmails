@@ -86,9 +86,17 @@ def resolve_contact_id(conn: sqlite3.Connection, email_address: str) -> Optional
     return None
 
 
-def store_email(parsed: Dict, conn: sqlite3.Connection) -> Optional[int]:
+def store_email(
+    parsed: Dict,
+    conn: sqlite3.Connection,
+    corpus: str = "personal",
+) -> Optional[int]:
     """
     Insert a parsed email into the database.
+
+    *corpus* is stored on the email row ('personal' or 'legal').
+    Legal-corpus attachments are stored as metadata-only (content=NULL,
+    downloaded=0) so they can be re-fetched on demand from IMAP.
 
     Returns the new email ID, or None if skipped (duplicate or already exists).
     """
@@ -123,13 +131,15 @@ def store_email(parsed: Dict, conn: sqlite3.Connection) -> Optional[int]:
             date, from_address, from_name, to_addresses, cc_addresses,
             subject, subject_normalized, body_text, body_html,
             delta_text, delta_hash, raw_size_bytes,
-            folder, uid, direction, language, has_attachments, contact_id
+            folder, uid, direction, language, has_attachments, contact_id,
+            corpus
         ) VALUES (
             ?, ?, ?, ?,
             ?, ?, ?, ?, ?,
             ?, ?, ?, ?,
             ?, ?, ?,
-            ?, ?, ?, ?, ?, ?
+            ?, ?, ?, ?, ?, ?,
+            ?
         )""",
         (
             parsed["message_id"],
@@ -154,27 +164,64 @@ def store_email(parsed: Dict, conn: sqlite3.Connection) -> Optional[int]:
             parsed["language"],
             1 if parsed["has_attachments"] else 0,
             contact_id,
+            corpus,
         ),
     )
     email_id = cursor.lastrowid
 
     # Insert attachments
     for att in parsed.get("attachments", []):
-        conn.execute(
-            """INSERT INTO attachments (email_id, filename, content_type, size_bytes, content)
-               VALUES (?, ?, ?, ?, ?)""",
-            (email_id, att["filename"], att["content_type"], att["size_bytes"], att["content"]),
-        )
+        if corpus == "legal":
+            # Metadata-only: no BLOB content; mark as not-yet-downloaded so
+            # the web UI can trigger on-demand IMAP fetch later.
+            conn.execute(
+                """INSERT INTO attachments
+                   (email_id, filename, content_type, size_bytes, content,
+                    mime_section, imap_uid, folder, downloaded)
+                   VALUES (?, ?, ?, ?, NULL, ?, ?, ?, 0)""",
+                (
+                    email_id,
+                    att["filename"],
+                    att["content_type"],
+                    att["size_bytes"],
+                    att.get("mime_section"),
+                    att.get("imap_uid"),
+                    att.get("folder"),
+                ),
+            )
+        else:
+            conn.execute(
+                """INSERT INTO attachments
+                   (email_id, filename, content_type, size_bytes, content,
+                    mime_section, imap_uid, folder, downloaded)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1)""",
+                (
+                    email_id,
+                    att["filename"],
+                    att["content_type"],
+                    att["size_bytes"],
+                    att["content"],
+                    att.get("mime_section"),
+                    att.get("imap_uid"),
+                    att.get("folder"),
+                ),
+            )
 
     _update_thread_stats(conn, thread_id)
 
     return email_id
 
 
-def batch_store_emails(parsed_emails: List[Dict], folder: str) -> Dict[str, int]:
+def batch_store_emails(
+    parsed_emails: List[Dict],
+    folder: str,
+    corpus: str = "personal",
+) -> Dict[str, int]:
     """
     Store a batch of parsed emails, returning stats dict.
-    Updates the fetch state (last UID) for resumable fetching.
+
+    *corpus* is forwarded to every store_email() call so all emails in the
+    batch are tagged with the correct corpus ('personal' or 'legal').
     """
     stats = {"stored": 0, "skipped_duplicate": 0, "skipped_error": 0}
     last_uid = 0
@@ -182,7 +229,7 @@ def batch_store_emails(parsed_emails: List[Dict], folder: str) -> Dict[str, int]
     with get_db() as conn:
         for parsed in parsed_emails:
             try:
-                result = store_email(parsed, conn)
+                result = store_email(parsed, conn, corpus=corpus)
                 if result is not None:
                     stats["stored"] += 1
                 else:

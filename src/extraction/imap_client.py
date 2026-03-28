@@ -154,3 +154,23 @@ def count_messages_in_folder(folder: str) -> int:
     with imap_connection() as client:
         status = client.folder_status(folder, ["MESSAGES"])
         return status.get(b"MESSAGES", 0)
+
+
+def fetch_mime_part(folder: str, uid: int, section: str) -> Optional[bytes]:
+    """Fetch a single MIME part from an IMAP message (read-only).
+
+    *section* is the IMAP BODY[] section string, e.g. '2' or '2.1', as stored
+    in attachments.mime_section during a metadata-only legal-corpus import.
+
+    Returns the raw decoded part bytes, or None if not found.
+    """
+    with imap_connection() as client:
+        client.select_folder(folder, readonly=True)
+        # BODY.PEEK[section] fetches without setting \Seen flag
+        fetch_key = f"BODY.PEEK[{section}]".encode()
+        response = client.fetch([uid], [fetch_key])
+        if uid not in response:
+            return None
+        # imapclient normalises the key to BODY[section] in the response
+        result_key = f"BODY[{section}]".encode()
+        return response[uid].get(result_key)

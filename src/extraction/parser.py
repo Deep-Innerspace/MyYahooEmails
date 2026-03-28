@@ -145,23 +145,58 @@ def _get_body(msg: Message) -> Tuple[str, str]:
     return "\n\n".join(text_parts).strip(), "\n\n".join(html_parts).strip()
 
 
-def _get_attachments(msg: Message) -> List[Dict[str, Any]]:
-    """Return list of attachment metadata (without content)."""
+def _imap_sections(msg: Message) -> List[Tuple[str, Message]]:
+    """Recursively walk MIME parts and return (imap_section, part) for every leaf.
+
+    Section numbers follow the IMAP BODY[N.M…] convention so they can be used
+    directly with fetch_mime_part() for on-demand attachment download.
+    """
+    results: List[Tuple[str, Message]] = []
+
+    def _recurse(part: Message, prefix: str) -> None:
+        if part.is_multipart():
+            for idx, subpart in enumerate(part.get_payload(), start=1):
+                child = f"{prefix}.{idx}" if prefix else str(idx)
+                _recurse(subpart, child)
+        else:
+            results.append((prefix or "1", part))
+
+    _recurse(msg, "")
+    return results
+
+
+def _get_attachments(
+    msg: Message,
+    download_content: bool = True,
+) -> List[Dict[str, Any]]:
+    """Return attachment dicts.
+
+    When *download_content* is False (legal-corpus mode) the binary payload is
+    not read — only metadata is kept so the attachment can be re-fetched on
+    demand from IMAP using the stored mime_section + imap_uid + folder.
+    """
     result = []
-    if msg.is_multipart():
-        for part in msg.walk():
-            disp = str(part.get("Content-Disposition", ""))
-            if "attachment" not in disp:
-                continue
-            filename = _decode_str(part.get_filename() or "")
-            ctype = part.get_content_type()
+    for section, part in _imap_sections(msg):
+        disp = str(part.get("Content-Disposition", ""))
+        if "attachment" not in disp:
+            continue
+        filename = _decode_str(part.get_filename() or "")
+        ctype = part.get_content_type()
+        if download_content:
             payload = part.get_payload(decode=True) or b""
-            result.append({
-                "filename": filename,
-                "content_type": ctype,
-                "size_bytes": len(payload),
-                "content": payload,
-            })
+            size_bytes = len(payload)
+            content: Optional[bytes] = payload
+        else:
+            # Metadata-only: size from Content-Length header or 0 as placeholder
+            size_bytes = int(part.get("Content-Length", 0) or 0)
+            content = None
+        result.append({
+            "filename": filename,
+            "content_type": ctype,
+            "size_bytes": size_bytes,
+            "content": content,
+            "mime_section": section,
+        })
     return result
 
 
@@ -240,6 +275,7 @@ def parse_raw_email(
     raw_bytes: bytes,
     folder: str,
     my_email: str,
+    download_content: bool = True,
 ) -> Optional[Dict[str, Any]]:
     """
     Parse a raw RFC 2822 email into a structured dict ready for DB insertion.
@@ -279,8 +315,11 @@ def parse_raw_email(
     language = detect_language(delta_text or body_text)
     delta_hash = compute_delta_hash(delta_text)
 
-    # Attachments
-    attachments = _get_attachments(msg)
+    # Attachments — pass imap_uid + folder so threader can store them for re-fetch
+    attachments = _get_attachments(msg, download_content=download_content)
+    for att in attachments:
+        att["imap_uid"] = uid
+        att["folder"] = folder
 
     return {
         "message_id": message_id,

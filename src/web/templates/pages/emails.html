@@ -5,14 +5,31 @@
 <div class="page-header">
   <div>
     <h1 class="page-title">Emails</h1>
-    <p class="page-subtitle">Browse and search {{ total }} emails</p>
+    <p class="page-subtitle">Browse and search {{ total }} email{{ 's' if total != 1 else '' }}</p>
   </div>
 </div>
 
 <div class="page-body" style="padding-bottom: var(--space-4);">
 
+  <!-- ─── Corpus tabs ──────────────────────────────────────────────────── -->
+  <div style="display:flex;gap:var(--space-2);margin-bottom:var(--space-4);border-bottom:2px solid var(--border);padding-bottom:0">
+    <a href="/emails/?corpus=all{% if query %}&q={{ query }}{% endif %}{% if direction %}&direction={{ direction }}{% endif %}"
+       class="corpus-tab {% if corpus == 'all' %}active{% endif %}">
+      All emails
+    </a>
+    <a href="/emails/?corpus=personal{% if query %}&q={{ query }}{% endif %}{% if direction %}&direction={{ direction }}{% endif %}"
+       class="corpus-tab {% if corpus == 'personal' %}active{% endif %}">
+      Personal
+    </a>
+    <a href="/emails/?corpus=legal{% if query %}&q={{ query }}{% endif %}{% if direction %}&direction={{ direction }}{% endif %}"
+       class="corpus-tab {% if corpus == 'legal' %}active{% endif %}">
+      ⚖️ Legal
+    </a>
+  </div>
+
   <!-- ─── Filter bar ──────────────────────────────────────────────────── -->
   <form id="search-form" action="/emails/" method="get">
+    <input type="hidden" name="corpus" value="{{ corpus }}">
     <div class="filter-bar">
       <div class="filter-row">
 

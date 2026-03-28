@@ -25,13 +25,13 @@
   <!-- ─── Stat cards ────────────────────────────────────────────────────── -->
   <div class="stat-grid">
     <div class="stat-card">
-      <div class="stat-label">Total Emails</div>
+      <div class="stat-label">Total Emails <span class="corpus-tag all-emails">All</span></div>
       <div class="stat-value">{{ "{:,}".format(overview.total) }}</div>
       <div class="stat-sub">in the database</div>
     </div>
 
     <div class="stat-card">
-      <div class="stat-label">Sent</div>
+      <div class="stat-label">Sent <span class="corpus-tag all-emails">All</span></div>
       <div class="stat-value" style="color: var(--sent-color)">{{ "{:,}".format(overview.sent) }}</div>
       <div class="stat-sub">
         {% if overview.total %}
@@ -41,7 +41,7 @@
     </div>
 
     <div class="stat-card">
-      <div class="stat-label">Received</div>
+      <div class="stat-label">Received <span class="corpus-tag all-emails">All</span></div>
       <div class="stat-value" style="color: var(--received-color)">{{ "{:,}".format(overview.received) }}</div>
       <div class="stat-sub">
         {% if overview.total %}
@@ -51,19 +51,29 @@
     </div>
 
     <div class="stat-card">
-      <div class="stat-label">Threads</div>
+      <div class="stat-label">Personal / Legal</div>
+      <div class="stat-value" style="font-size:var(--font-size-xl)">
+        <a href="/emails/?corpus=personal" style="color:var(--text);text-decoration:none">{{ "{:,}".format(overview.personal_count) }}</a>
+        <span style="color:var(--text-muted);font-size:var(--font-size-base)"> / </span>
+        <a href="/emails/?corpus=legal" style="color:#1e3a5f;text-decoration:none">{{ "{:,}".format(overview.legal_count) }}</a>
+      </div>
+      <div class="stat-sub">personal · legal corpus</div>
+    </div>
+
+    <div class="stat-card">
+      <div class="stat-label">Threads <span class="corpus-tag all-emails">All</span></div>
       <div class="stat-value">{{ "{:,}".format(overview.threads) }}</div>
       <div class="stat-sub">unique conversations</div>
     </div>
 
     <div class="stat-card">
-      <div class="stat-label">Languages</div>
+      <div class="stat-label">Languages <span class="corpus-tag all-emails">All</span></div>
       <div class="stat-value">{{ "{:,}".format(overview.french) }}</div>
       <div class="stat-sub">French / {{ "{:,}".format(overview.english) }} English</div>
     </div>
 
     <div class="stat-card">
-      <div class="stat-label">Court Events</div>
+      <div class="stat-label">Court Events <span class="corpus-tag all-emails">All</span></div>
       <div class="stat-value">{{ overview.procedure_events_count }}</div>
       <div class="stat-sub">hearings, filings, decisions</div>
     </div>
@@ -78,12 +88,15 @@
       <!-- Coverage progress bars -->
       <div class="card">
         <div class="card-header">
-          <span class="card-title">📊 Analysis Coverage</span>
+          <span class="card-title">📊 Analysis Coverage <span class="corpus-tag personal">Personal</span></span>
         </div>
         <div class="card-body">
-          {% set total = overview.total or 1 %}
+          {# Analysis coverage is measured against personal corpus only —
+             lawyer emails (legal corpus) are professional correspondence and
+             their tone/manipulation results are not part of the evidence analysis. #}
+          {% set analysis_base = overview.personal_count or 1 %}
 
-          {% set classify_pct = (overview.classify_count / total * 100)|round(1) %}
+          {% set classify_pct = (overview.classify_count / analysis_base * 100)|round(1) %}
           <div class="progress-row">
             <span class="progress-label">Classification</span>
             <div class="progress-track">
@@ -92,7 +105,7 @@
             <span class="progress-pct">{{ classify_pct }}%</span>
           </div>
 
-          {% set tone_pct = (overview.tone_count / total * 100)|round(1) %}
+          {% set tone_pct = (overview.tone_count / analysis_base * 100)|round(1) %}
           <div class="progress-row">
             <span class="progress-label">Tone Analysis</span>
             <div class="progress-track">
@@ -101,7 +114,7 @@
             <span class="progress-pct">{{ tone_pct }}%</span>
           </div>
 
-          {% set timeline_pct = (overview.timeline_count / total * 100)|round(1) %}
+          {% set timeline_pct = (overview.timeline_count / analysis_base * 100)|round(1) %}
           <div class="progress-row">
             <span class="progress-label">Timeline Events</span>
             <div class="progress-track">
@@ -110,7 +123,7 @@
             <span class="progress-pct">{{ timeline_pct }}%</span>
           </div>
 
-          {% set manip_pct = (overview.manipulation_count / total * 100)|round(1) %}
+          {% set manip_pct = (overview.manipulation_count / analysis_base * 100)|round(1) %}
           <div class="progress-row">
             <span class="progress-label">Manipulation</span>
             <div class="progress-track">
@@ -121,7 +134,8 @@
 
           <div class="mt-4 text-sm text-muted">
             <strong>{{ overview.contradiction_count }}</strong> contradiction pairs detected<br>
-            <strong>{{ overview.timeline_events_count }}</strong> events on the timeline
+            <strong>{{ overview.timeline_events_count }}</strong> events on the timeline<br>
+            <span style="font-size:var(--font-size-xs);opacity:.7">Coverage % over {{ "{:,}".format(overview.personal_count) }} personal emails</span>
           </div>
         </div>
       </div>
@@ -129,7 +143,7 @@
       <!-- Top aggressive emails -->
       <div class="card">
         <div class="card-header">
-          <span class="card-title">⚡ Most Aggressive Emails</span>
+          <span class="card-title">⚡ Most Aggressive Emails <span class="corpus-tag personal">Personal</span></span>
           <a href="/emails/?direction=received" class="btn btn-secondary btn-sm">View all</a>
         </div>
         {% if top_aggressive %}
@@ -192,7 +206,7 @@
 
       <div class="card">
         <div class="card-header">
-          <span class="card-title">🌊 Emotional Arc</span>
+          <span class="card-title">🌊 Emotional Arc <span class="corpus-tag personal">Personal</span></span>
           <span class="info-icon" data-tip="Monthly aggression and manipulation scores over time. Rising peaks indicate periods of heightened emotional intensity in the correspondence.">i</span>
         </div>
         <div class="card-body" style="padding:0">
@@ -222,6 +236,7 @@
     <h2 class="section-title">
       <span class="section-title-icon">📈</span>
       Email Volume by Quarter
+      <span class="corpus-tag personal">Personal</span>
       <span class="info-icon" data-tip="Total emails sent and received per quarter. Blue bars = received, green bars = sent. Gaps or spikes correlate with key periods in the proceedings.">i</span>
     </h2>
     <div class="chart-container">
@@ -234,6 +249,7 @@
     <h2 class="section-title">
       <span class="section-title-icon">⚡</span>
       Daily Communication Intensity by Year
+      <span class="corpus-tag personal">Personal</span>
       <span class="info-icon" data-tip="Average number of emails exchanged per day in each calendar year, split by sent (blue) and received (red). The amber line shows the sent÷received ratio — values above 1 mean you initiated more than you received that year.">i</span>
       <span style="font-size:var(--font-size-sm);font-weight:400;color:var(--text-muted);margin-left:8px">
         bars = avg emails/day · amber line = sent÷received ratio (>1 you initiated more)
@@ -249,6 +265,7 @@
     <h2 class="section-title">
       <span class="section-title-icon">🎭</span>
       Tone Evolution
+      <span class="corpus-tag personal">Personal</span>
       <span class="info-icon" data-tip="Rolling monthly averages of aggression and manipulation scores. Helps identify when the tone of the correspondence escalated — useful for correlating with court filings or custody decisions.">i</span>
     </h2>
     <div class="chart-container">

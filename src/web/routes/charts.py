@@ -57,9 +57,10 @@ def _png_response(chart_path: Path) -> StreamingResponse:
 async def chart_frequency(
     by: str = Query("quarter"),
     contact: Optional[str] = Query(None),
+    corpus: str = Query("personal"),
     conn: sqlite3.Connection = Depends(get_conn),
 ):
-    data = frequency_data(conn, by=by, contact_email=contact)
+    data = frequency_data(conn, by=by, contact_email=contact, corpus=corpus)
     with tempfile.TemporaryDirectory() as tmp:
         path = frequency_chart(data, Path(tmp), title="Email Volume by Quarter")
         return _png_response(path)
@@ -67,10 +68,11 @@ async def chart_frequency(
 
 @router.get("/daily-avg")
 async def chart_daily_avg(
+    corpus: str = Query("personal"),
     conn: sqlite3.Connection = Depends(get_conn),
 ):
     """Avg emails per day by year — grouped bars (sent/received) + ratio line."""
-    data = daily_avg_by_year(conn)
+    data = daily_avg_by_year(conn, corpus=corpus)
     with tempfile.TemporaryDirectory() as tmp:
         path = daily_avg_chart(data, Path(tmp))
         return _png_response(path)
@@ -80,9 +82,10 @@ async def chart_daily_avg(
 async def chart_tone_trends(
     by: str = Query("month"),
     direction: Optional[str] = Query(None),
+    corpus: str = Query("personal"),
     conn: sqlite3.Connection = Depends(get_conn),
 ):
-    data = tone_trends(conn, by=by, direction=direction)
+    data = tone_trends(conn, by=by, direction=direction, corpus=corpus)
     with tempfile.TemporaryDirectory() as tmp:
         path = tone_trend_chart(data, Path(tmp))
         return _png_response(path)
@@ -91,9 +94,10 @@ async def chart_tone_trends(
 @router.get("/topic-evolution")
 async def chart_topic_evolution(
     by: str = Query("quarter"),
+    corpus: str = Query("personal"),
     conn: sqlite3.Connection = Depends(get_conn),
 ):
-    data = topic_evolution(conn, by=by)
+    data = topic_evolution(conn, by=by, corpus=corpus)
     with tempfile.TemporaryDirectory() as tmp:
         path = topic_evolution_chart(data, Path(tmp))
         return _png_response(path)
@@ -101,10 +105,11 @@ async def chart_topic_evolution(
 
 @router.get("/tone-pie")
 async def chart_tone_pie(
+    corpus: str = Query("personal"),
     conn: sqlite3.Connection = Depends(get_conn),
 ):
     """Tone distribution pie chart from top 200 aggressive emails."""
-    emails = top_aggressive_emails(conn, limit=200)
+    emails = top_aggressive_emails(conn, limit=200, corpus=corpus)
     # Build tone_counts dict from result data
     tone_counts: dict = {}
     for e in emails:
@@ -121,9 +126,10 @@ async def chart_tone_pie(
 async def chart_response_time(
     by: str = Query("quarter"),
     contact: Optional[str] = Query(None),
+    corpus: str = Query("personal"),
     conn: sqlite3.Connection = Depends(get_conn),
 ):
-    data = response_times(conn, contact_email=contact, by=by)
+    data = response_times(conn, contact_email=contact, by=by, corpus=corpus)
     with tempfile.TemporaryDirectory() as tmp:
         path = response_time_chart(data, Path(tmp))
         return _png_response(path)
@@ -133,9 +139,10 @@ async def chart_response_time(
 async def chart_manipulation_timeline(
     by: str = Query("quarter"),
     direction: Optional[str] = Query(None),
+    corpus: str = Query("personal"),
     conn: sqlite3.Connection = Depends(get_conn),
 ):
-    data = manipulation_timeline(conn, by=by, direction=direction)
+    data = manipulation_timeline(conn, by=by, direction=direction, corpus=corpus)
     with tempfile.TemporaryDirectory() as tmp:
         path = manipulation_timeline_chart(data, Path(tmp))
         return _png_response(path)
@@ -144,9 +151,10 @@ async def chart_manipulation_timeline(
 @router.get("/manipulation-pattern-freq")
 async def chart_manipulation_pattern_freq(
     direction: Optional[str] = Query(None),
+    corpus: str = Query("personal"),
     conn: sqlite3.Connection = Depends(get_conn),
 ):
-    data = manipulation_pattern_frequency(conn, direction=direction)
+    data = manipulation_pattern_frequency(conn, direction=direction, corpus=corpus)
     with tempfile.TemporaryDirectory() as tmp:
         path = manipulation_pattern_freq_chart(data, Path(tmp))
         return _png_response(path)
@@ -155,9 +163,10 @@ async def chart_manipulation_pattern_freq(
 @router.get("/manipulation-score-dist")
 async def chart_manipulation_score_dist(
     direction: Optional[str] = Query(None),
+    corpus: str = Query("personal"),
     conn: sqlite3.Connection = Depends(get_conn),
 ):
-    data = manipulation_score_distribution(conn, direction=direction)
+    data = manipulation_score_distribution(conn, direction=direction, corpus=corpus)
     with tempfile.TemporaryDirectory() as tmp:
         path = manipulation_score_dist_chart(data, Path(tmp))
         return _png_response(path)
@@ -167,9 +176,10 @@ async def chart_manipulation_score_dist(
 async def chart_manipulation_patterns_time(
     by: str = Query("quarter"),
     direction: str = Query(""),
+    corpus: str = Query("personal"),
     conn: sqlite3.Connection = Depends(get_conn),
 ):
-    data = manipulation_patterns_over_time(conn, by=by, direction=direction)
+    data = manipulation_patterns_over_time(conn, by=by, direction=direction, corpus=corpus)
     with tempfile.TemporaryDirectory() as tmp:
         path = manipulation_patterns_time_chart(data, Path(tmp), direction=direction)
         return _png_response(path)

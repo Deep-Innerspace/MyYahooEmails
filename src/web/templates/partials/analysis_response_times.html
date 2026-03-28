@@ -1,7 +1,7 @@
 <!-- Response Times partial -->
 <div class="card mb-6">
   <div class="card-header">
-    <span class="card-title">Response Time Patterns</span>
+    <span class="card-title">Response Time Patterns <span class="corpus-tag personal">Personal</span></span>
     <span class="info-icon" data-tip="Average hours between receiving an email and sending a reply (and vice versa), tracked over time. A sharp rise in their response time may indicate evasion or legal coaching; a drop in yours may reflect increasing urgency.">i</span>
     <select name="by"
             hx-get="/analysis/response-times"
@@ -24,7 +24,7 @@
 
 <div class="stat-grid">
   <div class="stat-card">
-    <div class="stat-label">Your avg response time</div>
+    <div class="stat-label">Your avg response time <span class="corpus-tag personal">Personal</span></div>
     <div class="stat-value" style="color:var(--sent-color)">
       {% if yr.avg_hours >= 24 %}
         {{ "%.1f"|format(yr.avg_hours / 24) }}d
@@ -36,7 +36,7 @@
   </div>
 
   <div class="stat-card">
-    <div class="stat-label">Their avg response time</div>
+    <div class="stat-label">Their avg response time <span class="corpus-tag personal">Personal</span></div>
     <div class="stat-value" style="color:var(--received-color)">
       {% if tr.avg_hours >= 24 %}
         {{ "%.1f"|format(tr.avg_hours / 24) }}d
@@ -49,7 +49,7 @@
 
   {% if yr.count and tr.count %}
   <div class="stat-card">
-    <div class="stat-label">Response ratio</div>
+    <div class="stat-label">Response ratio <span class="corpus-tag personal">Personal</span></div>
     <div class="stat-value">
       {% set ratio = tr.avg_hours / yr.avg_hours if yr.avg_hours > 0 else 0 %}
       {% if ratio > 1 %}

@@ -48,6 +48,8 @@
 
         <td class="subject-cell">
           <div style="display:flex;flex-direction:column;gap:2px">
+            <div style="display:flex;align-items:center;gap:4px">
+            {% if e.corpus == 'legal' %}<span class="badge" style="background:#1e3a5f22;color:#1e3a5f;border:1px solid #1e3a5f44;font-size:9px;padding:1px 4px;flex-shrink:0">⚖️ legal</span>{% endif %}
             <span class="truncate text-sm" style="max-width:380px">
               {% if query and query in (e.subject or '') %}
                 {% set s = e.subject %}
@@ -61,6 +63,7 @@
                 {{ e.subject or '(no subject)' }}
               {% endif %}
             </span>
+            </div>
             {% if e.topics %}
             <div style="display:flex;flex-wrap:wrap;gap:2px">
               {% for t in e.topics[:4] %}
@@ -102,12 +105,13 @@
 </div>
 
 <!-- Pagination -->
+{% set _cp = '&corpus=' ~ corpus if corpus and corpus != 'all' else '' %}
 {% if total_pages > 1 %}
 <div class="pagination">
   {% if current_page > 1 %}
-  <a href="?{% if query %}q={{ query }}&{% endif %}page={{ current_page - 1 }}"
+  <a href="?{% if query %}q={{ query }}&{% endif %}page={{ current_page - 1 }}{{ _cp }}"
      class="pagination-btn"
-     hx-get="/emails/search?{% if query %}q={{ query }}&{% endif %}page={{ current_page - 1 }}"
+     hx-get="/emails/search?{% if query %}q={{ query }}&{% endif %}page={{ current_page - 1 }}{{ _cp }}"
      hx-target="#email-results"
      hx-include="#search-form"
      hx-swap="innerHTML">‹</a>
@@ -116,18 +120,18 @@
   {% endif %}
 
   {% for p in range([1, current_page - 2]|max, [total_pages + 1, current_page + 3]|min) %}
-  <a href="?{% if query %}q={{ query }}&{% endif %}page={{ p }}"
+  <a href="?{% if query %}q={{ query }}&{% endif %}page={{ p }}{{ _cp }}"
      class="pagination-btn {% if p == current_page %}current{% endif %}"
-     hx-get="/emails/search?{% if query %}q={{ query }}&{% endif %}page={{ p }}"
+     hx-get="/emails/search?{% if query %}q={{ query }}&{% endif %}page={{ p }}{{ _cp }}"
      hx-target="#email-results"
      hx-include="#search-form"
      hx-swap="innerHTML">{{ p }}</a>
   {% endfor %}
 
   {% if current_page < total_pages %}
-  <a href="?{% if query %}q={{ query }}&{% endif %}page={{ current_page + 1 }}"
+  <a href="?{% if query %}q={{ query }}&{% endif %}page={{ current_page + 1 }}{{ _cp }}"
      class="pagination-btn"
-     hx-get="/emails/search?{% if query %}q={{ query }}&{% endif %}page={{ current_page + 1 }}"
+     hx-get="/emails/search?{% if query %}q={{ query }}&{% endif %}page={{ current_page + 1 }}{{ _cp }}"
      hx-target="#email-results"
      hx-include="#search-form"
      hx-swap="innerHTML">›</a>

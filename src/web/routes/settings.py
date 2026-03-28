@@ -26,27 +26,29 @@ async def settings_page(
     runs = _get_all_runs(conn)
     methodology = analysis_methodology(conn)
 
-    # Coverage breakdown
-    total = overview.get("total", 1) or 1
+    # Coverage breakdown — denominator is personal_count because
+    # classify/tone/manipulation/timeline counts are now personal-corpus-only.
+    # Lawyer emails (legal corpus) are excluded from analysis coverage.
+    personal_total = overview.get("personal_count", 1) or 1
     coverage = {
         "classify": {
             "count": overview.get("classify_count", 0),
-            "pct": round(overview.get("classify_count", 0) / total * 100, 1),
+            "pct": round(overview.get("classify_count", 0) / personal_total * 100, 1),
             "label": "Classification",
         },
         "tone": {
             "count": overview.get("tone_count", 0),
-            "pct": round(overview.get("tone_count", 0) / total * 100, 1),
+            "pct": round(overview.get("tone_count", 0) / personal_total * 100, 1),
             "label": "Tone Analysis",
         },
         "timeline": {
             "count": overview.get("timeline_count", 0),
-            "pct": round(overview.get("timeline_count", 0) / total * 100, 1),
+            "pct": round(overview.get("timeline_count", 0) / personal_total * 100, 1),
             "label": "Timeline Events",
         },
         "manipulation": {
             "count": overview.get("manipulation_count", 0),
-            "pct": round(overview.get("manipulation_count", 0) / total * 100, 1),
+            "pct": round(overview.get("manipulation_count", 0) / personal_total * 100, 1),
             "label": "Manipulation",
         },
     }

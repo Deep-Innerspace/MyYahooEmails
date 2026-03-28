@@ -503,3 +503,28 @@ reports:
   language: fr
   page_size: A4
 ```
+
+## Web Layer Gotchas
+
+### FastAPI commit-before-redirect race condition
+`get_conn()` commits AFTER the HTTP response is sent. Any route returning `RedirectResponse` MUST call `conn.commit()` explicitly before returning — otherwise the browser follows the redirect before the INSERT/UPDATE is persisted.
+
+### FTS5 rejects email addresses
+SQLite FTS5 treats `@`, `.`, `+` as syntax tokens. Any search query containing these chars must fall back to `LIKE` on `from_address`/`to_addresses` instead of `emails_fts MATCH`. See `_search_with_filters()` in `src/web/routes/emails.py` for the pattern.
+
+### Silent error swallowing
+Several routes use bare `except Exception: return []` (e.g. `_get_chapters()`). This hides schema mismatches entirely. When a page returns empty data unexpectedly, check for swallowed exceptions first.
+
+## Database / Schema Gotchas
+
+### Always verify column names before writing queries
+Use `PRAGMA table_info(table)` to confirm actual column names — multiple schema/route mismatches found (chapters used `date_from` but schema has `date_start`; `court_events` was dropped in migration 9 but CLI still referenced it).
+
+### Changing NOT NULL constraints in SQLite
+SQLite has no `ALTER COLUMN`. To make a column nullable: CREATE new table, INSERT SELECT, DROP old, RENAME new. See migration 14 (`procedure_id` on `procedure_events`) for the pattern.
+
+### Alias backfill
+When adding an alias to a contact (or creating a new contact), always backfill: `UPDATE emails SET contact_id = ? WHERE from_address = ? AND contact_id IS NULL`. Without this, existing emails from that address stay unlinked and don't appear in stats.
+
+### contradictions.topic vs topic_id
+The `contradictions` table has BOTH `topic` (TEXT, Excel-import path) and `topic_id` (FK, automated pipeline). Always use `COALESCE(c.topic, t.name)` when querying topic names.

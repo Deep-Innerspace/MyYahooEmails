@@ -65,17 +65,23 @@ _SKIP_FOLDERS = {"Trash", "Draft", "Bulk", "Spam", "Deleted Messages"}
 @click.option("--skip-folder", multiple=True, help="Folder to skip when using --all-folders (repeatable).")
 @click.option("--resume/--no-resume", default=True, show_default=True, help="Resume from last fetched UID.")
 @click.option("--dry-run", is_flag=True, help="Count matching emails without downloading.")
-def fetch_emails(contact, since, until, folder, all_folders, skip_folder, resume, dry_run):
+@click.option("--corpus", default="personal", type=click.Choice(["personal", "legal"]),
+              show_default=True, help="Corpus tag for stored emails. Use 'legal' for lawyer emails.")
+def fetch_emails(contact, since, until, folder, all_folders, skip_folder, resume, dry_run, corpus):
     """Download emails filtered by contact address and/or date range.
 
     For a complete first import use --all-folders so nothing is missed.
     The contact filter (From/To/CC) is applied server-side on every folder,
     so only relevant emails are downloaded regardless of folder size.
 
+    Use --corpus legal when fetching lawyer emails; attachments will be stored
+    as metadata-only (no BLOB download) and can be fetched on demand later.
+
     Examples:
       python cli.py fetch emails --all-folders --dry-run
       python cli.py fetch emails --all-folders --since 2014-01-01
       python cli.py fetch emails --folder Divorce --folder Avocat
+      python cli.py fetch emails --corpus legal --contact avocat@cabinet.fr
     """
     from src.config import yahoo_email, contacts as cfg_contacts
     from src.extraction.imap_client import (
@@ -153,6 +159,7 @@ def fetch_emails(contact, since, until, folder, all_folders, skip_folder, resume
         console.print(f"[bold]Since:[/bold] {since_date}")
     if until_date:
         console.print(f"[bold]Until:[/bold] {until_date}")
+    console.print(f"[bold]Corpus:[/bold] {corpus}")
 
     total_stored = total_skipped = total_error = 0
 
@@ -193,13 +200,16 @@ def fetch_emails(contact, since, until, folder, all_folders, skip_folder, resume
                 parsed_batch = []
                 with tqdm(total=len(uid_list), desc=f"  Downloading", unit="msg") as pbar:
                     for uid, raw, meta in fetch_raw_emails(client, uid_list):
-                        parsed = parse_raw_email(uid, raw, folder_name, my_email)
+                        parsed = parse_raw_email(
+                            uid, raw, folder_name, my_email,
+                            download_content=(corpus != "legal"),
+                        )
                         if parsed:
                             parsed_batch.append(parsed)
                         pbar.update(1)
 
                 if parsed_batch:
-                    stats = batch_store_emails(parsed_batch, folder_name)
+                    stats = batch_store_emails(parsed_batch, folder_name, corpus=corpus)
                     total_stored += stats["stored"]
                     total_skipped += stats["skipped_duplicate"]
                     total_error += stats["skipped_error"]
@@ -250,6 +260,129 @@ def fetch_status():
         for row in fetch_states:
             table2.add_row(row["folder"], row["contact_email"], str(row["last_uid"]), str(row["last_sync"]))
         console.print(table2)
+
+
+@fetch.command("lawyers")
+@click.option("--folder", "-f", multiple=True, help="Specific IMAP folder(s) to search (default: all non-system).")
+@click.option("--since", type=click.DateTime(formats=["%Y-%m-%d"]), default=None, help="Start date (YYYY-MM-DD).")
+@click.option("--resume/--no-resume", default=True, show_default=True, help="Resume from last fetched UID.")
+@click.option("--dry-run", is_flag=True, help="Count matching emails without downloading.")
+def fetch_lawyers(folder, since, resume, dry_run):
+    """Fetch all lawyer emails and store them with corpus='legal'.
+
+    Reads contacts with role my_lawyer or her_lawyer from config.yaml.
+    Attachments are stored as metadata-only (no BLOB) and can be downloaded
+    on demand from the web UI later.
+
+    Examples:
+      python cli.py fetch lawyers --dry-run
+      python cli.py fetch lawyers --since 2014-01-01
+      python cli.py fetch lawyers --folder Avocat --folder INBOX
+    """
+    from src.config import lawyer_contacts, yahoo_email
+    from src.config import contacts as cfg_contacts_fn, topics as cfg_topics_fn
+    from src.extraction.imap_client import (
+        imap_connection, search_uids_by_contact, fetch_raw_emails, get_folder_names,
+    )
+    from src.extraction.parser import parse_raw_email
+    from src.extraction.threader import batch_store_emails
+    from src.storage.database import init_db, seed_contacts, seed_topics, get_last_uid, set_last_uid
+    from tqdm import tqdm
+
+    init_db()
+    seed_contacts(cfg_contacts_fn())
+    seed_topics(cfg_topics_fn())
+
+    lawyers = lawyer_contacts()
+    if not lawyers:
+        console.print("[yellow]No lawyer contacts found in config.yaml.[/yellow]")
+        console.print("[dim]Add contacts with role: my_lawyer or her_lawyer and re-run.[/dim]")
+        return
+
+    my_email = yahoo_email()
+    since_date = since.date() if since else None
+
+    console.print(
+        f"[bold]Fetching emails for {len(lawyers)} lawyer contact(s)"
+        f" — corpus: [green]legal[/green][/bold]"
+        f" [dim](attachments: metadata-only)[/dim]"
+    )
+
+    total_stored = total_skipped = total_error = 0
+
+    with imap_connection() as client:
+        folders_to_search = (
+            list(folder) if folder
+            else [f for f in get_folder_names() if f not in _SKIP_FOLDERS]
+        )
+
+        for lawyer in lawyers:
+            name = lawyer.get("name", "Unknown")
+            primary = lawyer.get("email", "")
+            aliases = lawyer.get("aliases", [])
+            all_addrs = [primary] + aliases
+            role = lawyer.get("role", "lawyer")
+
+            console.print(f"\n[bold cyan]{name}[/bold cyan] ({role}) — {', '.join(all_addrs)}")
+
+            for folder_name in folders_to_search:
+                all_uids: set = set()
+                for addr in all_addrs:
+                    min_uid = get_last_uid(folder_name, addr) if resume else 0
+                    try:
+                        uids = search_uids_by_contact(
+                            client, folder_name, addr,
+                            since=since_date, min_uid=min_uid,
+                        )
+                        all_uids.update(uids)
+                    except Exception as e:
+                        err = str(e).lower()
+                        # Silently skip folders that don't exist on this mailbox
+                        if "doesn't exist" not in err and "no such mailbox" not in err:
+                            console.print(f"  [red]Error searching {folder_name}: {e}[/red]")
+
+                if not all_uids:
+                    continue
+
+                uid_list = sorted(all_uids)
+                console.print(
+                    f"  [cyan]{folder_name}[/cyan]: [bold]{len(uid_list)}[/bold] message(s)"
+                )
+
+                if dry_run:
+                    continue
+
+                parsed_batch = []
+                with tqdm(total=len(uid_list), desc="  Downloading", unit="msg") as pbar:
+                    for uid, raw, meta in fetch_raw_emails(client, uid_list):
+                        parsed = parse_raw_email(
+                            uid, raw, folder_name, my_email,
+                            download_content=False,  # metadata-only for legal corpus
+                        )
+                        if parsed:
+                            parsed_batch.append(parsed)
+                        pbar.update(1)
+
+                if parsed_batch:
+                    stats = batch_store_emails(parsed_batch, folder_name, corpus="legal")
+                    total_stored += stats["stored"]
+                    total_skipped += stats["skipped_duplicate"]
+                    total_error += stats["skipped_error"]
+                    max_uid = max(uid_list)
+                    for addr in all_addrs:
+                        set_last_uid(folder_name, max_uid, addr)
+                    console.print(
+                        f"  [green]✓ {stats['stored']} stored[/green]"
+                        f" [dim]{stats['skipped_duplicate']} duplicates"
+                        f" {stats['skipped_error']} errors[/dim]"
+                    )
+
+    if not dry_run:
+        console.print(
+            f"\n[bold green]Done! {total_stored} new lawyer emails stored"
+            f" (corpus=legal).[/bold green]"
+            f" ({total_skipped} duplicates, {total_error} errors)"
+        )
 
 
 # ═══════════════════════════════════════════════════════════════════════════

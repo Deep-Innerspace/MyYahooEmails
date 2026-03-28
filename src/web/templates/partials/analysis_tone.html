@@ -1,7 +1,7 @@
 <!-- Tone Trends partial -->
 <div class="card mb-6">
   <div class="card-header">
-    <span class="card-title">Tone Trends</span>
+    <span class="card-title">Tone Trends <span class="corpus-tag personal">Personal</span></span>
     <span class="info-icon" data-tip="Rolling averages of aggression and manipulation scores over time, split by direction. Peaks indicate periods when the correspondence became more hostile or coercive. Adjust the period granularity and direction filter to isolate patterns.">i</span>
     <div style="display:flex;gap:var(--space-2);align-items:center">
       <select name="direction"
@@ -35,28 +35,28 @@
 {% if tone_data %}
 <div class="stat-grid" style="grid-template-columns:repeat(4,1fr)">
   <div class="stat-card">
-    <div class="stat-label">Aggression — Received</div>
+    <div class="stat-label">Aggression — Received <span class="corpus-tag personal">Personal</span></div>
     <div class="stat-value" style="color:var(--aggression)">
       {{ "%.3f"|format(avg_aggression_received) }}
     </div>
     <div class="stat-sub">0 = neutral, 1 = extreme</div>
   </div>
   <div class="stat-card">
-    <div class="stat-label">Manipulation — Received</div>
+    <div class="stat-label">Manipulation — Received <span class="corpus-tag personal">Personal</span></div>
     <div class="stat-value" style="color:var(--manipulation)">
       {{ "%.3f"|format(avg_manipulation_received) }}
     </div>
     <div class="stat-sub">0 = none, 1 = heavy</div>
   </div>
   <div class="stat-card">
-    <div class="stat-label">Aggression — Sent</div>
+    <div class="stat-label">Aggression — Sent <span class="corpus-tag personal">Personal</span></div>
     <div class="stat-value" style="color:#3b82f6">
       {{ "%.3f"|format(avg_aggression_sent) }}
     </div>
     <div class="stat-sub">0 = neutral, 1 = extreme</div>
   </div>
   <div class="stat-card">
-    <div class="stat-label">Manipulation — Sent</div>
+    <div class="stat-label">Manipulation — Sent <span class="corpus-tag personal">Personal</span></div>
     <div class="stat-value" style="color:#8b5cf6">
       {{ "%.3f"|format(avg_manipulation_sent) }}
     </div>
