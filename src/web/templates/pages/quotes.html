@@ -1,0 +1,57 @@
+{% extends "base.html" %}
+{% block title %}Quote Bank{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <div>
+    <h1 class="page-title">Quote Bank</h1>
+    <p class="page-subtitle">{{ total }} saved quote{{ 's' if total != 1 else '' }}</p>
+  </div>
+  <a href="/narrative" class="btn btn-secondary">← Narrative Arc</a>
+</div>
+
+<div class="page-body">
+
+  {% if perspective != 'book' %}
+  <div class="alert alert-info mb-4">
+    This page is optimised for the Book perspective.
+    <a href="#" onclick="document.getElementById('perspective-form').querySelector('[value=book]').click()">Switch to Book</a>
+  </div>
+  {% endif %}
+
+  <!-- Add quote form -->
+  <div class="card mb-6">
+    <div class="card-header">
+      <span class="card-title">Add Quote</span>
+    </div>
+    <div class="card-body">
+      <form hx-post="/quotes"
+            hx-target="#quote-list"
+            hx-swap="outerHTML">
+        <div class="form-group">
+          <label class="form-label">Quote text <span style="color:var(--severity-high)">*</span></label>
+          <textarea name="text" class="form-input" rows="3"
+                    placeholder="Paste the notable text here…" required></textarea>
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:var(--space-4)">
+          <div class="form-group">
+            <label class="form-label">Email ID (optional)</label>
+            <input type="number" name="email_id" class="form-input"
+                   placeholder="e.g. 1234">
+          </div>
+          <div class="form-group">
+            <label class="form-label">Tags (comma-separated)</label>
+            <input type="text" name="tags" class="form-input"
+                   placeholder="e.g. anger, finances, children">
+          </div>
+        </div>
+        <button type="submit" class="btn btn-primary">Save Quote</button>
+      </form>
+    </div>
+  </div>
+
+  <!-- Quote list -->
+  {% include "partials/quote_list.html" %}
+
+</div>
+{% endblock %}

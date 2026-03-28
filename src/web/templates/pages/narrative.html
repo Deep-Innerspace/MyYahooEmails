@@ -1,0 +1,107 @@
+{% extends "base.html" %}
+{% block title %}Narrative Arc{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <div>
+    <h1 class="page-title">Narrative Arc</h1>
+    <p class="page-subtitle">Emotional journey across {{ years }} years of correspondence</p>
+  </div>
+  {% if overview.first_date and overview.last_date %}
+  <span class="badge badge-primary">{{ overview.first_date }} → {{ overview.last_date }}</span>
+  {% endif %}
+</div>
+
+<div class="page-body">
+
+  {% if perspective != 'book' %}
+  <div class="alert alert-info mb-6">
+    This page is optimised for the Book perspective.
+    <a href="#" onclick="document.getElementById('perspective-form').querySelector('[value=book]').click()">Switch to Book</a>
+  </div>
+  {% endif %}
+
+  <!-- Emotional arc chart -->
+  <div class="card mb-6">
+    <div class="card-header">
+      <span class="card-title">Emotional Arc</span>
+      <span class="info-icon" data-tip="Monthly aggression and manipulation scores across the full correspondence. This is the emotional backbone of your narrative — chapter boundaries often align naturally with the peaks and valleys visible here.">i</span>
+      <span class="text-sm text-muted">Aggression &amp; manipulation over time</span>
+    </div>
+    <div class="card-body" style="padding:0">
+      <img src="/charts/tone-trends?by=month" alt="Emotional arc" loading="lazy"
+           style="width:100%;height:auto;display:block">
+    </div>
+  </div>
+
+  <!-- Story statistics -->
+  <div class="stat-grid mb-6">
+    <div class="stat-card">
+      <div class="stat-label">Total Emails</div>
+      <div class="stat-value">{{ "{:,}".format(overview.total) }}</div>
+      <div class="stat-sub">across all folders</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Time span</div>
+      <div class="stat-value">{{ years }}y</div>
+      <div class="stat-sub">{{ overview.first_date }} → {{ overview.last_date }}</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Languages</div>
+      <div class="stat-value">{{ overview.french }}</div>
+      <div class="stat-sub">French / {{ overview.english }} English</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Threads</div>
+      <div class="stat-value">{{ overview.threads }}</div>
+      <div class="stat-sub">conversation threads</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Key events</div>
+      <div class="stat-value">{{ overview.timeline_events_count }}</div>
+      <div class="stat-sub">extracted from emails</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Court events</div>
+      <div class="stat-value">{{ overview.procedure_events_count }}</div>
+      <div class="stat-sub">hearings &amp; filings</div>
+    </div>
+  </div>
+
+  <!-- Act structure placeholder -->
+  <div class="card mb-6">
+    <div class="card-header">
+      <span class="card-title">Act Structure</span>
+      <button class="btn btn-secondary btn-sm" disabled title="Coming soon">
+        Auto-suggest
+      </button>
+    </div>
+    <div class="card-body">
+      <p class="text-sm text-secondary mb-4">
+        Organise your narrative into acts based on the emotional arc and key events.
+        Use the <a href="/chapters">Chapters</a> section to define individual chapters within each act.
+      </p>
+      <div style="display:grid;grid-template-columns:repeat(3, 1fr);gap:var(--space-4)">
+        {% for act_num, act_name, act_desc in [
+          (1, 'Act 1 — Setup', 'The relationship and its cracks'),
+          (2, 'Act 2 — Confrontation', 'The escalation and legal battles'),
+          (3, 'Act 3 — Resolution', 'The aftermath and moving forward'),
+        ] %}
+        <div style="background:var(--bg);border:1px dashed var(--border);border-radius:var(--radius);padding:var(--space-4);text-align:center">
+          <div style="font-weight:600;margin-bottom:var(--space-2)">{{ act_name }}</div>
+          <div class="text-sm text-muted">{{ act_desc }}</div>
+        </div>
+        {% endfor %}
+      </div>
+    </div>
+  </div>
+
+  <!-- Quick links -->
+  <div style="display:flex;gap:var(--space-4)">
+    <a href="/chapters" class="btn btn-primary">Manage Chapters</a>
+    <a href="/quotes" class="btn btn-secondary">Quote Bank</a>
+    <a href="/pivotal-moments" class="btn btn-secondary">Pivotal Moments</a>
+  </div>
+
+</div>
+{% endblock %}

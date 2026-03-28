@@ -1,0 +1,260 @@
+{% extends "base.html" %}
+{% block title %}Dashboard{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <div>
+    <h1 class="page-title">Dashboard</h1>
+    <p class="page-subtitle">
+      {% if perspective == 'legal' %}
+        Legal perspective — evidence analysis &amp; contradiction detection
+      {% else %}
+        Book perspective — narrative construction &amp; story arc
+      {% endif %}
+    </p>
+  </div>
+  <div class="flex gap-3 items-center">
+    {% if overview.first_date and overview.last_date %}
+    <span class="badge badge-primary">{{ overview.first_date }} → {{ overview.last_date }}</span>
+    {% endif %}
+  </div>
+</div>
+
+<div class="page-body">
+
+  <!-- ─── Stat cards ────────────────────────────────────────────────────── -->
+  <div class="stat-grid">
+    <div class="stat-card">
+      <div class="stat-label">Total Emails</div>
+      <div class="stat-value">{{ "{:,}".format(overview.total) }}</div>
+      <div class="stat-sub">in the database</div>
+    </div>
+
+    <div class="stat-card">
+      <div class="stat-label">Sent</div>
+      <div class="stat-value" style="color: var(--sent-color)">{{ "{:,}".format(overview.sent) }}</div>
+      <div class="stat-sub">
+        {% if overview.total %}
+          {{ "%.1f"|format(overview.sent / overview.total * 100) }}% of total
+        {% endif %}
+      </div>
+    </div>
+
+    <div class="stat-card">
+      <div class="stat-label">Received</div>
+      <div class="stat-value" style="color: var(--received-color)">{{ "{:,}".format(overview.received) }}</div>
+      <div class="stat-sub">
+        {% if overview.total %}
+          {{ "%.1f"|format(overview.received / overview.total * 100) }}% of total
+        {% endif %}
+      </div>
+    </div>
+
+    <div class="stat-card">
+      <div class="stat-label">Threads</div>
+      <div class="stat-value">{{ "{:,}".format(overview.threads) }}</div>
+      <div class="stat-sub">unique conversations</div>
+    </div>
+
+    <div class="stat-card">
+      <div class="stat-label">Languages</div>
+      <div class="stat-value">{{ "{:,}".format(overview.french) }}</div>
+      <div class="stat-sub">French / {{ "{:,}".format(overview.english) }} English</div>
+    </div>
+
+    <div class="stat-card">
+      <div class="stat-label">Court Events</div>
+      <div class="stat-value">{{ overview.procedure_events_count }}</div>
+      <div class="stat-sub">hearings, filings, decisions</div>
+    </div>
+  </div>
+
+  <!-- ─── Perspective-specific sections ───────────────────────────────── -->
+
+  <!-- Legal: Analysis Coverage + Top Aggressive -->
+  <div class="legal-only">
+    <div class="dashboard-two-col">
+
+      <!-- Coverage progress bars -->
+      <div class="card">
+        <div class="card-header">
+          <span class="card-title">📊 Analysis Coverage</span>
+        </div>
+        <div class="card-body">
+          {% set total = overview.total or 1 %}
+
+          {% set classify_pct = (overview.classify_count / total * 100)|round(1) %}
+          <div class="progress-row">
+            <span class="progress-label">Classification</span>
+            <div class="progress-track">
+              <div class="progress-fill" data-value="{{ classify_pct }}" style="width:0%"></div>
+            </div>
+            <span class="progress-pct">{{ classify_pct }}%</span>
+          </div>
+
+          {% set tone_pct = (overview.tone_count / total * 100)|round(1) %}
+          <div class="progress-row">
+            <span class="progress-label">Tone Analysis</span>
+            <div class="progress-track">
+              <div class="progress-fill" data-value="{{ tone_pct }}" style="width:0%"></div>
+            </div>
+            <span class="progress-pct">{{ tone_pct }}%</span>
+          </div>
+
+          {% set timeline_pct = (overview.timeline_count / total * 100)|round(1) %}
+          <div class="progress-row">
+            <span class="progress-label">Timeline Events</span>
+            <div class="progress-track">
+              <div class="progress-fill" data-value="{{ timeline_pct }}" style="width:0%"></div>
+            </div>
+            <span class="progress-pct">{{ timeline_pct }}%</span>
+          </div>
+
+          {% set manip_pct = (overview.manipulation_count / total * 100)|round(1) %}
+          <div class="progress-row">
+            <span class="progress-label">Manipulation</span>
+            <div class="progress-track">
+              <div class="progress-fill" data-value="{{ manip_pct }}" style="width:0%"></div>
+            </div>
+            <span class="progress-pct">{{ manip_pct }}%</span>
+          </div>
+
+          <div class="mt-4 text-sm text-muted">
+            <strong>{{ overview.contradiction_count }}</strong> contradiction pairs detected<br>
+            <strong>{{ overview.timeline_events_count }}</strong> events on the timeline
+          </div>
+        </div>
+      </div>
+
+      <!-- Top aggressive emails -->
+      <div class="card">
+        <div class="card-header">
+          <span class="card-title">⚡ Most Aggressive Emails</span>
+          <a href="/emails/?direction=received" class="btn btn-secondary btn-sm">View all</a>
+        </div>
+        {% if top_aggressive %}
+        <div class="table-wrapper" style="border-radius:0; border:none; box-shadow:none;">
+          <table>
+            <thead>
+              <tr>
+                <th>Date</th>
+                <th>Subject</th>
+                <th>Agr.</th>
+                <th>Man.</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for em in top_aggressive %}
+              <tr style="cursor:pointer" onclick="window.location='/emails/{{ em.id }}'">
+                <td class="text-xs text-muted">{{ em.date[:10] if em.date else '—' }}</td>
+                <td class="truncate" style="max-width:160px" title="{{ em.subject }}">
+                  <span class="badge {% if em.direction == 'sent' %}badge-sent{% else %}badge-received{% endif %}" style="margin-right:4px">
+                    {% if em.direction == 'sent' %}↑{% else %}↓{% endif %}
+                  </span>
+                  {{ em.subject[:40] }}{% if em.subject|length > 40 %}…{% endif %}
+                </td>
+                <td>
+                  <div style="display:flex;align-items:center;gap:4px">
+                    <div class="tone-bar-track" style="width:60px">
+                      <div class="tone-bar-fill aggression" data-value="{{ em.aggression }}" style="width:0%"></div>
+                    </div>
+                    <span class="text-xs" style="color:var(--aggression)">{{ "%.2f"|format(em.aggression) }}</span>
+                  </div>
+                </td>
+                <td>
+                  <div style="display:flex;align-items:center;gap:4px">
+                    <div class="tone-bar-track" style="width:60px">
+                      <div class="tone-bar-fill manipulation" data-value="{{ em.manipulation }}" style="width:0%"></div>
+                    </div>
+                    <span class="text-xs" style="color:var(--manipulation)">{{ "%.2f"|format(em.manipulation) }}</span>
+                  </div>
+                </td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+        {% else %}
+        <div class="empty-state">
+          <div class="empty-state-icon">📭</div>
+          <div class="empty-state-title">No tone analysis yet</div>
+          <p class="empty-state-text">Run <code>analyze tone</code> to generate data.</p>
+        </div>
+        {% endif %}
+      </div>
+
+    </div>
+  </div>
+
+  <!-- Book: Narrative snapshot -->
+  <div class="book-only">
+    <div class="dashboard-two-col">
+
+      <div class="card">
+        <div class="card-header">
+          <span class="card-title">🌊 Emotional Arc</span>
+          <span class="info-icon" data-tip="Monthly aggression and manipulation scores over time. Rising peaks indicate periods of heightened emotional intensity in the correspondence.">i</span>
+        </div>
+        <div class="card-body" style="padding:0">
+          <img src="/charts/tone-trends?by=month" alt="Emotional arc" loading="lazy"
+               style="width:100%;height:auto;display:block;">
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-header">
+          <span class="card-title">📚 Chapters</span>
+        </div>
+        <div class="card-body">
+          <div class="empty-state">
+            <div class="empty-state-icon">📖</div>
+            <div class="empty-state-title">No chapters yet</div>
+            <p class="empty-state-text">Start organising your emails into chapters to build your narrative.</p>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- ─── Quarterly volume chart (shared) ──────────────────────────────── -->
+  <div class="dashboard-section">
+    <h2 class="section-title">
+      <span class="section-title-icon">📈</span>
+      Email Volume by Quarter
+      <span class="info-icon" data-tip="Total emails sent and received per quarter. Blue bars = received, green bars = sent. Gaps or spikes correlate with key periods in the proceedings.">i</span>
+    </h2>
+    <div class="chart-container">
+      <img src="/charts/frequency?by=quarter" alt="Email volume by quarter" loading="lazy">
+    </div>
+  </div>
+
+  <!-- ─── Daily communication intensity chart (shared) ──────────────────── -->
+  <div class="dashboard-section">
+    <h2 class="section-title">
+      <span class="section-title-icon">⚡</span>
+      Daily Communication Intensity by Year
+      <span class="info-icon" data-tip="Average number of emails exchanged per day in each calendar year, split by sent (blue) and received (red). The amber line shows the sent÷received ratio — values above 1 mean you initiated more than you received that year.">i</span>
+      <span style="font-size:var(--font-size-sm);font-weight:400;color:var(--text-muted);margin-left:8px">
+        bars = avg emails/day · amber line = sent÷received ratio (>1 you initiated more)
+      </span>
+    </h2>
+    <div class="chart-container">
+      <img src="/charts/daily-avg" alt="Daily communication intensity" loading="lazy">
+    </div>
+  </div>
+
+  <!-- Legal: Tone trends chart -->
+  <div class="legal-only dashboard-section">
+    <h2 class="section-title">
+      <span class="section-title-icon">🎭</span>
+      Tone Evolution
+      <span class="info-icon" data-tip="Rolling monthly averages of aggression and manipulation scores. Helps identify when the tone of the correspondence escalated — useful for correlating with court filings or custody decisions.">i</span>
+    </h2>
+    <div class="chart-container">
+      <img src="/charts/tone-trends?by=month" alt="Tone evolution" loading="lazy">
+    </div>
+  </div>
+
+</div>
+{% endblock %}

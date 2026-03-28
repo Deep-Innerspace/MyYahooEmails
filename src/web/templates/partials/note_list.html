@@ -1,0 +1,106 @@
+<div id="notes-{{ entity_type }}-{{ entity_id }}" class="notes-panel">
+
+  <!-- Tabs -->
+  <div class="notes-tabs">
+    <button class="notes-tab {% if active_perspective == 'legal' %}active{% endif %}"
+            data-target="legal">
+      ⚖️ Juridique
+    </button>
+    <button class="notes-tab {% if active_perspective == 'book' %}active{% endif %}"
+            data-target="book">
+      📖 Livre
+    </button>
+  </div>
+
+  <!-- Legal notes -->
+  <div class="notes-content" data-perspective="legal"
+       style="display:{% if active_perspective == 'legal' %}block{% else %}none{% endif %}">
+    {% set legal_notes = notes | selectattr('perspective', 'equalto', 'legal') | list %}
+    {% if legal_notes %}
+      {% for n in legal_notes %}
+      <div class="note-item legal-note">
+        <div class="note-category">{{ n.category }}</div>
+        <div class="note-text">{{ n.text }}</div>
+        <div class="note-date">{{ n.created_at[:16] if n.created_at else '' }}</div>
+        <button class="note-delete-btn"
+                hx-delete="/notes/{{ n.id }}"
+                hx-target="#notes-{{ entity_type }}-{{ entity_id }}"
+                hx-swap="outerHTML"
+                hx-confirm="Supprimer cette note ?"
+                title="Supprimer">✕</button>
+      </div>
+      {% endfor %}
+    {% else %}
+      <div class="text-sm text-muted" style="padding:var(--space-3) 0">
+        No legal notes yet.
+      </div>
+    {% endif %}
+  </div>
+
+  <!-- Book notes -->
+  <div class="notes-content" data-perspective="book"
+       style="display:{% if active_perspective == 'book' %}block{% else %}none{% endif %}">
+    {% set book_notes = notes | selectattr('perspective', 'equalto', 'book') | list %}
+    {% if book_notes %}
+      {% for n in book_notes %}
+      <div class="note-item book-note">
+        <div class="note-category">{{ n.category }}</div>
+        <div class="note-text">{{ n.text }}</div>
+        <div class="note-date">{{ n.created_at[:16] if n.created_at else '' }}</div>
+        <button class="note-delete-btn"
+                hx-delete="/notes/{{ n.id }}"
+                hx-target="#notes-{{ entity_type }}-{{ entity_id }}"
+                hx-swap="outerHTML"
+                hx-confirm="Supprimer cette note ?"
+                title="Supprimer">✕</button>
+      </div>
+      {% endfor %}
+    {% else %}
+      <div class="text-sm text-muted" style="padding:var(--space-3) 0">
+        No book notes yet.
+      </div>
+    {% endif %}
+  </div>
+
+  <!-- Add note form -->
+  <div class="add-note-form">
+    <div class="add-note-form-title">Ajouter une note</div>
+    <form hx-post="/notes/"
+          hx-target="#notes-{{ entity_type }}-{{ entity_id }}"
+          hx-swap="outerHTML"
+          hx-indicator="#loading-bar">
+      <input type="hidden" name="entity_type" value="{{ entity_type }}">
+      <input type="hidden" name="entity_id" value="{{ entity_id }}">
+      <input type="hidden" name="perspective" value="{{ active_perspective }}">
+
+      <div style="display:flex;gap:var(--space-2);margin-bottom:var(--space-2)">
+        <select name="category" style="flex:1">
+          {% if active_perspective == 'book' %}
+          <option value="narrative_context">Narrative context</option>
+          <option value="character_insight">Insight sur un personnage</option>
+          <option value="chapter_note">Note de chapitre</option>
+          <option value="emotional_significance">Signification émotionnelle</option>
+          <option value="quote_context">Contexte de citation</option>
+          <option value="general" selected>Général</option>
+          {% else %}
+          <option value="evidence">Preuve</option>
+          <option value="lawyer_review">Revue avocat</option>
+          <option value="contradiction_note">Contradiction</option>
+          <option value="court_relevance">Pertinence judiciaire</option>
+          <option value="strategy">Stratégie</option>
+          <option value="general" selected>Général</option>
+          {% endif %}
+        </select>
+      </div>
+
+      <textarea name="text" rows="3" placeholder="Votre note…" required
+                style="margin-bottom:var(--space-2)"></textarea>
+
+      <button type="submit" class="btn btn-primary btn-sm">
+        <span class="htmx-indicator" style="display:none">…</span>
+        Ajouter
+      </button>
+    </form>
+  </div>
+
+</div>

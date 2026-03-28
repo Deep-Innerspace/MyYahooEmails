@@ -16,6 +16,7 @@ from src.analysis.runner import (
     load_prompt, parse_json_response, store_result,
 )
 from src.config import analysis_batch_size, analysis_skip_if_done
+from src.llm.groq_provider import GroqDailyLimitError
 from src.llm.router import get_provider
 
 console = Console()
@@ -84,6 +85,17 @@ def run_tone_analysis(
                 for item in results:
                     store_result(run_id, item["id"], json.dumps(item))
                     analyzed += 1
+
+            except GroqDailyLimitError as e:
+                mins = int(e.retry_after_secs // 60)
+                console.print(
+                    f"\n  [bold red]⛔ Groq daily token limit reached.[/bold red] "
+                    f"Retry in ~{mins} min. Run #{run_id} saved as partial "
+                    f"({analyzed} emails analysed so far)."
+                )
+                finish_run(run_id, status="partial", email_count=analyzed)
+                return {"run_id": run_id, "total": total, "analyzed": analyzed,
+                        "errors": errors, "aborted": True}
 
             except Exception as e:
                 console.print(f"\n  [red]Batch error: {e}[/red]")

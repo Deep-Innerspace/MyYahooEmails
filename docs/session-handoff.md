@@ -4,93 +4,84 @@
 
 ---
 
-## Last Updated: 2026-03-19
+**Last Updated: 2026-03-27**
 
 ## What Was Accomplished This Session
 
-### Phase 1 — Foundation ✅ (complete in prior sessions)
-- Yahoo IMAP fetch with `--all-folders` across 91 folders
-- Multi-address contact handling (primary + aliases)
-- MIME parser with bilingual quote stripping and delta extraction
-- Thread reconstruction, FTS5 search, full CLI
+### Phase 6 Planning — Lawyer Correspondence Module
+- Designed comprehensive Phase 6 plan (9 sub-phases: 6a through 6i)
+- Key architecture decisions:
+  - **Corpus column** on existing `emails` table ('personal'|'legal') — not separate tables
+  - **Option B** for dashboard: sub-navigation within Legal perspective, not a third perspective
+  - **Extend existing `attachments` table** (1,464 BLOBs) with on-demand download columns
+  - **Drop `court_events`** (empty), replace with `procedures` + `procedure_events` + `lawyer_invoices`
+  - Opposing counsel as reference contacts only (no email fetch)
+  - Unified timeline stays in main nav, common to both perspectives
+- Plan file: `.claude/plans/delightful-tickling-nest.md`
 
-### Phase 2 — Intelligence ✅ (complete)
-- Abstract LLM provider layer: Claude, Groq, OpenAI, Ollama
-- Router maps tasks → providers via `config.yaml`
-- Analysis pipeline: `classifier.py`, `tone.py`, `timeline.py`
-- Analysis run tracking: `analysis_runs` + `analysis_results` tables
-- 4 French-legal prompt templates
-- New CLI commands: `analyze classify/tone/timeline/all/results/stats`
+### Phase 6a — Schema + Migration Infrastructure ✅
+- Created `feature/lawyer-corpus` branch from main
+- Introduced lightweight migration system: `schema_version` table + `_MIGRATIONS` list (10 migrations)
+- Added `corpus` column to emails (DEFAULT 'personal')
+- Auto-reclassified 131 lawyer emails to `corpus='legal'` (74 h.deblauwe, 55 vclavocat, 1 jtd, 1 other)
+- Extended `attachments` table with 6 new columns for on-demand download
+- Dropped `court_events` table; created `procedures`, `procedure_events`, `lawyer_invoices`
+- Updated `models.py` with `Procedure`, `ProcedureEvent`, `LawyerInvoice` dataclasses
+- Added `attachment_download_dir()` and `lawyer_contacts()` to config.py
+- Updated `config.yaml.example` with lawyer contact roles
+- All 19 existing tests pass; web app starts cleanly
+- DB backup: `data/emails.db.backup-pre-6a`
 
-### Infrastructure
-- SQLite timestamp bug fixed: removed `detect_types` from `_connect()`
-- Duplicate contacts (test IDs 1&2) cleaned up
-- Groq rate limit discovered and managed via scheduled tasks
-- Scheduled tasks created:
-  - `daily-classify-tone` at 6:03 AM (200 emails/day each)
-  - `daily-timeline` at 7:07 AM (50 emails/day)
+### Data Discovery
+- 128 lawyer emails already in DB (from original fetch — shared folders with ex-wife)
+- 349 sent emails to non-ex-wife recipients: 129 family, 74 lawyers, 146 third-party (schools, housing, etc.)
+- ~220 third-party emails need manual review in Phase 6g.1
 
-### Skill & Docs Created (this session)
-- `update-project-state` skill created (for future session handoffs)
-- `docs/architecture.md` — module map, schema summary, design constraints
-- `docs/decision-log.md` — all key decisions recorded
-- `docs/findings.md` — first analysis run observations
+---
 
 ## Current Database State
 
 | Metric | Value |
 |--------|-------|
-| Total emails | 1,326 |
-| Sent | 351 |
-| Received | 975 |
-| Threads | 612 |
-| With attachments | 287 |
-| Date range | 2011-03-21 → 2026-03-18 |
-| Language: French | 1,229 |
-| Language: English | 73 |
+| Total emails | 3,922 (3,791 personal + 131 legal) |
+| Classification | 3,922/3,922 (100%) ✅ |
+| Tone analysis | 3,922/3,922 (100%) ✅ |
+| Manipulation | 3,922/3,922 (100%) ✅ |
+| Timeline events | 915 events from 3,922 emails (100%) ✅ |
+| Contradiction pairs | 45 total across 9 topics ✅ |
+| Procedures | 0 (tables created, awaiting Phase 6e) |
+| Lawyer invoices | 0 (tables created, awaiting Phase 6f) |
 
-## Analysis Coverage
-
-| Type | Count | Coverage |
-|------|-------|----------|
-| Classified (topics) | 159 | 12% |
-| Tone analysed | 10 | 0.8% |
-| Timeline processed | 8 | 0.6% |
-| Timeline events found | 26 | — |
-
-**Top topics**: enfants (95), finances (76), divorce (38), logement (28), contradictions (11)
-
-## Active Analysis Runs
-
-- Run 6: `tone` via Groq — status `running` (0 emails — stale, likely killed by rate limit)
-- Run 5: `classify` via Groq — status `partial` (159 emails — daily limit hit)
-- Run 4: `timeline` via Groq — status `complete` (10 emails — test run)
-- Runs 1–3: test runs (10 emails each)
-
-> **Note**: Runs 1 and 6 are in `running` state but appear stale (killed by process exit or rate limit). They are safe to leave — they won't block new runs.
+---
 
 ## Resume Point for Next Session
 
-### Immediate priorities
-1. **Let scheduled tasks run** — classify+tone at 6:03 AM, timeline at 7:07 AM. After 3–4 days the corpus should reach ~80%+ coverage.
-2. **Check coverage** after first scheduled runs: `python cli.py analyze stats`
-3. **Optionally clean up stale runs**: `python cli.py runs delete 1` and `python cli.py runs delete 6`
+### Current branch: `feature/lawyer-corpus` (Phase 6a complete, uncommitted)
 
-### Phase 3 (next major work)
-- Contradiction detection (`analyze contradictions --provider claude`)
-- Manipulation pattern analysis (`analyze manipulation --provider claude`)
-- Court event import: `python cli.py events import court_events.csv`
+### Step 1 — Commit Phase 6a
+```bash
+git add src/storage/database.py src/storage/models.py src/config.py config.yaml.example
+git commit -m "Phase 6a: schema migration infrastructure + corpus column + new tables"
+```
 
-### Phase 4 (after Phase 3)
-- Response time statistics, frequency trends
-- Word/PDF report generation
+### Step 2 — Phase 6b: Fetch Pipeline Extension
+Files to modify:
+- `src/extraction/threader.py` — add `corpus` param to `store_email()`
+- `src/extraction/parser.py` — extract MIME section IDs in `_get_attachments()`
+- `src/extraction/imap_client.py` — add `fetch_mime_part()` for on-demand download
+- `cli.py` — add `--corpus` option, `fetch lawyers` command
 
-### Phase 5 (later)
-- FastAPI web dashboard
+### Step 3 — Phase 6g: Corpus Filter + Sidebar (highest risk)
+- Add `corpus_clause()` helper
+- Update ~35-40 queries across 12 files
+- Restructure sidebar navigation
 
-## Open Questions / Known Issues
+### Implementation Order
+6a ✅ → 6b → 6g → 6g.1 → 6c → 6d → 6e → 6f → 6h → 6i
 
-- Runs 1 and 6 are stuck in `running` state — they were killed mid-run. Not blocking.
-- `tone` analysis at only 0.8% coverage — scheduled task will catch up over days
-- No court events imported yet — user needs to prepare `court_events.csv`
-- IMAP fetch may need re-run after a few months to catch new emails
+### Quick Start
+```bash
+git checkout feature/lawyer-corpus
+.venv/bin/python -m pytest tests/ -v
+.venv/bin/python cli.py web --reload    # http://127.0.0.1:8000
+```

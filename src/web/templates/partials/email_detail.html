@@ -1,0 +1,115 @@
+{% if email %}
+<div style="height:100%">
+
+  <!-- Header -->
+  <div class="email-detail-header">
+    <div class="email-subject">{{ email.subject or '(no subject)' }}</div>
+
+    <div class="email-meta-row">
+      <span class="badge {% if email.direction == 'sent' %}badge-sent{% else %}badge-received{% endif %}">
+        {% if email.direction == 'sent' %}↑ Sent{% else %}↓ Received{% endif %}
+      </span>
+      <span class="email-date text-sm">{{ email.date[:16] if email.date else '' }}</span>
+      {% if email.language %}
+      <span class="badge badge-primary">{{ email.language|upper }}</span>
+      {% endif %}
+      {% if email.has_attachments %}
+      <span class="text-xs text-muted">📎</span>
+      {% endif %}
+    </div>
+
+    <div style="margin-top:var(--space-2);font-size:var(--font-size-sm)">
+      <span class="text-muted">From:</span>
+      <strong>
+        {% if email.from_name %}{{ email.from_name }} &lt;{{ email.from_address }}&gt;
+        {% else %}{{ email.from_address }}{% endif %}
+      </strong>
+    </div>
+
+    <!-- Topic badges -->
+    {% if email.topics %}
+    <div style="margin-top:var(--space-2);display:flex;flex-wrap:wrap;gap:3px">
+      {% for t in email.topics %}
+      <span class="topic-pill"
+            style="background-color:{{ t.color }}22;color:{{ t.color }};border-color:{{ t.color }}44">
+        {{ t.name }}
+      </span>
+      {% endfor %}
+    </div>
+    {% endif %}
+
+    <!-- Actions -->
+    <div style="margin-top:var(--space-3);display:flex;gap:var(--space-2);flex-wrap:wrap">
+      <a href="/emails/{{ email.id }}" class="btn btn-secondary btn-sm">Open full page</a>
+
+      <button class="btn btn-secondary btn-sm"
+              hx-get="/emails/{{ email.id }}/thread"
+              hx-target="#thread-panel-inline"
+              hx-swap="innerHTML"
+              hx-indicator="#loading-bar">
+        🧵 Thread{% if email.thread_emails %} ({{ email.thread_emails|length }}){% endif %}
+      </button>
+
+      <button class="bookmark-btn {% if email.bookmarked %}bookmarked{% endif %}"
+              hx-post="/emails/{{ email.id }}/bookmark"
+              hx-target="this"
+              hx-swap="outerHTML"
+              title="Bookmark">
+        {% if email.bookmarked %}⭐{% else %}☆{% endif %}
+      </button>
+    </div>
+  </div>
+
+  <!-- Body -->
+  <div class="email-body-section">
+    <div class="email-body" id="email-body" data-email-id="{{ email.id }}">{{ email.delta_text or '' }}</div>
+  </div>
+
+  <!-- Thread panel target (inline) -->
+  <div id="thread-panel-inline"></div>
+
+  <!-- Analysis: Tone -->
+  {% if email.analysis.get('tone') %}
+  {% set td = email.analysis['tone']['data'] %}
+  <div class="email-analysis-section">
+    <div class="analysis-section-title">Analyse de ton — {{ td.get('tone', '') }}</div>
+
+    {% if td.get('aggression_level') is not none %}
+    <div class="tone-bar-wrapper">
+      <span class="tone-bar-label">Agressivité</span>
+      <div class="tone-bar-track">
+        <div class="tone-bar-fill aggression"
+             data-value="{{ td.aggression_level }}" style="width:0%"></div>
+      </div>
+      <span class="tone-bar-value" style="color:var(--aggression)">
+        {{ "%.2f"|format(td.aggression_level) }}
+      </span>
+    </div>
+    {% endif %}
+
+    {% if td.get('manipulation_score') is not none %}
+    <div class="tone-bar-wrapper">
+      <span class="tone-bar-label">Manipulation</span>
+      <div class="tone-bar-track">
+        <div class="tone-bar-fill manipulation"
+             data-value="{{ td.manipulation_score }}" style="width:0%"></div>
+      </div>
+      <span class="tone-bar-value" style="color:var(--manipulation)">
+        {{ "%.2f"|format(td.manipulation_score) }}
+      </span>
+    </div>
+    {% endif %}
+  </div>
+  {% endif %}
+
+  <!-- Notes panel -->
+  <div id="notes-email-{{ email.id }}">
+    {% set entity_type = 'email' %}
+    {% set entity_id = email.id %}
+    {% set notes = email.notes %}
+    {% set active_perspective = perspective %}
+    {% include "partials/note_list.html" %}
+  </div>
+
+</div>
+{% endif %}

@@ -179,11 +179,22 @@ def get_emails_for_analysis(
     topic_filter: Optional[str] = None,
     direction: Optional[str] = None,
     limit: Optional[int] = None,
+    email_ids: Optional[List[int]] = None,
+    skip_classified: bool = False,
 ) -> List[Dict[str, Any]]:
-    """Fetch emails that need analysis, with optional filters."""
+    """Fetch emails that need analysis, with optional filters.
+
+    email_ids: restrict to this explicit list of IDs (for oversized/targeted runs).
+    skip_classified: exclude emails already present in email_topics (for classify reruns).
+    """
     with get_db() as conn:
         params = []
         wheres = []
+
+        if email_ids:
+            placeholders = ",".join("?" * len(email_ids))
+            wheres.append(f"e.id IN ({placeholders})")
+            params.extend(email_ids)
 
         if since:
             wheres.append("e.date >= ?")
@@ -200,7 +211,11 @@ def get_emails_for_analysis(
             )""")
             params.append(topic_filter)
 
-        # Skip emails already analyzed in this run
+        # Skip emails already classified (across all runs) — for classify command
+        if skip_classified:
+            wheres.append("NOT EXISTS (SELECT 1 FROM email_topics et WHERE et.email_id = e.id)")
+
+        # Skip emails already analyzed in this run (for mid-run resume)
         if skip_if_analyzed and run_id:
             wheres.append("""e.id NOT IN (
                 SELECT email_id FROM analysis_results WHERE run_id = ?
@@ -225,6 +240,73 @@ def get_emails_for_analysis(
         ).fetchall()
 
         return [dict(r) for r in rows]
+
+
+def get_classification_summaries(
+    run_id: Optional[int] = None,
+    since: Optional[datetime] = None,
+    topic_filter: Optional[str] = None,
+) -> List[Dict[str, Any]]:
+    """Fetch email summaries from a classify run.
+
+    If run_id is None, uses the most recent completed/partial classify run.
+    Returns: [{id, date, direction, subject, summary, topics}]
+    """
+    with get_db() as conn:
+        # Resolve run_id
+        if run_id is None:
+            row = conn.execute(
+                """SELECT id FROM analysis_runs
+                   WHERE analysis_type = 'classify'
+                     AND status IN ('complete', 'partial')
+                   ORDER BY run_date DESC LIMIT 1"""
+            ).fetchone()
+            if not row:
+                return []
+            run_id = row["id"]
+
+        params: list = [run_id]
+        wheres = ["r.id = ?"]
+
+        if since:
+            wheres.append("e.date >= ?")
+            params.append(since.isoformat())
+
+        if topic_filter:
+            wheres.append("""e.id IN (
+                SELECT et.email_id FROM email_topics et
+                JOIN topics t ON t.id = et.topic_id AND t.name = ?
+            )""")
+            params.append(topic_filter)
+
+        where_clause = "WHERE " + " AND ".join(wheres)
+
+        rows = conn.execute(
+            f"""SELECT ar.email_id AS id, ar.result_json,
+                       e.date, e.direction, e.subject, e.from_address
+                FROM analysis_results ar
+                JOIN analysis_runs r ON r.id = ar.run_id
+                JOIN emails e ON e.id = ar.email_id
+                {where_clause}
+                ORDER BY e.date ASC""",
+            params,
+        ).fetchall()
+
+        results = []
+        for r in rows:
+            data = json.loads(r["result_json"])
+            # Extract topic names from the classification result
+            topic_names = [t.get("name", "") for t in data.get("topics", [])]
+            results.append({
+                "id": r["id"],
+                "date": str(r["date"])[:10],
+                "direction": r["direction"],
+                "subject": r["subject"],
+                "from_address": r["from_address"],
+                "summary": data.get("summary", ""),
+                "topics": topic_names,
+            })
+        return results
 
 
 def batch(items: list, size: int) -> Generator[list, None, None]:

@@ -1,0 +1,149 @@
+== BATCH CONTEXT ==
+
+Batch  : [FILL IN: e.g. "1 of 17  (timeline_batch01)"]
+Period : [FILL IN: from the earliest to the latest email date in this batch]
+
+All batches: timeline_batch01 through timeline_batch17
+Each batch covers ~230 emails sorted by date ascending.
+
+------------------------------------------------------------------------------
+
+You are a forensic legal analyst building a master timeline for a French international
+divorce case (2011–2026).
+
+== CASE CONTEXT ==
+
+The two parties are:
+- "Moi" (direction = "sent") — the father, residing in Dubai
+- "Ex-femme" (direction = "received") — the mother, residing in France
+
+The emails span 10+ years and touch on: child custody (enfants), school (école/éducation),
+finances, housing (logement/indivision), holidays (vacances), health (santé),
+legal proceedings (procédure), activities (activités), family (famille), divorce.
+
+The goal of this timeline is to build a verified chronology of facts, commitments, accusations,
+and legal events that can be presented alongside court hearings. Precision and factual
+grounding are essential — this will be used as evidence.
+
+
+== YOUR TASK ==
+
+I will upload an Excel workbook. It contains 2 sheets:
+
+--- Sheet 1 — "Instructions"
+Background information. Read it for context. Do not modify it.
+
+--- Sheet 2 — "Emails" (INPUT + OUTPUT)
+Each row is one email. Blue columns = read-only input. Yellow columns = fill these.
+
+Input columns (blue — DO NOT MODIFY):
+  email_id   : Unique numeric ID
+  date       : Email date (YYYY-MM-DD)
+  direction  : "sent" (from father) or "received" (from mother)
+  subject    : Email subject
+  delta_text : New content only — quoted replies have already been stripped
+
+Output columns (yellow — FILL THESE):
+  event_date   : Date of the event in YYYY-MM-DD format (or YYYY-MM or YYYY if only partial)
+  event_type   : One of the types listed below
+  significance : "high", "medium", or "low"
+  description  : One sentence in French describing the event precisely
+
+
+== EVENT TYPES ==
+
+Use exactly one of these values in the event_type column:
+
+  statement      : A factual claim about what happened ("j'ai payé le loyer le 3 mars")
+  commitment     : A promise or agreement made ("je te rendrai les enfants dimanche")
+  accusation     : An allegation against the other party ("tu n'as pas payé la pension")
+  denial         : A denial of an allegation ("je n'ai jamais dit cela")
+  legal_fact     : Reference to a court order, judgment, or legal proceeding
+  financial_fact : A monetary fact, payment, debt, or asset value
+  child_fact     : A fact about the children (school, health, custody, activities)
+  property_fact  : A fact about the shared apartment, assets, or indivision
+  demand         : An explicit written request or demand
+
+
+== SIGNIFICANCE ==
+
+  high   : Legally significant — contradicts other claims, involves children's welfare,
+           references a court order, or documents a broken commitment. Usable as evidence.
+  medium : Notable fact — documents an agreement, payment, or key event that establishes context.
+  low    : Routine — logistical information, minor schedule detail, or passing reference.
+
+
+== RULES ==
+
+1. ONE EVENT PER ROW — extract only the MOST significant event from each email.
+   If the email contains several events, pick the one with the highest legal relevance.
+
+2. LEAVE BLANK if the email has no extractable event with temporal relevance
+   (e.g. pure logistics, greetings, acknowledgements with no facts, too vague).
+   Do NOT invent events. Do NOT fill in rows where there is nothing to extract.
+
+3. event_date is the date the EVENT occurred or was referenced — NOT the date of the email.
+   If the email says "j'ai payé le 15 mars", the event_date is the 15th, not the email date.
+   If only a month/year is mentioned, use YYYY-MM. If only a year, use YYYY.
+   If the date is approximate or inferred from context, still fill it — use your best estimate.
+
+4. Descriptions must be in French, factual, and precise.
+   Quote verbatim key words or amounts from the email where possible.
+   Max 2 sentences.
+
+5. Do NOT modify the blue input columns.
+
+
+== EXAMPLE OUTPUT ROWS ==
+
+email_id | date       | direction | subject         | delta_text (excerpt)           | event_date | event_type    | significance | description
+---------|------------|-----------|-----------------|-------------------------------|------------|---------------|--------------|------------
+347      | 2016-03-15 | sent      | Re: Pension     | "j'ai viré les 1200€ le 10..."| 2016-03-10 | financial_fact| medium       | Le père confirme avoir effectué un virement de 1 200 € au titre de la pension alimentaire le 10 mars 2016.
+512      | 2017-08-03 | received  | Rentrée         | "Maylis ne sera pas inscrite"  | 2017-09    | child_fact    | high         | La mère annonce que Maylis ne sera pas inscrite à l'école en septembre 2017 sans en informer le père préalablement.
+203      | 2018-01-12 | sent      | Accord vacances | "comme convenu, je prendrai"   | 2018-07    | commitment    | medium       | Le père confirme l'accord sur les vacances d'été 2018 : il prendra les enfants en juillet.
+418      | 2019-05-20 | received  | Re: Bonjour     | "merci pour ton message"       |            |               |              | (left blank — no extractable dated event)
+
+
+== PROCESSING STRATEGY ==
+
+This batch contains up to 230 emails. Work through them in order:
+
+1. Read the delta_text carefully — the content is in French, sometimes informal.
+2. Look for: dates (explicit or implied), amounts, agreements, school/custody decisions,
+   references to court orders or legal proceedings, payments, property matters.
+3. If an email is primarily emotional/argumentative with no factual anchor → leave blank.
+4. Prioritise events that: involve the children, mention specific amounts, reference
+   a court date or judgment, document an agreement or its breach.
+5. Approximately 30–50% of emails will have an extractable event. If you are finding
+   events in nearly every row, you are being too loose — tighten your criteria.
+
+
+== IMPORT COMMAND (after filling) ==
+
+python cli.py analyze import-results data/imports/timeline_batch01_filled.xlsx \
+  --type timeline --provider openai --model gpt-5.4-thinking
+
+Replace the filename for each batch. All 17 imports use the same flags.
+
+
+== BATCH REFERENCE TABLE ==
+
+Batch file                    | Emails | Notes
+------------------------------|--------|------
+timeline_batch01.xlsx         |   230  |
+timeline_batch02.xlsx         |   230  |
+timeline_batch03.xlsx         |   230  |
+timeline_batch04.xlsx         |   230  |
+timeline_batch05.xlsx         |   230  |
+timeline_batch06.xlsx         |   230  |
+timeline_batch07.xlsx         |   230  |
+timeline_batch08.xlsx         |   230  |
+timeline_batch09.xlsx         |   230  |
+timeline_batch10.xlsx         |   230  |
+timeline_batch11.xlsx         |   230  |
+timeline_batch12.xlsx         |   230  |
+timeline_batch13.xlsx         |   230  |
+timeline_batch14.xlsx         |   230  |
+timeline_batch15.xlsx         |   230  |
+timeline_batch16.xlsx         |   230  |
+timeline_batch17.xlsx         |   217  | Last batch

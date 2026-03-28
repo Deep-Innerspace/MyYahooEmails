@@ -1,0 +1,318 @@
+{% extends "base.html" %}
+{% block title %}Contacts{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <div>
+    <h1 class="page-title">Contacts</h1>
+    <p class="page-subtitle">{{ total }} contact{{ 's' if total != 1 else '' }} · {{ unassigned|length }} unassigned sender{{ 's' if unassigned|length != 1 else '' }}</p>
+  </div>
+  <button class="btn btn-primary" onclick="document.getElementById('add-contact-panel').style.display='block';this.style.display='none'">
+    + Add Contact
+  </button>
+</div>
+
+<div class="page-body">
+
+  <!-- Add Contact Form (hidden by default) -->
+  <div id="add-contact-panel" style="display:none" class="card mb-6">
+    <div class="card-header">
+      <span class="card-title">New Contact</span>
+      <button class="btn btn-secondary btn-sm" onclick="document.getElementById('add-contact-panel').style.display='none';document.querySelector('.btn-primary').style.display=''">Cancel</button>
+    </div>
+    <div class="card-body">
+      <form method="post" action="/contacts/" style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:var(--space-4)">
+        <div class="form-group">
+          <label class="form-label">Name *</label>
+          <input class="form-input" name="name" required placeholder="Full name">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Primary Email *</label>
+          <input class="form-input" name="email" type="email" required placeholder="address@example.com">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Role</label>
+          <select class="form-select" name="role" id="new-role-select" onchange="toggleLawyerFields('new', this.value)">
+            {% for val, label in roles %}
+            <option value="{{ val }}">{{ label }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="form-group new-lawyer-field" style="display:none">
+          <label class="form-label">Law Firm</label>
+          <input class="form-input" name="firm_name" placeholder="Firm name">
+        </div>
+        <div class="form-group new-lawyer-field" style="display:none">
+          <label class="form-label">Bar / City</label>
+          <input class="form-input" name="bar_jurisdiction" placeholder="Paris, Versailles…">
+        </div>
+        <div class="form-group" style="grid-column:span 3">
+          <label class="form-label">Notes</label>
+          <input class="form-input" name="notes" placeholder="Optional notes">
+        </div>
+        <div style="grid-column:span 3">
+          <button type="submit" class="btn btn-primary">Create Contact</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Role filter tabs -->
+  <div style="display:flex;flex-wrap:wrap;gap:var(--space-2);margin-bottom:var(--space-5)">
+    <button class="role-tab active" data-role="all" onclick="filterRole('all', this)">All ({{ total }})</button>
+    {% set me_count = contacts | selectattr('role', 'equalto', 'me') | list | length %}
+    {% set exwife_count = contacts | selectattr('role', 'equalto', 'ex-wife') | list | length %}
+    {% set lawyer_count = contacts | selectattr('role', 'in', ['my_lawyer','her_lawyer','opposing_counsel']) | list | length %}
+    {% set family_count = contacts | selectattr('role', 'equalto', 'family') | list | length %}
+    {% set other_count = contacts | selectattr('role', 'in', ['school','medical','housing','other']) | list | length %}
+    {% if me_count %}<button class="role-tab" data-role="me" onclick="filterRole('me', this)">Me ({{ me_count }})</button>{% endif %}
+    {% if exwife_count %}<button class="role-tab" data-role="ex-wife" onclick="filterRole('ex-wife', this)">Ex-wife ({{ exwife_count }})</button>{% endif %}
+    {% if lawyer_count %}<button class="role-tab" data-role="legal" onclick="filterRole('legal', this)">Legal ({{ lawyer_count }})</button>{% endif %}
+    {% if family_count %}<button class="role-tab" data-role="family" onclick="filterRole('family', this)">Family ({{ family_count }})</button>{% endif %}
+    {% if other_count %}<button class="role-tab" data-role="other" onclick="filterRole('other', this)">Other ({{ other_count }})</button>{% endif %}
+    {% if unassigned %}<button class="role-tab" data-role="unassigned" onclick="filterRole('unassigned', this)">Unassigned ({{ unassigned|length }})</button>{% endif %}
+  </div>
+
+  <!-- Known contacts grid -->
+  <div id="contacts-grid" class="contact-grid">
+    {% for c in contacts %}
+    {% set role_group = 'legal' if c.role in ['my_lawyer','her_lawyer','opposing_counsel'] else ('other' if c.role in ['school','medical','housing','other'] else c.role) %}
+    <a href="/contacts/{{ c.id }}" style="text-decoration:none;color:inherit" data-role="{{ role_group }}">
+      <div class="contact-card">
+        <div style="display:flex;align-items:center;gap:var(--space-3);margin-bottom:var(--space-3)">
+          <div class="contact-avatar">{{ c.name[0] | upper if c.name else '?' }}</div>
+          <div style="flex:1;min-width:0">
+            <div style="font-weight:600;font-size:var(--font-size-base)">{{ c.name }}</div>
+            <div class="text-xs text-muted truncate">{{ c.email }}</div>
+            {% if c.firm_name %}
+            <div class="text-xs text-muted truncate">{{ c.firm_name }}{% if c.bar_jurisdiction %} · {{ c.bar_jurisdiction }}{% endif %}</div>
+            {% endif %}
+          </div>
+          <span class="badge badge-secondary" style="margin-left:auto;white-space:nowrap;flex-shrink:0">
+            {{ c.role | replace('_', ' ') }}
+          </span>
+        </div>
+
+        <!-- Aliases -->
+        {% if c.aliases %}
+        <div style="display:flex;flex-wrap:wrap;gap:4px;margin-bottom:var(--space-3)">
+          {% for alias in c.aliases %}
+          <span class="badge" style="background:var(--bg);border:1px solid var(--border);color:var(--text-muted);font-size:10px;font-weight:400">{{ alias }}</span>
+          {% endfor %}
+        </div>
+        {% endif %}
+
+        <!-- Stats -->
+        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:var(--space-2);margin-bottom:var(--space-3)">
+          <div style="text-align:center">
+            <div style="font-weight:700;font-size:var(--font-size-lg)">{{ c.total }}</div>
+            <div class="text-xs text-muted">total</div>
+          </div>
+          <div style="text-align:center">
+            <div style="font-weight:700;color:var(--sent-color)">{{ c.sent }}</div>
+            <div class="text-xs text-muted">sent</div>
+          </div>
+          <div style="text-align:center">
+            <div style="font-weight:700;color:var(--received-color)">{{ c.received }}</div>
+            <div class="text-xs text-muted">received</div>
+          </div>
+        </div>
+
+        <!-- Corpus badges (if both present) -->
+        {% if c.personal_emails and c.legal_emails %}
+        <div style="display:flex;gap:4px;margin-bottom:var(--space-3)">
+          <span class="badge badge-secondary" style="font-size:10px">{{ c.personal_emails }} personal</span>
+          <span class="badge badge-secondary" style="font-size:10px">{{ c.legal_emails }} legal</span>
+        </div>
+        {% endif %}
+
+        {% if c.first_email or c.last_email %}
+        <div class="text-xs text-muted mb-3">{{ c.first_email or '?' }} → {{ c.last_email or '?' }}</div>
+        {% endif %}
+
+        {% if c.top_topics %}
+        <div style="display:flex;flex-wrap:wrap;gap:4px">
+          {% for topic in c.top_topics %}
+          <span class="topic-pill">{{ topic }}</span>
+          {% endfor %}
+        </div>
+        {% endif %}
+      </div>
+    </a>
+    {% else %}
+    <div class="empty-state" style="grid-column:span 3">
+      <div class="empty-state-icon">👥</div>
+      <div class="empty-state-title">No contacts yet</div>
+      <p class="empty-state-text">Click "Add Contact" to create your first contact.</p>
+    </div>
+    {% endfor %}
+  </div>
+
+  <!-- Unassigned senders panel -->
+  {% if unassigned %}
+  <div id="unassigned-section" class="card mt-6" style="display:none">
+    <div class="card-header">
+      <span class="card-title">Unassigned Senders</span>
+      <span class="text-xs text-muted">{{ unassigned|length }} addresses with no contact record</span>
+    </div>
+    <div class="card-body" style="padding:0">
+      <table style="width:100%;font-size:var(--font-size-sm)">
+        <thead>
+          <tr>
+            <th style="padding:var(--space-3) var(--space-4)">Address</th>
+            <th style="padding:var(--space-3) var(--space-4)">Domain</th>
+            <th style="padding:var(--space-3) var(--space-4);text-align:center">Emails</th>
+            <th style="padding:var(--space-3) var(--space-4)">First → Last</th>
+            <th style="padding:var(--space-3) var(--space-4)">Action</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for s in unassigned %}
+          <tr style="border-top:1px solid var(--border)">
+            <td style="padding:var(--space-2) var(--space-4);font-family:monospace;font-size:12px">{{ s.from_address }}</td>
+            <td style="padding:var(--space-2) var(--space-4)">
+              <span class="badge badge-secondary" style="font-size:10px">{{ s.domain }}</span>
+            </td>
+            <td style="padding:var(--space-2) var(--space-4);text-align:center;font-weight:600">{{ s.total }}</td>
+            <td style="padding:var(--space-2) var(--space-4)" class="text-xs text-muted">{{ s.first_email or '?' }} → {{ s.last_email or '?' }}</td>
+            <td style="padding:var(--space-2) var(--space-4)">
+              <button class="btn btn-secondary btn-sm"
+                      onclick="showAssignForm('{{ s.from_address }}', '{{ s.domain }}')">
+                Assign
+              </button>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+  {% endif %}
+
+  <!-- Assign sender modal -->
+  <div id="assign-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:1000;align-items:center;justify-content:center">
+    <div class="card" style="width:480px;max-width:95vw">
+      <div class="card-header">
+        <span class="card-title">Assign Sender</span>
+        <button class="btn btn-secondary btn-sm" onclick="document.getElementById('assign-modal').style.display='none'">×</button>
+      </div>
+      <div class="card-body">
+        <p class="text-sm text-muted mb-4" id="assign-modal-addr" style="font-family:monospace"></p>
+        <form method="post" action="/contacts/assign-sender">
+          <input type="hidden" name="from_address" id="assign-from-addr">
+
+          <div style="display:flex;gap:var(--space-3);margin-bottom:var(--space-4)">
+            <label style="display:flex;align-items:center;gap:var(--space-2);cursor:pointer">
+              <input type="radio" name="action" value="new" checked onchange="toggleAssignMode(this.value)"> Create new contact
+            </label>
+            <label style="display:flex;align-items:center;gap:var(--space-2);cursor:pointer">
+              <input type="radio" name="action" value="existing" onchange="toggleAssignMode(this.value)"> Add to existing contact
+            </label>
+          </div>
+
+          <div id="assign-new-fields">
+            <div class="form-group">
+              <label class="form-label">Name</label>
+              <input class="form-input" name="contact_name" id="assign-name-input" placeholder="Full name">
+            </div>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:var(--space-3)">
+              <div class="form-group">
+                <label class="form-label">Role</label>
+                <select class="form-select" name="contact_role" onchange="toggleModalLawyerField(this.value)">
+                  {% for val, label in roles %}
+                  <option value="{{ val }}">{{ label }}</option>
+                  {% endfor %}
+                </select>
+              </div>
+              <div class="form-group" id="assign-firm-group" style="display:none">
+                <label class="form-label">Firm</label>
+                <input class="form-input" name="contact_firm" placeholder="Law firm">
+              </div>
+            </div>
+          </div>
+
+          <div id="assign-existing-fields" style="display:none">
+            <div class="form-group">
+              <label class="form-label">Merge into contact</label>
+              <select class="form-select" name="existing_contact_id">
+                {% for c in contacts %}
+                <option value="{{ c.id }}">{{ c.name }} ({{ c.email }})</option>
+                {% endfor %}
+              </select>
+              <p class="text-xs text-muted mt-1">The address will be added as an alias.</p>
+            </div>
+          </div>
+
+          <div style="display:flex;gap:var(--space-3);margin-top:var(--space-4)">
+            <button type="submit" class="btn btn-primary">Assign</button>
+            <button type="button" class="btn btn-secondary" onclick="document.getElementById('assign-modal').style.display='none'">Cancel</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<style>
+.role-tab {
+  padding: 6px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--text);
+  cursor: pointer;
+  font-size: var(--font-size-sm);
+  transition: all 0.15s;
+}
+.role-tab:hover { background: var(--bg); }
+.role-tab.active { background: var(--accent); color: white; border-color: var(--accent); }
+</style>
+
+<script>
+function filterRole(role, btn) {
+  document.querySelectorAll('.role-tab').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+
+  const grid = document.getElementById('contacts-grid');
+  const unassigned = document.getElementById('unassigned-section');
+
+  if (role === 'unassigned') {
+    grid.style.display = 'none';
+    if (unassigned) unassigned.style.display = 'block';
+    return;
+  }
+
+  if (unassigned) unassigned.style.display = 'none';
+  grid.style.display = 'grid';
+
+  grid.querySelectorAll('a[data-role]').forEach(card => {
+    card.style.display = (role === 'all' || card.dataset.role === role) ? '' : 'none';
+  });
+}
+
+function toggleLawyerFields(prefix, role) {
+  const isLawyer = ['my_lawyer','her_lawyer','opposing_counsel'].includes(role);
+  document.querySelectorAll('.' + prefix + '-lawyer-field').forEach(el => {
+    el.style.display = isLawyer ? '' : 'none';
+  });
+}
+
+function showAssignForm(addr, domain) {
+  document.getElementById('assign-from-addr').value = addr;
+  document.getElementById('assign-modal-addr').textContent = addr;
+  document.getElementById('assign-name-input').value = addr.split('@')[0];
+  document.getElementById('assign-modal').style.display = 'flex';
+}
+
+function toggleAssignMode(val) {
+  document.getElementById('assign-new-fields').style.display = val === 'new' ? '' : 'none';
+  document.getElementById('assign-existing-fields').style.display = val === 'existing' ? '' : 'none';
+}
+
+function toggleModalLawyerField(role) {
+  const isLawyer = ['my_lawyer','her_lawyer','opposing_counsel'].includes(role);
+  document.getElementById('assign-firm-group').style.display = isLawyer ? '' : 'none';
+}
+</script>
+{% endblock %}
