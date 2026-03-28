@@ -15,90 +15,12 @@
         <th style="width:50px">Lang</th>
         <th style="width:30px">📎</th>
         <th style="width:40px">★</th>
+        <th style="width:56px"></th>
       </tr>
     </thead>
     <tbody>
       {% for e in emails %}
-      <tr class="email-row"
-          hx-get="/emails/{{ e.id }}"
-          hx-target="#detail-panel"
-          hx-swap="innerHTML"
-          hx-indicator="#loading-bar"
-          style="cursor:pointer">
-
-        <td class="text-xs text-muted" style="white-space:nowrap">
-          {{ e.date[:10] if e.date else '—' }}
-        </td>
-
-        <td>
-          {% if e.direction == 'sent' %}
-          <span class="direction-icon sent" title="Sent">↑</span>
-          {% else %}
-          <span class="direction-icon received" title="Received">↓</span>
-          {% endif %}
-        </td>
-
-        <td class="truncate text-sm">
-          {% if e.from_name %}
-            <span title="{{ e.from_address }}">{{ e.from_name }}</span>
-          {% else %}
-            {{ e.from_address[:22] }}{% if e.from_address|length > 22 %}…{% endif %}
-          {% endif %}
-        </td>
-
-        <td class="subject-cell">
-          <div style="display:flex;flex-direction:column;gap:2px">
-            <div style="display:flex;align-items:center;gap:4px">
-            {% if e.corpus == 'legal' %}<span class="badge" style="background:#1e3a5f22;color:#1e3a5f;border:1px solid #1e3a5f44;font-size:9px;padding:1px 4px;flex-shrink:0">⚖️ legal</span>{% endif %}
-            <span class="truncate text-sm" style="max-width:380px">
-              {% if query and query in (e.subject or '') %}
-                {% set s = e.subject %}
-                {% set qi = s.lower().find(query.lower()) %}
-                {% if qi >= 0 %}
-                  {{ s[:qi] }}<mark>{{ s[qi:qi+query|length] }}</mark>{{ s[qi+query|length:] }}
-                {% else %}
-                  {{ e.subject }}
-                {% endif %}
-              {% else %}
-                {{ e.subject or '(no subject)' }}
-              {% endif %}
-            </span>
-            </div>
-            {% if e.topics %}
-            <div style="display:flex;flex-wrap:wrap;gap:2px">
-              {% for t in e.topics[:4] %}
-              <span class="topic-pill"
-                    style="background-color:{{ t.color }}22;color:{{ t.color }};border-color:{{ t.color }}44;font-size:10px;padding:1px 6px">
-                {{ t.name }}
-              </span>
-              {% endfor %}
-              {% if e.topics|length > 4 %}
-              <span class="text-xs text-muted">+{{ e.topics|length - 4 }}</span>
-              {% endif %}
-            </div>
-            {% endif %}
-          </div>
-        </td>
-
-        <td class="text-xs text-muted text-center">
-          {{ (e.language or '?')|upper }}
-        </td>
-
-        <td class="text-center text-sm">
-          {% if e.has_attachments %}📎{% endif %}
-        </td>
-
-        <td onclick="event.stopPropagation()">
-          <button class="bookmark-btn"
-                  hx-post="/emails/{{ e.id }}/bookmark"
-                  hx-target="this"
-                  hx-swap="outerHTML"
-                  title="Bookmark / unbookmark"
-                  style="background:none;border:none">
-            {% if e.get('bookmarked') %}⭐{% else %}☆{% endif %}
-          </button>
-        </td>
-      </tr>
+        {% include "partials/email_row.html" %}
       {% endfor %}
     </tbody>
   </table>

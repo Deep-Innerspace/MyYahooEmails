@@ -45,3 +45,29 @@ async def set_perspective(
     resp = RedirectResponse(url="/", status_code=303)
     resp.set_cookie("perspective", perspective, max_age=86400 * 30)
     return resp
+
+
+@router.post("/set-corpus", response_class=HTMLResponse)
+async def set_corpus(
+    request: Request,
+    corpus: str = Form(...),
+    redirect_to: str = Form(default="/emails/"),
+):
+    """Set the corpus cookie and redirect to the calling page with ?corpus= in the URL.
+
+    Injecting the corpus value into the URL ensures that routes which rely on
+    the Query param (emails, timeline) pick it up immediately on the redirect,
+    without needing a second page load to read the cookie.
+    """
+    from urllib.parse import urlencode, parse_qsl, urlparse, urlunparse
+    valid = corpus if corpus in ("personal", "legal", "all") else "personal"
+
+    # Re-build the redirect URL, setting/replacing the corpus query param
+    parsed = urlparse(redirect_to)
+    params = dict(parse_qsl(parsed.query))
+    params["corpus"] = valid
+    new_url = urlunparse(parsed._replace(query=urlencode(params)))
+
+    resp = RedirectResponse(url=new_url, status_code=303)
+    resp.set_cookie("corpus", valid, max_age=86400 * 30)
+    return resp

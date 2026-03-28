@@ -1,0 +1,44 @@
+{# Attachment list section — included in email_detail.html when email.attachments is non-empty.
+   Expects: attachments (list of dicts from _get_attachments())
+#}
+{% set categories = [
+  ('invoice',                '🧾 Invoice'),
+  ('court_filing',           '🏛️ Court Filing'),
+  ('conclusion_draft',       '📝 Conclusions (draft)'),
+  ('conclusion_final',       '📄 Conclusions (final)'),
+  ('judgment',               '⚖️ Judgment'),
+  ('ordonnance',             '📋 Ordonnance'),
+  ('expert_report',          '🔬 Expert Report'),
+  ('convocation',            '📬 Convocation'),
+  ('pv_audience',            '🎙️ PV Audience'),
+  ('official_email',         '📧 Official Email'),
+  ('proof',                  '📸 Proof'),
+  ('proof_adverse',          '🔍 Adversary Proof'),
+  ('correspondence_adverse', '✉️ Adverse Party'),
+  ('convention',             '🤝 Convention'),
+  ('attestation',            '📜 Attestation'),
+  ('mise_en_demeure',        '⚠️ Mise en Demeure'),
+  ('requete',                '📑 Requête'),
+  ('other',                  '📁 Other')
+] %}
+
+{% if attachments %}
+<div class="att-section">
+  <div class="att-section-header">
+    <span>📎 Attachments</span>
+    <span class="badge badge-secondary">{{ attachments | length }}</span>
+    {% set pending_count = namespace(n=0) %}
+    {% for a in attachments %}{% if not a.downloaded %}{% set pending_count.n = pending_count.n + 1 %}{% endif %}{% endfor %}
+    {% if pending_count.n %}
+    <span class="badge" style="background:var(--severity-medium);color:#fff;font-size:10px">
+      {{ pending_count.n }} not fetched
+    </span>
+    {% endif %}
+  </div>
+  <div class="att-list">
+    {% for att in attachments %}
+      {% include "partials/attachment_item.html" %}
+    {% endfor %}
+  </div>
+</div>
+{% endif %}

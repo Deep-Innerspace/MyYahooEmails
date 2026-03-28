@@ -162,15 +162,44 @@ def fetch_mime_part(folder: str, uid: int, section: str) -> Optional[bytes]:
     *section* is the IMAP BODY[] section string, e.g. '2' or '2.1', as stored
     in attachments.mime_section during a metadata-only legal-corpus import.
 
-    Returns the raw decoded part bytes, or None if not found.
+    Also fetches the part's MIME headers to detect Content-Transfer-Encoding
+    and decodes base64 / quoted-printable content automatically so the returned
+    bytes are always the raw binary (e.g. a valid PDF, not base64 text).
+
+    Returns the decoded part bytes, or None if not found.
     """
+    import base64
+    import quopri
+    import email as _email_lib
+
     with imap_connection() as client:
         client.select_folder(folder, readonly=True)
-        # BODY.PEEK[section] fetches without setting \Seen flag
-        fetch_key = f"BODY.PEEK[{section}]".encode()
-        response = client.fetch([uid], [fetch_key])
+
+        # Fetch body content + MIME headers for the section in one round-trip
+        body_key  = f"BODY.PEEK[{section}]".encode()
+        mime_key  = f"BODY.PEEK[{section}.MIME]".encode()
+        response  = client.fetch([uid], [body_key, mime_key])
+
         if uid not in response:
             return None
-        # imapclient normalises the key to BODY[section] in the response
-        result_key = f"BODY[{section}]".encode()
-        return response[uid].get(result_key)
+
+        data = response[uid]
+        raw  = data.get(f"BODY[{section}]".encode())
+        if raw is None:
+            return None
+
+        # Detect transfer encoding from the part's MIME headers
+        mime_raw = data.get(f"BODY[{section}.MIME]".encode(), b"")
+        cte = ""
+        if mime_raw:
+            part_msg = _email_lib.message_from_bytes(mime_raw)
+            cte = part_msg.get("Content-Transfer-Encoding", "").lower().strip()
+
+        if cte == "base64":
+            # Strip whitespace before decoding (IMAP may include CRLF line breaks)
+            raw = base64.b64decode(raw.replace(b"\r", b"").replace(b"\n", b""))
+        elif cte in ("quoted-printable", "qp"):
+            raw = quopri.decodestring(raw)
+        # '7bit', '8bit', 'binary' — already raw, no decoding needed
+
+        return raw

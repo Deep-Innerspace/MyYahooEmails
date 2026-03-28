@@ -455,8 +455,13 @@ def unassigned_senders(conn: sqlite3.Connection, min_count: int = 1) -> List[Dic
 def merged_timeline(conn: sqlite3.Connection,
                     since: Optional[str] = None,
                     until: Optional[str] = None,
-                    significance: Optional[str] = None) -> List[Dict]:
-    """Merge timeline_events + procedure_events into one chronological list."""
+                    significance: Optional[str] = None,
+                    corpus: Optional[str] = None) -> List[Dict]:
+    """Merge timeline_events + procedure_events into one chronological list.
+
+    *corpus* filters timeline events by the source email's corpus
+    ('personal', 'legal', or None/'all' for no filter).
+    """
     sig_clause = ""
     sig_params: list = []
     if significance:
@@ -480,16 +485,19 @@ def merged_timeline(conn: sqlite3.Connection,
         date_params_te.append(until)
         date_params_ce.append(until)
 
+    cc, cp = corpus_clause(corpus, table_alias="e")
+
     # Timeline events from email analysis
     te_rows = conn.execute(
         f"""SELECT te.event_date AS date, 'email' AS source,
                    te.event_type AS type, te.description,
                    te.significance, t.name AS topic, te.email_id
             FROM timeline_events te
+            JOIN emails e ON e.id = te.email_id
             LEFT JOIN topics t ON t.id = te.topic_id
-            WHERE 1=1 {sig_clause} {date_clause_te}
+            WHERE 1=1 {sig_clause} {date_clause_te} {cc}
             ORDER BY te.event_date""",
-        sig_params + date_params_te,
+        sig_params + date_params_te + cp,
     ).fetchall()
 
     # Procedure events (replaced court_events in Phase 6a)

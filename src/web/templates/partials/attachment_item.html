@@ -1,0 +1,73 @@
+{# Single attachment row — rendered by attachment_list.html and returned by HTMX fetch/classify #}
+{# has_content=1 means BLOB in DB (personal) or file fetched to disk (legal) #}
+{% set available = att.has_content or (att.download_path and att.download_path != '') %}
+<div class="att-item" id="att-{{ att.id }}">
+
+  <div class="att-info">
+    <span class="att-icon">
+      {% if att.content_type and 'pdf' in att.content_type %}📄
+      {% elif att.content_type and 'image' in att.content_type %}🖼️
+      {% elif att.content_type and ('word' in att.content_type or 'document' in att.content_type) %}📝
+      {% elif att.content_type and ('excel' in att.content_type or 'spreadsheet' in att.content_type) %}📊
+      {% else %}📎{% endif %}
+    </span>
+    <div class="att-meta">
+      <span class="att-filename">{{ att.filename or '(unnamed)' }}</span>
+      <span class="att-size text-muted text-xs">
+        {% if att.size_bytes %}
+          {% if att.size_bytes >= 1048576 %}{{ "%.1f"|format(att.size_bytes / 1048576) }} MB
+          {% elif att.size_bytes >= 1024 %}{{ "%.0f"|format(att.size_bytes / 1024) }} KB
+          {% else %}{{ att.size_bytes }} B{% endif %}
+        {% endif %}
+        {% if att.content_type %}&nbsp;·&nbsp;<span class="badge badge-secondary" style="font-size:10px">{{ att.content_type.split('/')[-1] | upper | truncate(12, true, '') }}</span>{% endif %}
+      </span>
+    </div>
+  </div>
+
+  <div class="att-actions">
+    {# Category badge / selector #}
+    {% if att.category %}
+      <span class="badge badge-primary att-category" title="Document category">
+        {% for k, label in categories %}{% if k == att.category %}{{ label }}{% endif %}{% endfor %}
+      </span>
+    {% endif %}
+
+    {# Download or Fetch button #}
+    {% if available %}
+      <a href="/attachments/{{ att.id }}"
+         class="btn btn-secondary btn-sm"
+         target="_blank"
+         rel="noopener"
+         title="Open {{ att.filename }}">
+        ↗ Open
+      </a>
+    {% else %}
+      <button class="btn btn-primary btn-sm"
+              hx-post="/attachments/{{ att.id }}/fetch"
+              hx-target="#att-{{ att.id }}"
+              hx-swap="outerHTML"
+              hx-indicator="#loading-bar"
+              title="Fetch from IMAP server">
+        ☁ Fetch
+      </button>
+    {% endif %}
+
+    {# Category dropdown (always shown) #}
+    {% if categories %}
+    <select name="category"
+            class="form-input att-category-select"
+            hx-post="/attachments/{{ att.id }}/classify"
+            hx-target="#att-{{ att.id }}"
+            hx-swap="outerHTML"
+            hx-trigger="change"
+            title="Set document category"
+            style="max-width:130px;font-size:11px;padding:2px 4px">
+      <option value="">— category —</option>
+      {% for k, label in categories %}
+      <option value="{{ k }}" {% if att.category == k %}selected{% endif %}>{{ label }}</option>
+      {% endfor %}
+    </select>
+    {% endif %}
+  </div>
+
+</div>

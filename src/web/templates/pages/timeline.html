@@ -43,6 +43,19 @@
         </div>
 
         <div class="form-group" style="flex:1;min-width:120px">
+          <label class="form-label">Corpus</label>
+          <select name="corpus" class="form-input"
+                  hx-get="/timeline/events"
+                  hx-target="#timeline-list"
+                  hx-trigger="change"
+                  hx-include="#timeline-form">
+            <option value="personal" {% if (corpus | default('personal')) == 'personal' %}selected{% endif %}>👤 Personal</option>
+            <option value="legal" {% if (corpus | default('personal')) == 'legal' %}selected{% endif %}>⚖️ Legal</option>
+            <option value="all" {% if (corpus | default('personal')) == 'all' %}selected{% endif %}>All</option>
+          </select>
+        </div>
+
+        <div class="form-group" style="flex:1;min-width:120px">
           <label class="form-label">Significance</label>
           <select name="significance" class="form-input"
                   hx-get="/timeline/events"

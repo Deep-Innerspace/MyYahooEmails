@@ -6,7 +6,7 @@
   <title>{% block title %}MyYahooEmails{% endblock %} — Dashboard</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap">
-  <link rel="stylesheet" href="/static/css/style.css?v=4">
+  <link rel="stylesheet" href="/static/css/style.css?v=6">
 </head>
 <body class="perspective-{{ perspective }}" data-perspective="{{ perspective }}">
 
@@ -33,6 +33,34 @@
         <button type="submit" name="perspective" value="book"
                 class="perspective-btn {% if perspective == 'book' %}active{% endif %}">
           📖 Book
+        </button>
+      </form>
+    </div>
+
+    <!-- Corpus Selector -->
+    {# Read active corpus: URL query param > template var > cookie > default 'personal' #}
+    {% set _active_corpus = request.query_params.get('corpus')
+                            or (corpus if corpus is defined else none)
+                            or request.cookies.get('corpus', 'personal') %}
+    <div class="corpus-selector">
+      <span class="perspective-toggle-label">Corpus</span>
+      <form action="/set-corpus" method="post" class="corpus-buttons">
+        <input type="hidden" name="redirect_to"
+               value="{{ request.url.path }}{% if request.url.query %}?{{ request.url.query }}{% endif %}">
+        <button type="submit" name="corpus" value="personal"
+                class="corpus-btn {% if _active_corpus == 'personal' %}active{% endif %}"
+                title="Personal emails only">
+          👤 Personal
+        </button>
+        <button type="submit" name="corpus" value="legal"
+                class="corpus-btn {% if _active_corpus == 'legal' %}active{% endif %}"
+                title="Lawyer emails">
+          ⚖️ Legal
+        </button>
+        <button type="submit" name="corpus" value="all"
+                class="corpus-btn {% if _active_corpus == 'all' %}active{% endif %}"
+                title="All emails">
+          All
         </button>
       </form>
     </div>

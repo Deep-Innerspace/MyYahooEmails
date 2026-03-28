@@ -14,3 +14,12 @@ def get_conn() -> Generator[sqlite3.Connection, None, None]:
 def get_perspective(perspective: str = Cookie(default="legal")) -> str:
     """Return the current perspective from cookie. Defaults to 'legal'."""
     return perspective if perspective in ("legal", "book") else "legal"
+
+
+def get_corpus(corpus: str = Cookie(default="personal")) -> str:
+    """Return the active corpus filter from cookie. Defaults to 'personal'.
+
+    Used by routes that want to remember the user's last corpus selection
+    across page navigations (email browser, timeline, etc.).
+    """
+    return corpus if corpus in ("personal", "legal", "all") else "personal"

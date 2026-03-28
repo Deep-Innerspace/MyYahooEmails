@@ -6,7 +6,7 @@ from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
 from pathlib import Path
 
-from src.web.deps import get_conn, get_perspective
+from src.web.deps import get_conn, get_corpus, get_perspective
 from src.statistics.aggregator import merged_timeline
 
 BASE_DIR = Path(__file__).parent.parent
@@ -29,11 +29,15 @@ async def timeline_page(
     significance: Optional[str] = Query(None),
     source: Optional[str] = Query(None),
     topics: Optional[str] = Query(None),
+    corpus: Optional[str] = Query(None),
     conn: sqlite3.Connection = Depends(get_conn),
     perspective: str = Depends(get_perspective),
+    corpus_cookie: str = Depends(get_corpus),
 ):
+    # URL param overrides cookie; cookie overrides default
+    active_corpus = corpus if corpus is not None else corpus_cookie
     sig_filter = significance if significance and significance != "all" else None
-    events = _get_filtered_events(conn, date_from, date_to, sig_filter, source, topics)
+    events = _get_filtered_events(conn, date_from, date_to, sig_filter, source, topics, active_corpus)
     all_topics = _get_all_topics(conn)
     topic_list = [t.strip() for t in topics.split(",")] if topics else []
 
@@ -49,6 +53,7 @@ async def timeline_page(
         "source": source or "all",
         "selected_topics": topic_list,
         "total_events": len(events),
+        "corpus": active_corpus,
     }
 
     if request.headers.get("HX-Request"):
@@ -65,12 +70,15 @@ async def timeline_events_partial(
     significance: Optional[str] = Query(None),
     source: Optional[str] = Query(None),
     topics: Optional[str] = Query(None),
+    corpus: Optional[str] = Query(None),
     conn: sqlite3.Connection = Depends(get_conn),
     perspective: str = Depends(get_perspective),
+    corpus_cookie: str = Depends(get_corpus),
 ):
     """HTMX partial — filtered event list."""
+    active_corpus = corpus if corpus is not None else corpus_cookie
     sig_filter = significance if significance and significance != "all" else None
-    events = _get_filtered_events(conn, date_from, date_to, sig_filter, source, topics)
+    events = _get_filtered_events(conn, date_from, date_to, sig_filter, source, topics, active_corpus)
     topic_list = [t.strip() for t in topics.split(",")] if topics else []
 
     return templates.TemplateResponse("partials/timeline_list.html", {
@@ -83,16 +91,18 @@ async def timeline_events_partial(
         "source": source or "all",
         "selected_topics": topic_list,
         "total_events": len(events),
+        "corpus": active_corpus,
     })
 
 
-def _get_filtered_events(conn, date_from, date_to, significance, source, topics):
+def _get_filtered_events(conn, date_from, date_to, significance, source, topics, corpus=None):
     """Build filtered merged timeline."""
     events = merged_timeline(
         conn,
         since=date_from or None,
         until=date_to or None,
         significance=significance,
+        corpus=corpus,
     )
 
     # Filter by source
