@@ -65,6 +65,76 @@ def _is_available(att: dict) -> bool:
     return False
 
 
+def _find_email_imap_location(
+    conn: sqlite3.Connection, email_id: int, known_folder: str
+) -> tuple:
+    """Search Yahoo IMAP for an email when the stored folder/UID is stale (e.g. email was moved).
+
+    Strategy:
+    1. Try Message-ID header search (fast, exact).
+    2. Fall back to SENTON date + FROM address search (Yahoo strips Message-ID on move).
+
+    Returns (folder, uid) of the first match, or (None, None).
+    Prioritises folders that contain legal-corpus emails in the DB.
+    """
+    from datetime import datetime
+    from src.extraction.imap_client import imap_connection
+
+    row = conn.execute(
+        "SELECT message_id, date, from_address FROM emails WHERE id = ?", (email_id,)
+    ).fetchone()
+    if not row:
+        return None, None
+
+    message_id = (row["message_id"] or "").strip()
+    from_addr  = (row["from_address"] or "").strip()
+    email_date = row["date"] or ""
+
+    # Parse date to a date object for IMAP SENTON search
+    sent_on = None
+    for fmt in ("%Y-%m-%dT%H:%M:%S", "%Y-%m-%d %H:%M:%S", "%Y-%m-%d"):
+        try:
+            sent_on = datetime.strptime(email_date[:19], fmt).date()
+            break
+        except ValueError:
+            continue
+
+    # Folders to search: known folder first, then DB legal folders
+    db_folders = [
+        r[0] for r in conn.execute(
+            "SELECT DISTINCT folder FROM emails WHERE corpus='legal' AND folder IS NOT NULL"
+        ).fetchall()
+    ]
+    search_order = [known_folder] + [f for f in db_folders if f != known_folder]
+
+    try:
+        with imap_connection() as client:
+            for folder in search_order:
+                try:
+                    client.select_folder(folder, readonly=True)
+
+                    # Pass 1 — Message-ID header search
+                    if message_id:
+                        uids = client.search([b"HEADER", b"Message-ID", message_id.encode()])
+                        if uids:
+                            return folder, uids[0]
+
+                    # Pass 2 — date + from address (handles Yahoo stripping Message-ID)
+                    if sent_on and from_addr:
+                        uids = client.search([
+                            b"SENTON", sent_on,
+                            b"FROM", from_addr.encode(),
+                        ])
+                        if uids:
+                            return folder, uids[0]
+                except Exception:
+                    continue
+    except Exception:
+        pass
+
+    return None, None
+
+
 @router.get("/{attachment_id}")
 async def serve_attachment(
     attachment_id: int,
@@ -127,12 +197,33 @@ async def fetch_attachment(
         )
 
     try:
-        from src.extraction.imap_client import fetch_mime_part
+        from src.extraction.imap_client import fetch_mime_part, imap_connection
         from src.config import attachment_download_dir
 
         raw = fetch_mime_part(att["folder"], att["imap_uid"], att["mime_section"])
+
+        # UID may be stale if the email was moved to a different Yahoo folder.
+        # Re-locate by Message-ID and retry once.
         if not raw:
-            return HTMLResponse('<span class="att-error">IMAP returned empty content</span>')
+            new_folder, new_uid = _find_email_imap_location(
+                conn, att["email_id"], att["folder"]
+            )
+            if new_folder and new_uid:
+                raw = fetch_mime_part(new_folder, new_uid, att["mime_section"])
+                if raw:
+                    # Persist corrected location so future fetches don't need to search
+                    conn.execute(
+                        "UPDATE attachments SET folder=?, imap_uid=? WHERE email_id=?",
+                        (new_folder, new_uid, att["email_id"]),
+                    )
+                    conn.execute(
+                        "UPDATE emails SET folder=?, uid=? WHERE id=?",
+                        (new_folder, new_uid, att["email_id"]),
+                    )
+                    conn.commit()
+
+        if not raw:
+            return HTMLResponse('<span class="att-error">IMAP returned empty content — email may have been deleted from Yahoo</span>')
 
         # Sanitize filename for filesystem
         safe_name = "".join(

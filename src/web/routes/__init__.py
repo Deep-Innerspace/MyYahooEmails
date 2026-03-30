@@ -13,6 +13,7 @@ from src.web.routes.settings import router as settings_router
 from src.web.routes.book import router as book_router
 from src.web.routes.procedures import router as procedures_router
 from src.web.routes.attachments import router as attachments_router
+from src.web.routes.invoices import router as invoices_router
 
 router = APIRouter()
 router.include_router(dashboard_router)
@@ -27,3 +28,4 @@ router.include_router(settings_router, prefix="/settings")
 router.include_router(book_router)
 router.include_router(procedures_router, prefix="/procedures")
 router.include_router(attachments_router, prefix="/attachments")
+router.include_router(invoices_router, prefix="/invoices")

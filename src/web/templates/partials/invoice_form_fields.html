@@ -1,0 +1,109 @@
+{# Shared invoice form fields — included in create form and detail/edit page.
+   Expects context variables: lawyers, procedures, statuses
+   Optionally: invoice (for pre-filling edit), prefill (dict for scan pre-fill) #}
+
+{% set _inv = invoice if invoice is defined else {} %}
+{% set _pre = prefill if prefill is defined else {} %}
+
+<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:var(--space-3)">
+
+  <!-- Lawyer (required) -->
+  <div class="filter-group">
+    <label class="form-label">Lawyer *</label>
+    <select name="contact_id" required>
+      <option value="">— select —</option>
+      {% for l in lawyers %}
+      <option value="{{ l.id }}"
+        {% if (_inv.contact_id or _pre.contact_id|default(0)) == l.id %}selected{% endif %}>
+        {{ l.name }} ({{ l.role.replace('_',' ') }})
+      </option>
+      {% endfor %}
+    </select>
+  </div>
+
+  <!-- Invoice date (required) -->
+  <div class="filter-group">
+    <label class="form-label">Invoice date *</label>
+    <input type="date" name="invoice_date" required
+           value="{{ (_inv.invoice_date or _pre.date or '')[:10] }}">
+  </div>
+
+  <!-- Status -->
+  <div class="filter-group">
+    <label class="form-label">Status</label>
+    <select name="status">
+      {% for s in statuses %}
+      <option value="{{ s }}" {% if (_inv.status or 'paid') == s %}selected{% endif %}>
+        {{ s|capitalize }}
+      </option>
+      {% endfor %}
+    </select>
+  </div>
+
+  <!-- Procedure (optional) -->
+  <div class="filter-group">
+    <label class="form-label">Procedure</label>
+    <select name="procedure_id">
+      <option value="">— none —</option>
+      {% for p in procedures %}
+      <option value="{{ p.id }}"
+        {% if (_inv.procedure_id or _pre.procedure_id|default(0)) == p.id %}selected{% endif %}>
+        {{ p.name }}
+      </option>
+      {% endfor %}
+    </select>
+  </div>
+
+  <!-- Invoice number -->
+  <div class="filter-group">
+    <label class="form-label">Invoice #</label>
+    <input type="text" name="invoice_number" placeholder="e.g. 2024-042"
+           value="{{ _inv.invoice_number or '' }}">
+  </div>
+
+  <!-- Payment date -->
+  <div class="filter-group">
+    <label class="form-label">Payment date</label>
+    <input type="date" name="payment_date"
+           value="{{ (_inv.payment_date or '')[:10] }}">
+  </div>
+
+  <!-- Amount HT -->
+  <div class="filter-group">
+    <label class="form-label">Amount HT (€)</label>
+    <input type="number" name="amount_ht" step="0.01" min="0" placeholder="0.00"
+           value="{{ _inv.amount_ht or _pre.amount_ht|default('') }}">
+  </div>
+
+  <!-- Amount TTC -->
+  <div class="filter-group">
+    <label class="form-label">Amount TTC (€)</label>
+    <input type="number" name="amount_ttc" step="0.01" min="0" placeholder="0.00"
+           value="{{ _inv.amount_ttc or _pre.amount_ttc|default('') }}">
+  </div>
+
+  <!-- TVA rate -->
+  <div class="filter-group">
+    <label class="form-label">TVA rate</label>
+    <select name="tva_rate">
+      <option value="0.20" {% if (_inv.tva_rate or 0.20) == 0.20 %}selected{% endif %}>20%</option>
+      <option value="0.10" {% if (_inv.tva_rate or 0) == 0.10 %}selected{% endif %}>10%</option>
+      <option value="0.00" {% if (_inv.tva_rate or 0) == 0.00 %}selected{% endif %}>0% (exonéré)</option>
+    </select>
+  </div>
+
+</div>
+
+<!-- Description -->
+<div class="filter-group" style="margin-top:var(--space-2)">
+  <label class="form-label">Description</label>
+  <input type="text" name="description" placeholder="e.g. Rédaction conclusions, audience JAF …"
+         value="{{ _inv.description or _pre.description|default('') }}"
+         style="width:100%">
+</div>
+
+<!-- Linked email (hidden — pre-filled by scan, or manually set) -->
+{% if _inv.email_id or _pre.email_id is defined %}
+<input type="hidden" name="email_id"
+       value="{{ _inv.email_id or _pre.email_id|default('') }}">
+{% endif %}

@@ -87,8 +87,8 @@
                  hx-indicator="#loading-bar">
         </div>
 
-        <!-- Bookmarked -->
-        <div class="filter-group" style="max-width:120px; justify-content:flex-end">
+        <!-- Bookmarked / Unlinked -->
+        <div class="filter-group" style="justify-content:flex-end;gap:var(--space-3)">
           <label class="form-label" style="display:flex;align-items:center;gap:6px;cursor:pointer">
             <input type="checkbox" name="bookmarked" value="true"
                    {% if bookmarked %}checked{% endif %}
@@ -99,6 +99,18 @@
                    hx-include="#search-form"
                    hx-indicator="#loading-bar">
             ⭐ Bookmarked
+          </label>
+          <label class="form-label" style="display:flex;align-items:center;gap:6px;cursor:pointer"
+                 title="Show only emails with no matched contact (third-party senders)">
+            <input type="checkbox" name="unlinked" value="true"
+                   {% if unlinked %}checked{% endif %}
+                   style="width:auto"
+                   hx-get="/emails/search"
+                   hx-target="#email-results"
+                   hx-trigger="change"
+                   hx-include="#search-form"
+                   hx-indicator="#loading-bar">
+            🔗 No contact
           </label>
         </div>
 
@@ -152,6 +164,34 @@
     </div>
   </form>
 
+  <!-- ─── Bulk action toolbar ────────────────────────────────────────── -->
+  <div id="bulk-toolbar"
+       style="display:none;align-items:center;gap:var(--space-3);padding:var(--space-2) var(--space-3);
+              margin-bottom:var(--space-3);background:var(--surface);border:1px solid var(--border);
+              border-radius:var(--radius);position:sticky;top:0;z-index:10">
+    <span id="bulk-count" style="font-size:var(--font-size-sm);font-weight:600;color:var(--text)"></span>
+    <button onclick="emailBulk.deleteSelected()"
+            style="background:#dc3545;color:#fff;border:none;border-radius:var(--radius);
+                   padding:4px 10px;font-size:var(--font-size-sm);cursor:pointer">
+      🗑️ Delete
+    </button>
+    <button onclick="emailBulk.reclassify('personal')"
+            style="background:#6c757d;color:#fff;border:none;border-radius:var(--radius);
+                   padding:4px 10px;font-size:var(--font-size-sm);cursor:pointer">
+      👤 → Personal
+    </button>
+    <button onclick="emailBulk.reclassify('legal')"
+            style="background:var(--primary);color:#fff;border:none;border-radius:var(--radius);
+                   padding:4px 10px;font-size:var(--font-size-sm);cursor:pointer">
+      ⚖️ → Legal
+    </button>
+    <button onclick="emailBulk.clearSelection()"
+            style="background:none;border:1px solid var(--border);border-radius:var(--radius);
+                   padding:4px 10px;font-size:var(--font-size-sm);cursor:pointer;color:var(--text-muted)">
+      × Clear
+    </button>
+  </div>
+
   <!-- ─── Two-panel layout ────────────────────────────────────────────── -->
   <div class="emails-layout">
 
@@ -174,4 +214,78 @@
 
   </div>
 </div>
+
+<script>
+const emailBulk = {
+  getChecked() {
+    return Array.from(document.querySelectorAll('.email-checkbox:checked'));
+  },
+  getIds() {
+    return this.getChecked().map(cb => parseInt(cb.value));
+  },
+  updateToolbar() {
+    const checked = this.getChecked();
+    const toolbar = document.getElementById('bulk-toolbar');
+    const counter = document.getElementById('bulk-count');
+    if (checked.length > 0) {
+      toolbar.style.display = 'flex';
+      counter.textContent = checked.length + ' selected';
+    } else {
+      toolbar.style.display = 'none';
+    }
+  },
+  selectAll(cb) {
+    document.querySelectorAll('.email-checkbox').forEach(el => el.checked = cb.checked);
+    this.updateToolbar();
+  },
+  clearSelection() {
+    document.querySelectorAll('.email-checkbox').forEach(el => el.checked = false);
+    const sa = document.getElementById('select-all-cb');
+    if (sa) sa.checked = false;
+    this.updateToolbar();
+  },
+  async deleteSelected() {
+    const ids = this.getIds();
+    if (!ids.length) return;
+    if (!confirm(`Delete ${ids.length} email(s) from the local database? This cannot be undone.`)) return;
+    const resp = await fetch('/emails/bulk-delete', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ids})
+    });
+    if (resp.ok) {
+      ids.forEach(id => {
+        const row = document.getElementById('email-row-' + id);
+        if (row) row.remove();
+      });
+      this.clearSelection();
+    }
+  },
+  async reclassify(corpus) {
+    const ids = this.getIds();
+    if (!ids.length) return;
+    const resp = await fetch('/emails/bulk-reclassify', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ids, corpus})
+    });
+    if (resp.ok) {
+      htmx.ajax('GET', '/emails/search', {target: '#email-results', include: '#search-form'});
+      this.clearSelection();
+    }
+  }
+};
+
+// Event delegation — handles checkboxes in dynamically swapped partials
+document.addEventListener('change', e => {
+  if (e.target.classList.contains('email-checkbox')) emailBulk.updateToolbar();
+});
+
+// Reset toolbar count when the list is replaced by HTMX (search / pagination)
+document.addEventListener('htmx:afterSwap', e => {
+  if (e.detail.target && e.detail.target.id === 'email-results') {
+    emailBulk.updateToolbar();
+  }
+});
+</script>
 {% endblock %}

@@ -1,0 +1,151 @@
+{% extends "base.html" %}
+{% block title %}Scan Emails — Legal Costs{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <div>
+    <a href="/invoices/" class="text-muted text-sm" style="text-decoration:none">← Legal Costs</a>
+    <h1 class="page-title" style="margin-top:var(--space-1)">🔍 Scan emails for invoices</h1>
+    <p class="page-subtitle">
+      Lawyer emails that match your keywords{% if require_amount %} and contain a € amount{% endif %}.
+    </p>
+  </div>
+</div>
+
+<div class="page-body">
+
+  <!-- ─── Filter form ────────────────────────────────────────────────────── -->
+  <form method="get" action="/invoices/scan" class="card" style="margin-bottom:var(--space-4)">
+    <!-- Sentinel: present on every submit so the route can tell "form submitted with
+         checkbox unchecked" apart from "first page load (use defaults)" -->
+    <input type="hidden" name="s" value="1">
+    <div style="display:flex;gap:var(--space-3);align-items:flex-end;flex-wrap:wrap">
+
+      <div class="filter-group" style="flex:1;min-width:300px">
+        <label class="form-label">
+          Keywords
+          <span class="text-muted" style="font-weight:400"> — comma-separated, case-insensitive</span>
+        </label>
+        <input type="text" name="keywords"
+               value="{{ keywords_str }}"
+               placeholder="{{ default_keywords }}"
+               style="width:100%">
+      </div>
+
+      <div class="filter-group" style="flex-shrink:0">
+        <label class="form-label" style="display:flex;align-items:center;gap:6px;cursor:pointer">
+          <input type="checkbox" name="require_amount" value="true"
+                 {% if require_amount %}checked{% endif %}
+                 style="width:auto">
+          Require € amount
+        </label>
+        <label class="form-label" style="display:flex;align-items:center;gap:6px;cursor:pointer;margin-top:6px">
+          <input type="checkbox" name="show_linked" value="true"
+                 {% if show_linked %}checked{% endif %}
+                 style="width:auto">
+          Show already-linked
+        </label>
+      </div>
+
+      <div style="display:flex;gap:var(--space-2);flex-shrink:0">
+        <button type="submit" class="btn btn-primary">Search</button>
+        <a href="/invoices/scan" class="btn btn-secondary" style="text-decoration:none"
+           title="Reset to defaults">↺ Reset</a>
+      </div>
+
+    </div>
+  </form>
+
+  {% if candidates %}
+  <p class="text-sm text-muted" style="margin-bottom:var(--space-4)">
+    Found <strong>{{ candidates|length }}</strong> candidate{{ 's' if candidates|length != 1 else '' }}.
+    Review each one and save as an invoice, or skip it.
+  </p>
+
+  {% for c in candidates %}
+  <div class="card" style="margin-bottom:var(--space-3)" id="candidate-{{ c.email_id }}">
+
+    <!-- Header row -->
+    <div style="display:flex;align-items:flex-start;gap:var(--space-3);margin-bottom:var(--space-3)">
+      <div style="flex:1">
+        <div style="display:flex;align-items:center;gap:var(--space-2)">
+          <span class="text-xs text-muted">{{ c.date }}</span>
+          <span class="badge" style="font-size:9px;background:#1e3a5f22;color:#1e3a5f;border-color:#1e3a5f44">
+            {{ c.contact_name }}
+          </span>
+          {% if c.already_linked %}
+          <span class="badge" style="font-size:9px;background:#fd7e1422;color:#fd7e14;border-color:#fd7e1444">
+            already linked
+          </span>
+          {% endif %}
+        </div>
+        <div style="font-weight:500;margin-top:4px">{{ c.subject }}</div>
+        {% if c.amounts %}
+        <div style="display:flex;gap:var(--space-2);margin-top:6px">
+          {% for a in c.amounts %}
+          <span class="badge" style="background:#28a74522;color:#28a745;border-color:#28a74544">
+            {{ "%.2f"|format(a) }} €
+          </span>
+          {% endfor %}
+        </div>
+        {% endif %}
+      </div>
+      <a href="/emails/{{ c.email_id }}?back={{ request.url | urlencode }}"
+         class="btn btn-secondary text-sm" style="text-decoration:none;flex-shrink:0">
+        View email →
+      </a>
+    </div>
+
+    <!-- Snippet -->
+    <div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);
+                padding:var(--space-3);font-size:var(--font-size-sm);color:var(--text-muted);
+                font-style:italic;margin-bottom:var(--space-3)">
+      {{ c.snippet }}
+    </div>
+
+    <!-- Pre-filled create form -->
+    <details>
+      <summary style="cursor:pointer;font-size:var(--font-size-sm);font-weight:600;color:var(--primary);
+                      padding:var(--space-2) 0;user-select:none">
+        + Create invoice from this email
+      </summary>
+      <div style="margin-top:var(--space-3);padding-top:var(--space-3);border-top:1px solid var(--border)">
+        <form method="post" action="/invoices/">
+          <input type="hidden" name="email_id" value="{{ c.email_id }}">
+          {# Build a prefill dict for the shared partial #}
+          {% set prefill = {
+            "contact_id":  c.contact_id,
+            "date":        c.date,
+            "amount_ttc":  c.amounts[0] if c.amounts else "",
+            "description": ""
+          } %}
+          {% include "partials/invoice_form_fields.html" %}
+          <div style="display:flex;gap:var(--space-2);margin-top:var(--space-3)">
+            <button type="submit" class="btn btn-primary">Save invoice</button>
+            <button type="button"
+                    onclick="document.getElementById('candidate-{{ c.email_id }}').style.display='none'"
+                    class="btn btn-secondary">Skip</button>
+          </div>
+        </form>
+      </div>
+    </details>
+
+  </div>
+  {% endfor %}
+
+  {% else %}
+  <div class="empty-state">
+    <div class="empty-state-icon">✅</div>
+    <div class="empty-state-title">Nothing to scan</div>
+    <p class="empty-state-text">
+      Either no lawyer emails contain invoice keywords + EUR amounts,
+      or all matching emails are already linked to invoices.
+    </p>
+    <a href="/invoices/" class="btn btn-primary" style="margin-top:var(--space-3);text-decoration:none">
+      ← Back to Legal Costs
+    </a>
+  </div>
+  {% endif %}
+
+</div>
+{% endblock %}

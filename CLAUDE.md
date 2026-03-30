@@ -341,6 +341,7 @@ Two-layer protection:
 - Contradictions: 45 pairs total across 9 topics ✅ COMPLETE — (enfants 7, vacances 12, éducation 10, procédure 4, santé 5, logement 2, école 2, finances 1, (none) 2)
   - All 17 batch files imported (including finances_1 + finances_2 — run#114 + run#115/117)
 - Procedures: 0 — tables created, awaiting LLM extraction from lawyer emails
+- Legal corpus emails: 2,743 (as of 2026-03-30) — recovered from vclavocat (349+40 emails) and Onyx (408 emails) Yahoo folders
 
 ### 🔲 Phase 6 — Lawyer Correspondence Module (IN PROGRESS — branch: `feature/lawyer-corpus`)
 
@@ -352,44 +353,51 @@ Two-layer protection:
 - **`attachments` table extended**: 6 new columns (`mime_section`, `imap_uid`, `folder`, `downloaded`, `download_path`, `category`) for on-demand IMAP download
 - **`court_events` dropped** (was empty), replaced by `procedures` + `procedure_events` + `lawyer_invoices`
 - **New dataclasses**: `Procedure`, `ProcedureEvent`, `LawyerInvoice` in `models.py`
-- **Config**: `attachment_download_dir()`, `lawyer_contacts()` helpers; new roles `my_lawyer`, `her_lawyer`, `opposing_counsel`
+- **Config**: `attachment_download_dir()`, `lawyer_contacts()` helpers; new roles `my_lawyer`, `her_lawyer`, `opposing_counsel`, `notaire`
 - DB backup: `data/emails.db.backup-pre-6a`
 
-#### 🔲 Phase 6b — Fetch Pipeline Extension
+#### ✅ Phase 6b — Fetch Pipeline Extension (COMPLETE)
 - Corpus-aware `store_email()` in threader.py
 - Attachment metadata-only mode for legal corpus (no BLOB download)
 - `fetch_mime_part()` in imap_client.py for on-demand part download
 - `--corpus` option + `fetch lawyers` convenience command
 
-#### 🔲 Phase 6g — Corpus Filter + Sidebar Restructure (moved early — highest risk)
+#### ✅ Phase 6g — Corpus Filter + Sidebar Restructure (COMPLETE)
 - Centralized `corpus_clause()` helper for ~35-40 query updates
 - Sidebar: Legal > Case Analysis (Contradictions, Manipulation) + Legal > Legal Strategy (Procedures, Documents, Legal Costs)
 - Corpus tabs (Personal | Legal | All) on email browser
 - `get_corpus()` dependency in deps.py
 
-#### 🔲 Phase 6g.1 — Email Management (Delete + Reclassify)
-- Review ~220 third-party emails (schools, housing, family)
-- Delete irrelevant, reclassify between personal/legal
-- Bulk actions (select + delete/reclassify)
+#### ✅ Phase 6g.1 — Email Management (COMPLETE)
+- Bulk checkbox selection + toolbar (delete / reclassify personal↔legal)
+- "No contact" filter to surface unlinked emails
+- JS event delegation for HTMX-aware checkbox state
+- `POST /emails/bulk-delete` and `POST /emails/bulk-reclassify` endpoints (Pydantic JSON body)
 
-#### 🔲 Phase 6c — Attachment UI + On-Demand Download
-- Attachment list in email detail (replaces 📎-only indicator)
-- Serve from BLOB (personal) or filesystem (legal)
-- On-demand IMAP FETCH for un-downloaded legal attachments
+#### ✅ Phase 6c — Attachment UI + On-Demand Download (COMPLETE)
+- Attachment list in email detail with filename, size, category badge
+- Serve from BLOB (personal) or filesystem (legal) via `GET /attachments/{id}`
+- On-demand IMAP FETCH via `POST /attachments/{id}/fetch`
+- Stale-UID recovery: `_find_email_imap_location()` searches by Message-ID then SENTON+FROM when stored folder/UID is outdated (e.g. email moved between Yahoo folders)
 
-#### 🔲 Phase 6d — Document Classification
-- Manual + auto-suggest (filename regex) for 15 categories
-- Categories: invoice, court_filing, conclusion_draft, conclusion_final, judgment, ordonnance, expert_report, convocation, pv_audience, correspondence_adverse, convention, attestation, mise_en_demeure, requete, other
+#### ✅ Phase 6d — Document Classification (COMPLETE)
+- Manual category assignment via `POST /attachments/{id}/classify`
+- 18 categories: invoice, court_filing, conclusion_draft, conclusion_final, judgment, ordonnance, expert_report, convocation, pv_audience, official_email, proof, proof_adverse, correspondence_adverse, convention, attestation, mise_en_demeure, requete, other
+
+#### ✅ Phase 6f — Cost Tracking (COMPLETE)
+- `lawyer_invoices` full CRUD: list, create, edit, delete at `/invoices/`
+- Email scan: keyword + optional EUR amount filter at `/invoices/scan`
+  - Default keywords: facture, honoraires, note d'honoraires, relevé, acompte, solde dû, montant TTC, diligences
+  - Scans ALL `corpus='legal'` emails (sent + received); resolves lawyer from FROM or TO address
+  - Falls back from `delta_text` to `body_text` for emails where invoice content was stripped as quoted reply
+  - Sentinel `s=1` hidden field to distinguish first page load from form submission (checkbox state)
+- Per-lawyer and per-procedure cost summaries on dashboard
+- `GET /invoices/scan?back=<url>` → "View email" links return to scan page
 
 #### 🔲 Phase 6e — Procedures Model
 - CRUD for procedures + procedure_events (replaces court_events)
 - LLM extraction from lawyer emails
 - Web UI: procedure list with events timeline
-
-#### 🔲 Phase 6f — Cost Tracking
-- `lawyer_invoices` CRUD + cost dashboard
-- Auto-extraction from email body (regex for EUR/TTC/HT)
-- Charts: per-lawyer, per-procedure, monthly burn rate
 
 #### 🔲 Phase 6h — Unified Timeline
 - Merge both corpora + procedure events + cost events
@@ -502,6 +510,34 @@ reports:
   output_dir: data/exports
   language: fr
   page_size: A4
+```
+
+## IMAP Gotchas
+
+### Yahoo UIDs are folder-specific — stale after email move
+IMAP UIDs (RFC 3501) are assigned per-folder. When a user moves an email from one Yahoo folder to another, the UID in the source folder is invalidated and a new UID is assigned in the destination folder. Any stored `(folder, uid)` pair pointing to the old location will silently return empty content on `BODY.PEEK[]` fetch.
+
+**Symptom**: `fetch_mime_part()` returns `None`; attachment download shows "IMAP returned empty content".
+
+**Fix**: `_find_email_imap_location()` in `src/web/routes/attachments.py` — called as fallback when IMAP returns empty:
+1. Searches all legal-corpus folders for `HEADER Message-ID <value>` (fast, exact)
+2. Falls back to `SENTON <date> FROM <address>` (Yahoo strips Message-ID header when moving mail)
+3. On success, updates both `attachments` and `emails` tables with corrected folder+UID so future fetches are instant
+
+**Reuse**: Any future feature storing `imap_uid + folder` for on-demand fetch must use this same fallback.
+
+### Yahoo IMAP search misses emails in large folders
+Yahoo's IMAP search (`SEARCH FROM/TO/CC`) does not reliably index all messages in very large folders (e.g. Inbox with 49,000+ messages). Emails can exist in Yahoo webmail but not be returned by IMAP search.
+
+**Pattern seen twice**: Valérie's received emails (2014–2016) were in `vclavocat` folder; Hélène's (2017–2023) were in `Onyx` folder — both created by the user to organise mail, neither indexed by the original `--all-folders` fetch.
+
+**Diagnosis**: When a lawyer's received count is suspiciously low vs sent count, check Yahoo webmail for dedicated folders and run:
+```bash
+python cli.py fetch emails --folder <folder_name> --corpus legal
+```
+Or to fetch all UIDs in a folder regardless of contact match:
+```python
+# Direct script using search_all_uids() — not yet a CLI flag
 ```
 
 ## Web Layer Gotchas

@@ -4,7 +4,13 @@
 {% block content %}
 <div class="page-header">
   <div style="min-width:0;flex:1">
-    <a href="{{ back_url }}" class="btn btn-ghost btn-sm" style="margin-bottom:var(--space-2)">← Retour aux emails</a>
+    <a href="{{ back_url }}" class="btn btn-ghost btn-sm" style="margin-bottom:var(--space-2)">
+      ←
+      {% if '/invoices/scan' in back_url %}Retour au scan factures
+      {% elif '/invoices' in back_url %}Retour aux coûts
+      {% else %}Retour aux emails
+      {% endif %}
+    </a>
     <h1 class="page-title" style="font-size:var(--font-size-xl)">{{ email.subject }}</h1>
     <div class="email-meta-row" style="margin-top:var(--space-2)">
       <span class="badge {% if email.direction == 'sent' %}badge-sent{% else %}badge-received{% endif %}">

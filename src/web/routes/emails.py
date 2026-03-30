@@ -1,11 +1,12 @@
 """Email browser and detail routes."""
 import json
 import sqlite3
-from typing import Optional
+from typing import List, Optional
 from fastapi import APIRouter, Depends, Form, Query, Request
 from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
 from pathlib import Path
+from pydantic import BaseModel
 
 from src.web.deps import get_conn, get_perspective
 
@@ -98,6 +99,7 @@ async def email_list(
     date_from: Optional[str] = Query(None),
     date_to: Optional[str] = Query(None),
     bookmarked: bool = Query(False),
+    unlinked: bool = Query(False),          # only emails with no matched contact
     corpus: str = Query("all"),             # 'all', 'personal', 'legal'
     page: int = Query(1, ge=1),
     conn: sqlite3.Connection = Depends(get_conn),
@@ -109,7 +111,7 @@ async def email_list(
         conn, q=q, topics=topic_list, topic_mode=topic_mode,
         direction=direction, contact=contact,
         date_from=date_from, date_to=date_to,
-        bookmarked=bookmarked, page=page, corpus=corpus,
+        bookmarked=bookmarked, unlinked=unlinked, page=page, corpus=corpus,
     )
 
     all_topics = _get_all_topics(conn)
@@ -131,6 +133,7 @@ async def email_list(
         "date_from": date_from or "",
         "date_to": date_to or "",
         "bookmarked": bookmarked,
+        "unlinked": unlinked,
         "corpus": corpus,
         "all_topics": all_topics,
     }
@@ -153,6 +156,7 @@ async def email_search_partial(
     date_from: Optional[str] = Query(None),
     date_to: Optional[str] = Query(None),
     bookmarked: bool = Query(False),
+    unlinked: bool = Query(False),
     corpus: str = Query("all"),
     page: int = Query(1, ge=1),
     conn: sqlite3.Connection = Depends(get_conn),
@@ -164,7 +168,7 @@ async def email_search_partial(
         conn, q=q, topics=topic_list, topic_mode=topic_mode,
         direction=direction, contact=contact,
         date_from=date_from, date_to=date_to,
-        bookmarked=bookmarked, page=page, corpus=corpus,
+        bookmarked=bookmarked, unlinked=unlinked, page=page, corpus=corpus,
     )
     all_topics = _get_all_topics(conn)
     total_pages = max(1, (total + PAGE_SIZE - 1) // PAGE_SIZE)
@@ -183,6 +187,7 @@ async def email_search_partial(
         "date_from": date_from or "",
         "date_to": date_to or "",
         "bookmarked": bookmarked,
+        "unlinked": unlinked,
         "corpus": corpus,
         "all_topics": all_topics,
     })
@@ -317,7 +322,8 @@ def _build_fts_prefix_query(q: str) -> str:
 
 
 def _search_with_filters(conn, q, topics, topic_mode, direction, contact,
-                          date_from, date_to, bookmarked, page, corpus=None):
+                          date_from, date_to, bookmarked, page, corpus=None,
+                          unlinked=False):
     """Build and execute a filtered email search query."""
     conditions = []
     params = []
@@ -325,6 +331,9 @@ def _search_with_filters(conn, q, topics, topic_mode, direction, contact,
     if corpus and corpus != "all":
         conditions.append("e.corpus = ?")
         params.append(corpus)
+
+    if unlinked:
+        conditions.append("e.contact_id IS NULL")
 
     if bookmarked:
         conditions.append("e.id IN (SELECT email_id FROM bookmarks)")
@@ -418,7 +427,51 @@ def _search_with_filters(conn, q, topics, topic_mode, direction, contact,
     return emails, count
 
 
-# ── Email management (6g.1) ──────────────────────────────────────────────────
+# ── Bulk action models ───────────────────────────────────────────────────────
+
+class BulkIdsRequest(BaseModel):
+    ids: List[int]
+
+
+class BulkReclassifyRequest(BaseModel):
+    ids: List[int]
+    corpus: str
+
+
+# ── Bulk endpoints ────────────────────────────────────────────────────────────
+
+@router.post("/bulk-delete", response_class=HTMLResponse)
+async def bulk_delete_emails(
+    body: BulkIdsRequest,
+    conn: sqlite3.Connection = Depends(get_conn),
+):
+    """Delete multiple emails and all their related data from the local DB."""
+    for email_id in body.ids:
+        conn.execute("DELETE FROM timeline_events WHERE email_id = ?", (email_id,))
+        conn.execute("DELETE FROM email_topics WHERE email_id = ?", (email_id,))
+        conn.execute("DELETE FROM attachments WHERE email_id = ?", (email_id,))
+        conn.execute("DELETE FROM notes WHERE entity_type='email' AND entity_id = ?", (email_id,))
+        conn.execute("DELETE FROM bookmarks WHERE email_id = ?", (email_id,))
+        conn.execute("DELETE FROM analysis_results WHERE email_id = ?", (email_id,))
+        conn.execute("DELETE FROM emails WHERE id = ?", (email_id,))
+    conn.commit()
+    return HTMLResponse("")
+
+
+@router.post("/bulk-reclassify", response_class=HTMLResponse)
+async def bulk_reclassify_emails(
+    body: BulkReclassifyRequest,
+    conn: sqlite3.Connection = Depends(get_conn),
+):
+    """Set corpus on multiple emails at once."""
+    valid = body.corpus if body.corpus in ("personal", "legal") else "personal"
+    for email_id in body.ids:
+        conn.execute("UPDATE emails SET corpus = ? WHERE id = ?", (valid, email_id))
+    conn.commit()
+    return HTMLResponse("")
+
+
+# ── Per-email management (6g.1) ───────────────────────────────────────────────
 
 @router.post("/{email_id}/reclassify", response_class=HTMLResponse)
 async def reclassify_email(

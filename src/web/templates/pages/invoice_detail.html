@@ -1,0 +1,89 @@
+{% extends "base.html" %}
+{% block title %}Invoice #{{ invoice.id }}{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <div>
+    <a href="/invoices/" class="text-muted text-sm" style="text-decoration:none">← Legal Costs</a>
+    <h1 class="page-title" style="margin-top:var(--space-1)">
+      Invoice #{{ invoice.id }}
+      <span class="badge"
+            style="font-size:12px;
+            {% if invoice.status == 'paid' %}background:#28a74522;color:#28a745;border-color:#28a74544
+            {% elif invoice.status == 'pending' %}background:#fd7e1422;color:#fd7e14;border-color:#fd7e1444
+            {% else %}background:#dc354522;color:#dc3545;border-color:#dc354544{% endif %}">
+        {{ invoice.status }}
+      </span>
+    </h1>
+    <p class="page-subtitle">{{ invoice.lawyer_name }} · {{ (invoice.invoice_date or '')[:10] }}</p>
+  </div>
+  <form method="post" action="/invoices/{{ invoice.id }}/delete"
+        onsubmit="return confirm('Delete this invoice? This cannot be undone.')">
+    <button type="submit" class="btn" style="background:#dc3545;color:#fff;border:none">
+      🗑️ Delete
+    </button>
+  </form>
+</div>
+
+<div class="page-body">
+  <div style="max-width:860px">
+
+    <!-- ─── Linked email info ──────────────────────────────────────────── -->
+    {% if linked_email %}
+    <div class="card" style="margin-bottom:var(--space-4);background:#f8f9fa;border-left:3px solid var(--primary)">
+      <div class="text-xs text-muted" style="margin-bottom:4px">Linked email</div>
+      <div style="display:flex;gap:var(--space-3);align-items:center">
+        <span class="text-sm text-muted">{{ (linked_email.date or '')[:10] }}</span>
+        <span class="text-sm" style="font-weight:500">{{ linked_email.subject or '(no subject)' }}</span>
+        <span class="text-sm text-muted">{{ linked_email.from_name or linked_email.from_address }}</span>
+        <a href="/emails/{{ linked_email.id }}" class="text-sm" style="margin-left:auto">View email →</a>
+      </div>
+    </div>
+    {% endif %}
+
+    <!-- ─── Edit form ──────────────────────────────────────────────────── -->
+    <div class="card">
+      <h3 style="margin:0 0 var(--space-4) 0;font-size:var(--font-size-sm);font-weight:600">Edit Invoice</h3>
+      <form method="post" action="/invoices/{{ invoice.id }}/update">
+        {% include "partials/invoice_form_fields.html" %}
+        <!-- Preserve linked email on update -->
+        {% if invoice.email_id %}
+        <input type="hidden" name="email_id" value="{{ invoice.email_id }}">
+        {% endif %}
+        <div style="display:flex;gap:var(--space-2);margin-top:var(--space-4)">
+          <button type="submit" class="btn btn-primary">Save changes</button>
+          <a href="/invoices/" class="btn btn-secondary" style="text-decoration:none">Cancel</a>
+        </div>
+      </form>
+    </div>
+
+    <!-- ─── Amount summary ─────────────────────────────────────────────── -->
+    {% if invoice.amount_ttc or invoice.amount_ht %}
+    <div class="card" style="margin-top:var(--space-4)">
+      <h3 style="margin:0 0 var(--space-3) 0;font-size:var(--font-size-sm);font-weight:600">Amounts</h3>
+      <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:var(--space-3);text-align:center">
+        <div>
+          <div style="font-size:1.3rem;font-weight:700;color:var(--text)">
+            {% if invoice.amount_ht %}{{ "%.2f"|format(invoice.amount_ht) }} €{% else %}—{% endif %}
+          </div>
+          <div class="text-xs text-muted">HT</div>
+        </div>
+        <div>
+          <div style="font-size:1.3rem;font-weight:700;color:var(--primary)">
+            {% if invoice.amount_ttc %}{{ "%.2f"|format(invoice.amount_ttc) }} €{% else %}—{% endif %}
+          </div>
+          <div class="text-xs text-muted">TTC</div>
+        </div>
+        <div>
+          <div style="font-size:1.3rem;font-weight:700;color:var(--text-muted)">
+            {% if invoice.tva_rate %}{{ "%.0f"|format(invoice.tva_rate * 100) }}%{% else %}—{% endif %}
+          </div>
+          <div class="text-xs text-muted">TVA</div>
+        </div>
+      </div>
+    </div>
+    {% endif %}
+
+  </div>
+</div>
+{% endblock %}
