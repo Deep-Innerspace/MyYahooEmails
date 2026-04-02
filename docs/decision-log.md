@@ -438,3 +438,51 @@ parsed = raw.parse()  # get the actual response content
 **Rationale**: The existing attachments table has 1,464 rows with actual BLOB content — can't simply replace it. Extending it keeps one codebase for attachment handling across both corpora. Personal corpus: content in BLOB column (already downloaded). Legal corpus: `downloaded=0`, `mime_section`+`imap_uid`+`folder` stored for on-demand IMAP re-fetch. Both served through the same web endpoint.
 
 **Impact**: New columns: `mime_section` (IMAP part ID), `imap_uid`, `folder`, `downloaded` (bool), `download_path` (filesystem), `category` (document classification). Existing rows: `downloaded=1`, other new columns NULL.
+
+---
+
+## 2026-04-02 — Invoice scan workspace: split-panel triage design
+
+**Decision**: Redesign the invoice scan page as a persistent two-panel workspace (email-client style) instead of a list-navigate-back-list workflow.
+
+**Rationale**: The original scan page required navigating away from the list for every email, then back, losing scroll position and filter context each time. With 100+ invoice emails to triage, this was too slow. The new design keeps both panels visible simultaneously, auto-advances to the next email after each action, and retains filter state across actions.
+
+**Key design choices**:
+- Left panel (280px fixed): compact rows with status icons, 5-tab strip, HTMX row click → detail
+- Right panel: full email context + sticky action strip (Invoice / Payment / Assessed tabs)
+- Amount detection via EUR regex auto-fills form fields; clicking chips also pre-fills HT via ÷1.20
+- All POST actions return combined HTML: main body = next-email detail, OOB = updated list
+- `_build_scan_action_response()` central helper handles all 4 action routes identically
+- Two new tables: `payment_confirmations` (migration 15) and `invoice_scan_dismissed` (migration 16)
+
+**Impact**: `src/web/routes/invoices.py` +7 scan routes +7 helper functions. Three new template partials (scan_list, scan_detail, scan_done). `invoice_scan.html` full rewrite.
+
+---
+
+## 2026-04-02 — IMAP stale UID: two-pass recovery + subject disambiguation
+
+**Decision**: Extend `_find_email_imap_location()` in `attachments.py` with Pass 2 (all IMAP folders) and `_pick_uid_by_subject()` for disambiguation.
+
+**Rationale**: Yahoo invalidates UIDs when emails are moved between folders. The original Pass 1 only searched folders already in the DB. A folder created by the user after the initial fetch (e.g. `vclavocat`) would never be searched, leaving the attachment permanently unfetchable. Additionally, SENTON+FROM searches can return multiple UIDs when two emails from the same sender arrive on the same day — without disambiguation, the wrong UID would be used.
+
+**Pass 2 implementation**: `client.list_folders()` returns ALL current Yahoo IMAP folders; Skip set: `{"trash", "spam", "bulk", "draft", "deleted messages"}` (case-insensitive). A single IMAP connection is reused across both passes for efficiency.
+
+**Subject disambiguation**: `_pick_uid_by_subject()` fetches `ENVELOPE` for all candidate UIDs, normalizes the subject string, and matches against `subject_normalized` from the emails table. Falls back to `uids[0]` if envelope fetch fails.
+
+**`[UNAVAILABLE]` as "not found here"**: Yahoo returns `[UNAVAILABLE]` both for transient server errors AND for non-existent UIDs after an email is moved. Retrying with delays (original fix) wasted 21+ seconds and still failed. Correct fix: return `None` immediately on `[UNAVAILABLE]` to trigger stale-UID recovery path without delay.
+
+**Impact**: `src/web/routes/attachments.py` (Pass 2 + disambiguation), `src/extraction/imap_client.py` (`fetch_mime_part` catches `[UNAVAILABLE]`). Any future feature storing `imap_uid + folder` for on-demand fetch must apply the same fallback.
+
+---
+
+## 2026-04-02 — HTMX two-panel sync: unified afterSwap handler + OOB exclusion
+
+**Decision**: Replace the `htmx:afterRequest` filter-form handler with a single `htmx:afterSwap` handler that manages list→detail auto-load and active-row sync, using `hx-post` attribute presence to exclude OOB updates from action routes.
+
+**Rationale**: `htmx:afterRequest` fires before the DOM swap, so querying `.sl-row` returns stale list content. `htmx:afterSwap` fires after — rows are in the DOM and first-row auto-load works reliably. Using `htmx:afterSwap` for both responsibilities (list update → load detail; detail update → sync highlight) avoids double-registration and makes the logic easier to reason about.
+
+**OOB exclusion**: when a POST action route returns `detail_html + list_html (OOB)`, two `htmx:afterSwap` events fire (one per swap). For the list OOB, `evt.detail.elt` is the action form, which has `hx-post="/invoices/scan/…"`. The check `hxPost?.includes('/invoices/scan/')` correctly skips the auto-detail-load for these (the main response already contains the correct next-email detail).
+
+**Auto-fallback in routes**: Both `scan_list` and `scan_detail` routes auto-switch `active_tab` to `"all"` when the requested tab has no matches, so the user always sees content after a filter change rather than an empty-tab + scan_done flash.
+
+**Impact**: `invoice_scan.html` JS section rewritten (~40 lines). `invoices.py` scan_list + scan_detail routes updated with fallback logic.

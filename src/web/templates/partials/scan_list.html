@@ -1,0 +1,167 @@
+{# partials/scan_list.html
+   Left panel of the scan workspace — compact email list with status icons and tab filter.
+   Context: candidates, tab_counts, active_tab, active_id, keywords_str,
+            require_amount, scan_qs, oob (bool)
+#}
+<div id="scan-list"{% if oob %} hx-swap-oob="true"{% endif %}>
+
+  {# ── Tab strip ──────────────────────────────────────────────────────────── #}
+  <div class="sl-tabs">
+    {% for slug, label, count in [
+        ('pending',  '⏳', tab_counts.pending),
+        ('invoice',  '💶', tab_counts.invoice),
+        ('payment',  '💳', tab_counts.payment),
+        ('dismissed','🚫', tab_counts.dismissed),
+        ('all',      '⊞',  tab_counts.all),
+    ] %}
+    <a href="/invoices/scan?{{ scan_qs | replace('tab=' + active_tab, 'tab=' + slug) }}"
+       class="sl-tab{% if active_tab == slug %} active{% endif %}"
+       title="{{ slug | capitalize }}"
+       hx-get="/invoices/scan/list?{{ scan_qs | replace('tab=' + active_tab, 'tab=' + slug) }}"
+       hx-target="#scan-list"
+       hx-swap="outerHTML"
+       hx-push-url="false">
+      {{ label }}
+      <span class="sl-tab-count">{{ count }}</span>
+    </a>
+    {% endfor %}
+  </div>
+
+  {# ── Email rows ─────────────────────────────────────────────────────────── #}
+  {% set tab_emails = [] %}
+  {% for c in candidates %}
+    {% if active_tab == 'pending' and not c.dismissed and not c.invoice_linked and not c.payment_confirmed %}
+      {% set _ = tab_emails.append(c) %}
+    {% elif active_tab == 'invoice' and c.invoice_linked %}
+      {% set _ = tab_emails.append(c) %}
+    {% elif active_tab == 'payment' and c.payment_confirmed %}
+      {% set _ = tab_emails.append(c) %}
+    {% elif active_tab == 'dismissed' and c.dismissed %}
+      {% set _ = tab_emails.append(c) %}
+    {% elif active_tab == 'all' %}
+      {% set _ = tab_emails.append(c) %}
+    {% endif %}
+  {% endfor %}
+
+  <div class="sl-rows">
+    {% if not tab_emails %}
+    <div class="sl-empty">
+      <div style="font-size:24px;margin-bottom:6px">
+        {% if active_tab == 'pending' %}⏳{% elif active_tab == 'dismissed' %}🚫{% else %}✅{% endif %}
+      </div>
+      <div class="text-sm text-muted">
+        {% if active_tab == 'pending' %}All done{% else %}Nothing here{% endif %}
+      </div>
+    </div>
+    {% endif %}
+
+    {% for c in tab_emails %}
+    <div class="sl-row{% if c.email_id == active_id %} active{% endif %}"
+         data-email-id="{{ c.email_id }}"
+         hx-get="/invoices/scan/detail?email_id={{ c.email_id }}&{{ scan_qs }}"
+         hx-target="#scan-detail"
+         hx-swap="outerHTML">
+
+      <div class="sl-row-top">
+        <span class="sl-date text-muted">{{ c.date }}</span>
+        <span class="sl-icons">
+          {# Attachment + invoice record #}
+          {% if c.has_attachments and c.invoice_linked %}
+          <span class="si si--attach-done" title="Attachment(s) + invoice record ✓">📎✓</span>
+          {% elif c.has_attachments %}
+          <span class="si si--attach-pending" title="Has attachment(s)">📎</span>
+          {% elif c.invoice_linked %}
+          <span class="si si--invoice" title="Invoice record created">💶</span>
+          {% endif %}
+          {# Payment #}
+          {% if c.payment_confirmed %}
+          <span class="si si--payment" title="Payment confirmed{% if c.pay_amount %}: {{ '%.0f'|format(c.pay_amount) }} €{% endif %}">💳</span>
+          {% endif %}
+          {# Assessed #}
+          {% if c.dismissed %}
+          <span class="si si--dismissed" title="Assessed">🚫</span>
+          {% endif %}
+        </span>
+      </div>
+
+      <div class="sl-subject">{{ c.subject | truncate(52, True, '…') }}</div>
+
+      {% if c.direction == 'sent' %}
+      <div class="sl-meta">↑ sent{% if c.contact_name != '—' %} · {{ c.contact_name }}{% endif %}</div>
+      {% else %}
+      <div class="sl-meta">{{ c.contact_name }}</div>
+      {% endif %}
+
+    </div>
+    {% endfor %}
+  </div>
+
+</div>
+
+<style>
+/* ── Scan list panel ──────────────────────────────────────────────────────── */
+#scan-list { display: flex; flex-direction: column; height: 100%; overflow: hidden; }
+
+.sl-tabs {
+  display: flex;
+  gap: 0;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+  flex-shrink: 0;
+}
+.sl-tab {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 6px 4px 5px;
+  font-size: 16px;
+  text-decoration: none;
+  color: var(--text-muted);
+  border-bottom: 2px solid transparent;
+  cursor: pointer;
+  transition: background .12s, color .12s;
+  margin-bottom: -1px;
+}
+.sl-tab:hover { background: var(--bg); color: var(--text); }
+.sl-tab.active { color: var(--primary); border-bottom-color: var(--primary); background: var(--bg); }
+.sl-tab-count {
+  font-size: 9px;
+  font-weight: 700;
+  line-height: 1;
+  color: var(--text-muted);
+}
+.sl-tab.active .sl-tab-count { color: var(--primary); }
+
+.sl-rows { flex: 1; overflow-y: auto; }
+
+.sl-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-6) var(--space-3);
+  color: var(--text-muted);
+  text-align: center;
+}
+
+.sl-row {
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border);
+  cursor: pointer;
+  transition: background .1s;
+  border-left: 3px solid transparent;
+  position: relative;
+}
+.sl-row:hover { background: var(--surface); }
+.sl-row.active { background: #e8f0fe; border-left-color: var(--primary); }
+
+.sl-row-top { display: flex; align-items: center; justify-content: space-between; margin-bottom: 2px; }
+.sl-date { font-size: 10px; }
+.sl-icons { display: flex; gap: 2px; align-items: center; }
+.sl-subject { font-size: 12px; font-weight: 500; line-height: 1.3; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.sl-meta { font-size: 10px; color: var(--text-muted); margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* Status icon badges (inline in list rows) */
+.si { font-size: 10px; line-height: 1; }
+</style>

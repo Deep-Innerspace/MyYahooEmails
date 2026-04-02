@@ -3,6 +3,7 @@ import json
 import re
 import sqlite3
 from typing import Optional
+from urllib.parse import urlencode as _urlencode
 from fastapi import APIRouter, Depends, Form, Query, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
@@ -238,8 +239,8 @@ async def create_invoice(
         contact_id,
         invoice_date,
         int(procedure_id) if procedure_id else None,
-        invoice_number.strip() or None,
-        description.strip() or None,
+        invoice_number.strip(),
+        description.strip(),
         _float(amount_ht),
         _float(amount_ttc),
         _float(tva_rate) if tva_rate else 0.20,
@@ -251,59 +252,71 @@ async def create_invoice(
     return RedirectResponse("/invoices/", status_code=303)
 
 
-# ── Detail / edit ─────────────────────────────────────────────────────────────
+# ── Scan helpers ──────────────────────────────────────────────────────────────
 
-@router.get("/scan", response_class=HTMLResponse)
-async def scan_emails(
-    request: Request,
-    keywords: Optional[str] = Query(None),       # comma-separated; None → defaults
-    # 's' sentinel: present whenever the form is submitted (even with all checkboxes off).
-    # Without it, absent checkbox = unchecked is indistinguishable from first load.
-    s: Optional[str] = Query(None),
-    require_amount: Optional[str] = Query(None), # "true" when checked, absent when not
-    show_linked: Optional[str] = Query(None),    # "true" when checked, absent when not
-    conn: sqlite3.Connection = Depends(get_conn),
-    perspective: str = Depends(get_perspective),
-):
-    """Scan legal corpus lawyer emails for invoice-like patterns."""
-    # On first load (s absent) apply safe defaults; after form submit
-    # respect what the browser sent — absent checkbox means unchecked (False)
-    first_load          = s is None
-    require_amount_bool = (require_amount == "true") if not first_load else True
-    show_linked_bool    = (show_linked    == "true") if not first_load else False
+_VALID_TABS          = {"pending", "invoice", "payment", "dismissed", "all"}
+_VALID_PAYMENT_TYPES = ("acompte", "solde_final", "autre")
 
-    # Parse keyword list — fall back to defaults if empty/missing
-    kw_list = [k.strip() for k in keywords.split(",")] if keywords else []
-    kw_list = [k for k in kw_list if k]
-    active_keywords = kw_list or DEFAULT_SCAN_KEYWORDS
-    kw_re = _build_kw_regex(active_keywords)
 
-    already_linked = {
-        r[0] for r in conn.execute(
-            "SELECT email_id FROM lawyer_invoices WHERE email_id IS NOT NULL"
-        ).fetchall()
-    }
-
-    # Build address → (id, name) index for all lawyer contacts + their aliases
-    lawyer_rows = conn.execute(
+def _build_lawyer_index(conn) -> dict:
+    """Return {email_lower: (contact_id, contact_name)} for all lawyer contacts."""
+    rows = conn.execute(
         "SELECT id, name, email, aliases FROM contacts "
         "WHERE role IN ('my_lawyer', 'her_lawyer', 'opposing_counsel')"
     ).fetchall()
-    lawyer_index = {}
-    for lr in lawyer_rows:
-        lawyer_index[lr["email"].lower()] = (lr["id"], lr["name"])
+    index = {}
+    for r in rows:
+        index[r["email"].lower()] = (r["id"], r["name"])
         try:
-            for alias in json.loads(lr["aliases"] or "[]"):
-                lawyer_index[alias.lower()] = (lr["id"], lr["name"])
+            for alias in json.loads(r["aliases"] or "[]"):
+                index[alias.lower()] = (r["id"], r["name"])
         except Exception:
             pass
+    return index
 
-    # Fetch ALL legal corpus emails — includes both received (from lawyer) and
-    # sent (to lawyer) so direction='sent' emails are no longer excluded
+
+def _build_scan_candidates(conn, keywords_str: str, require_amount_bool: bool) -> tuple:
+    """Run the full scan query and apply keyword + amount filters.
+
+    Returns (candidates_list, active_keywords_list) ordered by date DESC.
+    Candidates carry all status flags so the list and detail can render without
+    additional DB queries.
+    """
+    kw_list = [k.strip() for k in (keywords_str or "").split(",") if k.strip()]
+    active_keywords = kw_list or DEFAULT_SCAN_KEYWORDS
+    kw_re = _build_kw_regex(active_keywords)
+    lawyer_index = _build_lawyer_index(conn)
+
     rows = conn.execute("""
         SELECT e.id, e.date, e.subject, e.direction,
                e.from_address, e.from_name, e.to_addresses,
-               e.delta_text, e.body_text
+               e.delta_text, e.body_text,
+               EXISTS(
+                   SELECT 1 FROM attachments a
+                   WHERE a.email_id = e.id
+               ) AS has_attachments,
+               EXISTS(
+                   SELECT 1 FROM attachments a
+                   WHERE a.email_id = e.id AND a.category = 'invoice'
+               ) AS has_invoice_attachment,
+               EXISTS(
+                   SELECT 1 FROM lawyer_invoices li
+                   WHERE li.email_id = e.id
+               ) AS invoice_linked,
+               (SELECT li.id FROM lawyer_invoices li
+                WHERE li.email_id = e.id LIMIT 1) AS linked_invoice_id,
+               EXISTS(
+                   SELECT 1 FROM payment_confirmations pc
+                   WHERE pc.email_id = e.id
+               ) AS payment_confirmed,
+               (SELECT pc.amount FROM payment_confirmations pc
+                WHERE pc.email_id = e.id LIMIT 1) AS pay_amount,
+               (SELECT pc.payment_type FROM payment_confirmations pc
+                WHERE pc.email_id = e.id LIMIT 1) AS pay_type,
+               EXISTS(
+                   SELECT 1 FROM invoice_scan_dismissed d
+                   WHERE d.email_id = e.id
+               ) AS dismissed
         FROM emails e
         WHERE e.corpus = 'legal'
         ORDER BY e.date DESC
@@ -311,10 +324,6 @@ async def scan_emails(
 
     candidates = []
     for row in rows:
-        if not show_linked_bool and row["id"] in already_linked:
-            continue
-        # Prefer delta_text (quotes stripped); fall back to body_text so emails
-        # where the invoice content was stripped as a quote are still found
         text = row["delta_text"] or ""
         m = kw_re.search(text)
         if not m:
@@ -327,7 +336,6 @@ async def scan_emails(
         if require_amount_bool and not raw_amounts:
             continue
 
-        # Normalise amounts (strip spaces, replace comma decimal sep with .)
         amounts = []
         for a in raw_amounts[:4]:
             a = re.sub(r'[\s\u00a0]', '', a)
@@ -337,42 +345,522 @@ async def scan_emails(
             except ValueError:
                 pass
 
-        # Snippet anchored on the first keyword match
-        start = max(0, m.start() - 60)
-        end   = min(len(text), m.start() + 250)
+        start   = max(0, m.start() - 60)
+        end     = min(len(text), m.start() + 250)
         snippet = "…" + text[start:end].strip() + "…"
 
         contact_id, contact_name = _resolve_lawyer(dict(row), lawyer_index)
 
         candidates.append({
-            "email_id":       row["id"],
-            "date":           (row["date"] or "")[:10],
-            "subject":        row["subject"] or "(no subject)",
-            "direction":      row["direction"],
-            "contact_name":   contact_name or "—",
-            "contact_id":     contact_id,
-            "amounts":        amounts,
-            "snippet":        snippet,
-            "already_linked": row["id"] in already_linked,
+            "email_id":               row["id"],
+            "date":                   (row["date"] or "")[:10],
+            "subject":                row["subject"] or "(no subject)",
+            "direction":              row["direction"],
+            "contact_name":           contact_name or "—",
+            "contact_id":             contact_id,
+            "amounts":                amounts,
+            "snippet":                snippet,
+            "has_attachments":         bool(row["has_attachments"]),
+            "has_invoice_attachment": bool(row["has_invoice_attachment"]),
+            "invoice_linked":         bool(row["invoice_linked"]),
+            "linked_invoice_id":      row["linked_invoice_id"],
+            "payment_confirmed":      bool(row["payment_confirmed"]),
+            "pay_amount":             row["pay_amount"],
+            "pay_type":               row["pay_type"],
+            "dismissed":              bool(row["dismissed"]),
         })
 
-    # Keyword string to echo back into the form
-    keywords_display = ", ".join(active_keywords)
+    return candidates, active_keywords
+
+
+def _filter_by_tab(candidates: list, tab: str) -> list:
+    if tab == "pending":
+        return [c for c in candidates
+                if not c["dismissed"] and not c["invoice_linked"]
+                and not c["payment_confirmed"]]
+    if tab == "invoice":
+        return [c for c in candidates if c["invoice_linked"]]
+    if tab == "payment":
+        return [c for c in candidates if c["payment_confirmed"]]
+    if tab == "dismissed":
+        return [c for c in candidates if c["dismissed"]]
+    return candidates  # "all"
+
+
+def _tab_counts(candidates: list) -> dict:
+    return {
+        "pending":   sum(1 for c in candidates
+                         if not c["dismissed"] and not c["invoice_linked"]
+                         and not c["payment_confirmed"]),
+        "invoice":   sum(1 for c in candidates if c["invoice_linked"]),
+        "payment":   sum(1 for c in candidates if c["payment_confirmed"]),
+        "dismissed": sum(1 for c in candidates if c["dismissed"]),
+        "all":       len(candidates),
+    }
+
+
+def _next_candidate_id(tab_filtered: list, current_id: int):
+    """Return the email_id that follows current_id in the tab-filtered list.
+
+    If current_id was just removed from the tab (e.g. pending → invoice), it
+    won't appear in tab_filtered; return the first remaining candidate instead.
+    Returns None when the list is empty (all done).
+    """
+    if not tab_filtered:
+        return None
+    ids = [c["email_id"] for c in tab_filtered]
+    try:
+        idx = ids.index(current_id)
+        return ids[idx + 1] if idx + 1 < len(ids) else None
+    except ValueError:
+        return ids[0]
+
+
+def _scan_qs(keywords_str: str, require_amount_bool: bool, tab: str) -> str:
+    """Build a URL-encoded query string for scan list/detail endpoints."""
+    return _urlencode({
+        "keywords":       keywords_str,
+        "require_amount": "true" if require_amount_bool else "false",
+        "tab":            tab,
+    })
+
+
+def _render_partial(tmpl, name: str, ctx: dict) -> str:
+    """Render a Jinja2 template to a plain string (for OOB HTMX responses)."""
+    return tmpl.env.get_template(name).render(ctx)
+
+
+def _fetch_email_detail(conn, email_id: int) -> tuple:
+    """Return (email_dict, attachments_list) for the detail panel."""
+    email_row = conn.execute(
+        "SELECT id, date, subject, from_address, from_name, "
+        "       to_addresses, direction, delta_text, body_text "
+        "FROM emails WHERE id = ?",
+        (email_id,)
+    ).fetchone()
+    atts = conn.execute(
+        "SELECT id, filename, content_type, size_bytes, mime_section, "
+        "       imap_uid, folder, downloaded, download_path, category, "
+        "       CASE WHEN content IS NOT NULL THEN 1 ELSE 0 END AS has_content "
+        "FROM attachments WHERE email_id = ?",
+        (email_id,)
+    ).fetchall()
+    return (
+        dict(email_row) if email_row else {},
+        [dict(a) for a in atts],
+    )
+
+
+def _build_scan_action_response(request, conn, templates_obj,
+                                 saved_id: int, keywords_str: str,
+                                 require_amount_bool: bool, tab: str,
+                                 next_hint_id) -> HTMLResponse:
+    """Build the combined HTMX response after a scan action (save / dismiss).
+
+    Returns an HTMLResponse with:
+    - The detail panel for the next pending email (main response)
+    - An OOB swap of the list panel (updated icons + new active highlight)
+    """
+    candidates, _ = _build_scan_candidates(conn, keywords_str, require_amount_bool)
+    tab_filtered   = _filter_by_tab(candidates, tab)
+    counts         = _tab_counts(candidates)
+    qs             = _scan_qs(keywords_str, require_amount_bool, tab)
+
+    # Use pre-computed hint when still valid; otherwise find position after saved
+    next_id = None
+    if next_hint_id:
+        try:
+            hint = int(next_hint_id)
+            if any(c["email_id"] == hint for c in tab_filtered):
+                next_id = hint
+        except (ValueError, TypeError):
+            pass
+    if next_id is None:
+        next_id = _next_candidate_id(tab_filtered, saved_id)
+
+    lawyers    = _get_lawyers(conn)
+    procedures = _get_procedures(conn)
+
+    if next_id:
+        next_c  = next(c for c in candidates if c["email_id"] == next_id)
+        email, atts = _fetch_email_detail(conn, next_id)
+        upcoming = _next_candidate_id(tab_filtered, next_id)
+        detail_html = _render_partial(templates_obj, "partials/scan_detail.html", {
+            "request":        request,
+            "c":              next_c,
+            "email":          email,
+            "attachments":    atts,
+            "next_id":        upcoming,
+            "keywords_str":   keywords_str,
+            "require_amount": require_amount_bool,
+            "tab":            tab,
+            "scan_qs":        qs,
+            "lawyers":        lawyers,
+            "procedures":     procedures,
+            "statuses":       INVOICE_STATUSES,
+        })
+    else:
+        detail_html = _render_partial(templates_obj, "partials/scan_done.html", {
+            "request":        request,
+            "tab_counts":     counts,
+            "active_tab":     tab,
+            "keywords_str":   keywords_str,
+            "require_amount": require_amount_bool,
+            "scan_qs":        qs,
+        })
+
+    list_html = _render_partial(templates_obj, "partials/scan_list.html", {
+        "request":        request,
+        "candidates":     candidates,
+        "tab_counts":     counts,
+        "active_tab":     tab,
+        "active_id":      next_id,
+        "keywords_str":   keywords_str,
+        "require_amount": require_amount_bool,
+        "scan_qs":        qs,
+        "oob":            True,
+    })
+
+    return HTMLResponse(detail_html + "\n" + list_html)
+
+
+# ── Scan: shell ────────────────────────────────────────────────────────────────
+
+@router.get("/scan", response_class=HTMLResponse)
+async def scan_shell(
+    request: Request,
+    keywords: Optional[str] = Query(None),
+    s: Optional[str] = Query(None),
+    require_amount: Optional[str] = Query(None),
+    tab: Optional[str] = Query("pending"),
+    conn: sqlite3.Connection = Depends(get_conn),
+    perspective: str = Depends(get_perspective),
+):
+    first_load          = s is None
+    require_amount_bool = (require_amount == "true") if not first_load else True
+    active_tab          = tab if tab in _VALID_TABS else "pending"
+    kw_list             = [k.strip() for k in (keywords or "").split(",") if k.strip()]
+    keywords_str        = ", ".join(kw_list) if kw_list else DEFAULT_SCAN_KEYWORDS_STR
+    qs                  = _scan_qs(keywords_str, require_amount_bool, active_tab)
 
     return templates.TemplateResponse("pages/invoice_scan.html", {
         "request":          request,
         "perspective":      perspective,
         "page":             "invoices",
-        "candidates":       candidates,
-        "lawyers":          _get_lawyers(conn),
-        "procedures":       _get_procedures(conn),
-        "statuses":         INVOICE_STATUSES,
-        # Filter state (echoed back to form)
-        "keywords_str":     keywords_display,
+        "keywords_str":     keywords_str,
         "require_amount":   require_amount_bool,
-        "show_linked":      show_linked_bool,
+        "active_tab":       active_tab,
         "default_keywords": DEFAULT_SCAN_KEYWORDS_STR,
+        "scan_qs":          qs,
     })
+
+
+# ── Scan: list partial ────────────────────────────────────────────────────────
+
+@router.get("/scan/list", response_class=HTMLResponse)
+async def scan_list(
+    request: Request,
+    keywords: Optional[str] = Query(None),
+    require_amount: Optional[str] = Query(None),
+    tab: Optional[str] = Query("pending"),
+    active_id: Optional[int] = Query(None),
+    conn: sqlite3.Connection = Depends(get_conn),
+):
+    require_amount_bool = require_amount == "true"
+    active_tab   = tab if tab in _VALID_TABS else "pending"
+    keywords_str = keywords or DEFAULT_SCAN_KEYWORDS_STR
+    qs           = _scan_qs(keywords_str, require_amount_bool, active_tab)
+
+    candidates, _ = _build_scan_candidates(conn, keywords_str, require_amount_bool)
+
+    # Auto-fallback: if requested tab has no results, fall back to "all" so the
+    # user always sees something after changing keywords instead of an empty list.
+    if active_tab == "pending" and not _filter_by_tab(candidates, "pending"):
+        active_tab = "all"
+        qs = _scan_qs(keywords_str, require_amount_bool, active_tab)
+
+    return templates.TemplateResponse("partials/scan_list.html", {
+        "request":        request,
+        "candidates":     candidates,
+        "tab_counts":     _tab_counts(candidates),
+        "active_tab":     active_tab,
+        "active_id":      active_id,
+        "keywords_str":   keywords_str,
+        "require_amount": require_amount_bool,
+        "scan_qs":        qs,
+        "oob":            False,
+    })
+
+
+# ── Scan: detail partial ──────────────────────────────────────────────────────
+
+@router.get("/scan/detail", response_class=HTMLResponse)
+async def scan_detail(
+    request: Request,
+    email_id: Optional[int] = Query(None),
+    keywords: Optional[str] = Query(None),
+    require_amount: Optional[str] = Query(None),
+    tab: Optional[str] = Query("pending"),
+    conn: sqlite3.Connection = Depends(get_conn),
+):
+    require_amount_bool = require_amount == "true"
+    active_tab   = tab if tab in _VALID_TABS else "pending"
+    keywords_str = keywords or DEFAULT_SCAN_KEYWORDS_STR
+    qs           = _scan_qs(keywords_str, require_amount_bool, active_tab)
+
+    candidates, _ = _build_scan_candidates(conn, keywords_str, require_amount_bool)
+    tab_filtered   = _filter_by_tab(candidates, active_tab)
+
+    requested_email_id = email_id   # preserve original query param for fallback logic
+    current = None
+    if email_id:
+        current = next((c for c in candidates if c["email_id"] == email_id), None)
+    if current is None and tab_filtered:
+        current = tab_filtered[0]
+        email_id = current["email_id"]
+
+    # Auto-fallback for initial / no-specific-email loads: if the requested tab is
+    # empty and no explicit email_id was given, fall back to "all" so the detail
+    # always shows something rather than flashing the "all done" empty state.
+    if current is None and not requested_email_id and active_tab != "all":
+        if candidates:
+            active_tab   = "all"
+            qs           = _scan_qs(keywords_str, require_amount_bool, active_tab)
+            tab_filtered = candidates          # "all" = every candidate
+            current      = candidates[0]
+            email_id     = current["email_id"]
+
+    if current is None:
+        return templates.TemplateResponse("partials/scan_done.html", {
+            "request":        request,
+            "tab_counts":     _tab_counts(candidates),
+            "active_tab":     active_tab,
+            "keywords_str":   keywords_str,
+            "require_amount": require_amount_bool,
+            "scan_qs":        qs,
+        })
+
+    email, atts = _fetch_email_detail(conn, email_id)
+    next_id     = _next_candidate_id(tab_filtered, email_id)
+
+    return templates.TemplateResponse("partials/scan_detail.html", {
+        "request":        request,
+        "c":              current,
+        "email":          email,
+        "attachments":    atts,
+        "next_id":        next_id,
+        "keywords_str":   keywords_str,
+        "require_amount": require_amount_bool,
+        "tab":            active_tab,
+        "scan_qs":        qs,
+        "lawyers":        _get_lawyers(conn),
+        "procedures":     _get_procedures(conn),
+        "statuses":       INVOICE_STATUSES,
+    })
+
+
+# ── Scan: save invoice ────────────────────────────────────────────────────────
+
+@router.post("/scan/invoice", response_class=HTMLResponse)
+async def scan_save_invoice(
+    request: Request,
+    contact_id: int = Form(...),
+    invoice_date: str = Form(...),
+    procedure_id: Optional[str] = Form(None),
+    invoice_number: str = Form(""),
+    description: str = Form(""),
+    amount_ht: Optional[str] = Form(None),
+    amount_ttc: Optional[str] = Form(None),
+    tva_rate: Optional[str] = Form(None),
+    status: str = Form("paid"),
+    payment_date: Optional[str] = Form(None),
+    scan_email_id: int = Form(...),
+    scan_keywords: str = Form(""),
+    scan_require_amount: str = Form("false"),
+    scan_tab: str = Form("pending"),
+    scan_next_id: Optional[str] = Form(None),
+    conn: sqlite3.Connection = Depends(get_conn),
+):
+    def _f(v):
+        if not v or str(v).strip() == "":
+            return None
+        try:
+            return float(str(v).replace(",", "."))
+        except ValueError:
+            return None
+
+    conn.execute("""
+        INSERT INTO lawyer_invoices
+            (contact_id, invoice_date, procedure_id, invoice_number, description,
+             amount_ht, amount_ttc, tva_rate, status, payment_date, email_id)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    """, (
+        contact_id,
+        invoice_date,
+        int(procedure_id) if procedure_id else None,
+        invoice_number.strip(),
+        description.strip(),
+        _f(amount_ht),
+        _f(amount_ttc),
+        _f(tva_rate) if tva_rate else 0.20,
+        status if status in INVOICE_STATUSES else "paid",
+        payment_date or None,
+        scan_email_id,
+    ))
+    conn.commit()
+
+    return _build_scan_action_response(
+        request, conn, templates,
+        saved_id=scan_email_id,
+        keywords_str=scan_keywords or DEFAULT_SCAN_KEYWORDS_STR,
+        require_amount_bool=scan_require_amount == "true",
+        tab=scan_tab if scan_tab in _VALID_TABS else "pending",
+        next_hint_id=scan_next_id,
+    )
+
+
+# ── Scan: save payment ────────────────────────────────────────────────────────
+
+@router.post("/scan/payment", response_class=HTMLResponse)
+async def scan_save_payment(
+    request: Request,
+    amount: Optional[str] = Form(None),
+    payment_type: str = Form("autre"),
+    notes: str = Form(""),
+    scan_email_id: int = Form(...),
+    scan_keywords: str = Form(""),
+    scan_require_amount: str = Form("false"),
+    scan_tab: str = Form("pending"),
+    scan_next_id: Optional[str] = Form(None),
+    conn: sqlite3.Connection = Depends(get_conn),
+):
+    def _f(v):
+        if not v or str(v).strip() == "":
+            return None
+        try:
+            return float(str(v).replace(",", "."))
+        except ValueError:
+            return None
+
+    conn.execute(
+        "INSERT INTO payment_confirmations (email_id, amount, payment_type, notes) "
+        "VALUES (?, ?, ?, ?)",
+        (
+            scan_email_id,
+            _f(amount),
+            payment_type if payment_type in _VALID_PAYMENT_TYPES else "autre",
+            notes.strip(),
+        ),
+    )
+    conn.commit()
+
+    return _build_scan_action_response(
+        request, conn, templates,
+        saved_id=scan_email_id,
+        keywords_str=scan_keywords or DEFAULT_SCAN_KEYWORDS_STR,
+        require_amount_bool=scan_require_amount == "true",
+        tab=scan_tab if scan_tab in _VALID_TABS else "pending",
+        next_hint_id=scan_next_id,
+    )
+
+
+# ── Scan: dismiss / undismiss ─────────────────────────────────────────────────
+
+@router.post("/scan/dismiss", response_class=HTMLResponse)
+async def scan_dismiss(
+    request: Request,
+    scan_email_id: int = Form(...),
+    scan_keywords: str = Form(""),
+    scan_require_amount: str = Form("false"),
+    scan_tab: str = Form("pending"),
+    scan_next_id: Optional[str] = Form(None),
+    conn: sqlite3.Connection = Depends(get_conn),
+):
+    conn.execute(
+        "INSERT OR REPLACE INTO invoice_scan_dismissed (email_id) VALUES (?)",
+        (scan_email_id,),
+    )
+    conn.commit()
+
+    return _build_scan_action_response(
+        request, conn, templates,
+        saved_id=scan_email_id,
+        keywords_str=scan_keywords or DEFAULT_SCAN_KEYWORDS_STR,
+        require_amount_bool=scan_require_amount == "true",
+        tab=scan_tab if scan_tab in _VALID_TABS else "pending",
+        next_hint_id=scan_next_id,
+    )
+
+
+@router.post("/scan/undismiss", response_class=HTMLResponse)
+async def scan_undismiss(
+    request: Request,
+    scan_email_id: int = Form(...),
+    scan_keywords: str = Form(""),
+    scan_require_amount: str = Form("false"),
+    scan_tab: str = Form("pending"),
+    conn: sqlite3.Connection = Depends(get_conn),
+):
+    conn.execute(
+        "DELETE FROM invoice_scan_dismissed WHERE email_id = ?",
+        (scan_email_id,),
+    )
+    conn.commit()
+
+    # Refresh the same email's detail (don't advance to next)
+    candidates, _ = _build_scan_candidates(
+        conn, scan_keywords or DEFAULT_SCAN_KEYWORDS_STR, scan_require_amount == "true"
+    )
+    active_tab   = scan_tab if scan_tab in _VALID_TABS else "pending"
+    tab_filtered = _filter_by_tab(candidates, active_tab)
+    counts       = _tab_counts(candidates)
+    qs           = _scan_qs(scan_keywords or DEFAULT_SCAN_KEYWORDS_STR,
+                            scan_require_amount == "true", active_tab)
+
+    current = next((c for c in candidates if c["email_id"] == scan_email_id), None)
+    if current is None and tab_filtered:
+        current = tab_filtered[0]
+        scan_email_id = current["email_id"]
+
+    if current is None:
+        detail_html = _render_partial(templates, "partials/scan_done.html", {
+            "request":        request,
+            "tab_counts":     counts,
+            "active_tab":     active_tab,
+            "keywords_str":   scan_keywords,
+            "require_amount": scan_require_amount == "true",
+            "scan_qs":        qs,
+        })
+    else:
+        email, atts = _fetch_email_detail(conn, scan_email_id)
+        next_id = _next_candidate_id(tab_filtered, scan_email_id)
+        detail_html = _render_partial(templates, "partials/scan_detail.html", {
+            "request":        request,
+            "c":              current,
+            "email":          email,
+            "attachments":    atts,
+            "next_id":        next_id,
+            "keywords_str":   scan_keywords,
+            "require_amount": scan_require_amount == "true",
+            "tab":            active_tab,
+            "scan_qs":        qs,
+            "lawyers":        _get_lawyers(conn),
+            "procedures":     _get_procedures(conn),
+            "statuses":       INVOICE_STATUSES,
+        })
+
+    list_html = _render_partial(templates, "partials/scan_list.html", {
+        "request":        request,
+        "candidates":     candidates,
+        "tab_counts":     counts,
+        "active_tab":     active_tab,
+        "active_id":      scan_email_id,
+        "keywords_str":   scan_keywords,
+        "require_amount": scan_require_amount == "true",
+        "scan_qs":        qs,
+        "oob":            True,
+    })
+    return HTMLResponse(detail_html + "\n" + list_html)
 
 
 @router.get("/{invoice_id}", response_class=HTMLResponse)
@@ -458,8 +946,8 @@ async def update_invoice(
         contact_id,
         invoice_date,
         int(procedure_id) if procedure_id else None,
-        invoice_number.strip() or None,
-        description.strip() or None,
+        invoice_number.strip(),
+        description.strip(),
         _float(amount_ht),
         _float(amount_ttc),
         _float(tva_rate) if tva_rate else 0.20,

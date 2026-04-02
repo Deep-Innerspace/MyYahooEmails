@@ -65,32 +65,48 @@ def _is_available(att: dict) -> bool:
     return False
 
 
+_SKIP_FOLDER_TOKENS = frozenset(["trash", "spam", "bulk", "draft", "deleted messages"])
+
+
 def _find_email_imap_location(
     conn: sqlite3.Connection, email_id: int, known_folder: str
 ) -> tuple:
-    """Search Yahoo IMAP for an email when the stored folder/UID is stale (e.g. email was moved).
+    """Search Yahoo IMAP for an email when the stored folder/UID is stale.
 
-    Strategy:
-    1. Try Message-ID header search (fast, exact).
-    2. Fall back to SENTON date + FROM address search (Yahoo strips Message-ID on move).
+    Called when the stored (folder, uid) no longer yields content — typically
+    because the user moved the email to a different Yahoo folder after the
+    initial fetch, which invalidates the UID and assigns a new one.
+
+    Search order (single IMAP connection to avoid repeated auth overhead):
+      Pass 1 — DB-known folders (folders already seen in the legal corpus).
+      Pass 2 — ALL remaining IMAP folders the server advertises, excluding
+               system folders (Trash, Spam, Bulk, Draft, Deleted Messages).
+               This handles folders created AFTER the initial fetch, such as
+               a user-organised "vclavocat" folder.
+
+    Within each folder two methods are tried:
+      a) Message-ID header search (fast, exact match).
+      b) SENTON date + FROM address (Yahoo strips Message-ID on move).
 
     Returns (folder, uid) of the first match, or (None, None).
-    Prioritises folders that contain legal-corpus emails in the DB.
+    Updates attachments + emails tables with the corrected location on success
+    so subsequent fetches are immediate.
     """
     from datetime import datetime
     from src.extraction.imap_client import imap_connection
 
     row = conn.execute(
-        "SELECT message_id, date, from_address FROM emails WHERE id = ?", (email_id,)
+        "SELECT message_id, date, from_address, subject_normalized FROM emails WHERE id = ?",
+        (email_id,)
     ).fetchone()
     if not row:
         return None, None
 
-    message_id = (row["message_id"] or "").strip()
-    from_addr  = (row["from_address"] or "").strip()
-    email_date = row["date"] or ""
+    message_id  = (row["message_id"] or "").strip()
+    from_addr   = (row["from_address"] or "").strip()
+    email_date  = row["date"] or ""
+    db_subject  = (row["subject_normalized"] or "").lower().strip()
 
-    # Parse date to a date object for IMAP SENTON search
     sent_on = None
     for fmt in ("%Y-%m-%dT%H:%M:%S", "%Y-%m-%d %H:%M:%S", "%Y-%m-%d"):
         try:
@@ -99,36 +115,98 @@ def _find_email_imap_location(
         except ValueError:
             continue
 
-    # Folders to search: known folder first, then DB legal folders
+    # Build initial search order: stored folder first, then DB-known legal folders
     db_folders = [
         r[0] for r in conn.execute(
             "SELECT DISTINCT folder FROM emails WHERE corpus='legal' AND folder IS NOT NULL"
         ).fetchall()
     ]
-    search_order = [known_folder] + [f for f in db_folders if f != known_folder]
+    priority_folders = [known_folder] + [f for f in db_folders if f != known_folder]
+    searched = set()
+
+    def _pick_uid_by_subject(client, uids: list):
+        """When SENTON+FROM returns multiple UIDs (same sender, same day), pick
+        the one whose ENVELOPE subject matches the stored subject_normalized.
+        Falls back to uids[0] if ENVELOPE fetch fails or nothing matches."""
+        if len(uids) == 1:
+            return uids[0]
+        if not db_subject:
+            return uids[0]
+        try:
+            resp = client.fetch(uids, [b"ENVELOPE"])
+            for uid in uids:
+                if uid not in resp:
+                    continue
+                env = resp[uid].get(b"ENVELOPE")
+                if not env or not env.subject:
+                    continue
+                subj = env.subject
+                if isinstance(subj, bytes):
+                    import email.header as _hdr
+                    subj = "".join(
+                        part.decode(enc or "utf-8", errors="replace") if isinstance(part, bytes) else part
+                        for part, enc in _hdr.decode_header(subj.decode("utf-8", errors="replace"))
+                    )
+                if db_subject in subj.lower():
+                    return uid
+        except Exception:
+            pass
+        return uids[0]   # couldn't disambiguate — best guess
+
+    def _search_folder(client, folder: str):
+        """Try Message-ID then SENTON+FROM in one folder. Returns uid or None."""
+        if message_id:
+            uids = client.search([b"HEADER", b"Message-ID", message_id.encode()])
+            if uids:
+                return uids[0]  # Message-ID is unique — no disambiguation needed
+        if sent_on and from_addr:
+            uids = client.search([b"SENTON", sent_on, b"FROM", from_addr.encode()])
+            if uids:
+                return _pick_uid_by_subject(client, uids)
+        return None
 
     try:
         with imap_connection() as client:
-            for folder in search_order:
+
+            # ── Pass 1: DB-known folders ──────────────────────────────────────
+            for folder in priority_folders:
+                if folder in searched:
+                    continue
+                searched.add(folder)
                 try:
                     client.select_folder(folder, readonly=True)
-
-                    # Pass 1 — Message-ID header search
-                    if message_id:
-                        uids = client.search([b"HEADER", b"Message-ID", message_id.encode()])
-                        if uids:
-                            return folder, uids[0]
-
-                    # Pass 2 — date + from address (handles Yahoo stripping Message-ID)
-                    if sent_on and from_addr:
-                        uids = client.search([
-                            b"SENTON", sent_on,
-                            b"FROM", from_addr.encode(),
-                        ])
-                        if uids:
-                            return folder, uids[0]
+                    uid = _search_folder(client, folder)
+                    if uid:
+                        return folder, uid
                 except Exception:
                     continue
+
+            # ── Pass 2: all IMAP folders not yet searched ─────────────────────
+            # Handles user-created folders that didn't exist at initial fetch time
+            # (e.g. "vclavocat" folder created after emails were already imported).
+            try:
+                imap_folders = []
+                for _flags, _delim, name in client.list_folders():
+                    if isinstance(name, bytes):
+                        name = name.decode("utf-8", errors="replace")
+                    # Skip system / junk folders — unlikely to contain legal mail
+                    if not any(t in name.lower() for t in _SKIP_FOLDER_TOKENS):
+                        imap_folders.append(name)
+            except Exception:
+                imap_folders = []
+
+            for folder in imap_folders:
+                if folder in searched:
+                    continue
+                searched.add(folder)
+                try:
+                    client.select_folder(folder, readonly=True)
+                    uid = _search_folder(client, folder)
+                    if uid:
+                        return folder, uid
+                except Exception:
+                    continue
+
     except Exception:
         pass
 
@@ -161,12 +239,18 @@ async def serve_attachment(
         )
 
     ct = att["content_type"] or "application/octet-stream"
-    filename = att["filename"] or "attachment"
+    raw_name = att["filename"] or "attachment"
+    # Strip CR/LF and other control characters — an embedded CRLF would split the
+    # HTTP header and produce a completely malformed response (header injection).
+    import re as _re
+    filename = _re.sub(r"[\x00-\x1f\x7f]", " ", raw_name).strip() or "attachment"
+    # Escape any remaining double-quotes inside the filename value
+    filename_safe = filename.replace('"', '\\"')
 
     return Response(
         content=content,
         media_type=ct,
-        headers={"Content-Disposition": f'inline; filename="{filename}"'},
+        headers={"Content-Disposition": f'inline; filename="{filename_safe}"'},
     )
 
 
@@ -223,7 +307,14 @@ async def fetch_attachment(
                     conn.commit()
 
         if not raw:
-            return HTMLResponse('<span class="att-error">IMAP returned empty content — email may have been deleted from Yahoo</span>')
+            return HTMLResponse(
+                '<span class="att-error">'
+                'Email not found in any Yahoo folder. '
+                'It may have been moved to a folder that hasn\'t been fetched yet — '
+                'run <code>python cli.py fetch emails --folder &lt;folder&gt; --corpus legal</code> '
+                'to import it, then retry.'
+                '</span>'
+            )
 
         # Sanitize filename for filesystem
         safe_name = "".join(
@@ -247,6 +338,19 @@ async def fetch_attachment(
         att["has_content"] = 1   # now available for download
 
     except Exception as exc:
+        from src.extraction.imap_client import _is_transient_imap_error
+        if _is_transient_imap_error(exc):
+            # Yahoo's backend was busy even after retries — offer a manual retry button
+            return HTMLResponse(
+                f'<span class="att-error" style="display:flex;align-items:center;gap:8px">'
+                f'⚠️ Yahoo server busy — please try again in a moment.'
+                f'<button class="btn btn-secondary" style="font-size:11px;padding:2px 8px"'
+                f' hx-post="/attachments/{attachment_id}/fetch"'
+                f' hx-target="#att-{attachment_id}"'
+                f' hx-swap="outerHTML">'
+                f'↺ Retry</button>'
+                f'</span>'
+            )
         return HTMLResponse(f'<span class="att-error">Fetch failed: {exc}</span>')
 
     return templates.TemplateResponse("partials/attachment_item.html", {

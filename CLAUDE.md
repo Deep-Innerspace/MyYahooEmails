@@ -386,13 +386,18 @@ Two-layer protection:
 
 #### ✅ Phase 6f — Cost Tracking (COMPLETE)
 - `lawyer_invoices` full CRUD: list, create, edit, delete at `/invoices/`
-- Email scan: keyword + optional EUR amount filter at `/invoices/scan`
+- **Invoice scan workspace** (split-panel triage, `/invoices/scan`):
+  - Left panel: compact email list with 5-tab strip (⏳ Pending / 💶 Invoice / 💳 Payment / 🚫 Dismissed / ⊞ All) and status icons (PDF attachment, invoice record, payment confirmed)
+  - Right panel: email detail with snippet, attachments, EUR amount chips, sticky action strip (Invoice / Payment / Assessed)
+  - POST actions (save invoice, record payment, dismiss) auto-advance to next email via HTMX OOB swap
+  - Keyboard shortcuts: 1/2/3 = action tabs, J/→ = next email, F = fetch attachment
+  - Auto-fallback: if filtered keywords match no pending emails, shows "All" tab immediately
   - Default keywords: facture, honoraires, note d'honoraires, relevé, acompte, solde dû, montant TTC, diligences
-  - Scans ALL `corpus='legal'` emails (sent + received); resolves lawyer from FROM or TO address
   - Falls back from `delta_text` to `body_text` for emails where invoice content was stripped as quoted reply
-  - Sentinel `s=1` hidden field to distinguish first page load from form submission (checkbox state)
+- **New DB tables** (migrations 15 + 16):
+  - `payment_confirmations` — amount, payment_type (acompte/solde_final/autre), invoice_id FK
+  - `invoice_scan_dismissed` — emails assessed as having no invoice/payment to record
 - Per-lawyer and per-procedure cost summaries on dashboard
-- `GET /invoices/scan?back=<url>` → "View email" links return to scan page
 
 #### 🔲 Phase 6e — Procedures Model
 - CRUD for procedures + procedure_events (replaces court_events)
@@ -519,10 +524,14 @@ IMAP UIDs (RFC 3501) are assigned per-folder. When a user moves an email from on
 
 **Symptom**: `fetch_mime_part()` returns `None`; attachment download shows "IMAP returned empty content".
 
-**Fix**: `_find_email_imap_location()` in `src/web/routes/attachments.py` — called as fallback when IMAP returns empty:
-1. Searches all legal-corpus folders for `HEADER Message-ID <value>` (fast, exact)
-2. Falls back to `SENTON <date> FROM <address>` (Yahoo strips Message-ID header when moving mail)
-3. On success, updates both `attachments` and `emails` tables with corrected folder+UID so future fetches are instant
+**Fix**: `_find_email_imap_location()` in `src/web/routes/attachments.py` — two-pass fallback when IMAP returns empty:
+1. **Pass 1**: Searches all legal-corpus folders (known in DB) for `HEADER Message-ID <value>` (fast, exact)
+2. **Pass 2** *(if Pass 1 fails)*: Searches ALL current Yahoo IMAP folders via `client.list_folders()` — catches folders created after the initial fetch (e.g. `vclavocat`). Skip set: trash/spam/bulk/draft/deleted.
+3. Uses `SENTON <date> FROM <address>` search when Message-ID not found (Yahoo strips it on move)
+4. **`_pick_uid_by_subject()`**: when SENTON+FROM returns multiple UIDs (two emails from same sender on same day), fetches `ENVELOPE` for each and matches subject against `subject_normalized` to pick the correct one
+5. On success, updates both `attachments` and `emails` tables with corrected folder+UID
+
+**`[UNAVAILABLE]` = "not found here"**: Yahoo returns `[UNAVAILABLE]` both for transient server errors AND for non-existent UIDs (email moved). Do NOT retry `[UNAVAILABLE]` — return `None` immediately and let `_find_email_imap_location()` handle recovery. Retrying burns 21+ seconds for no benefit.
 
 **Reuse**: Any future feature storing `imap_uid + folder` for on-demand fetch must use this same fallback.
 
@@ -550,6 +559,15 @@ SQLite FTS5 treats `@`, `.`, `+` as syntax tokens. Any search query containing t
 
 ### Silent error swallowing
 Several routes use bare `except Exception: return []` (e.g. `_get_chapters()`). This hides schema mismatches entirely. When a page returns empty data unexpectedly, check for swallowed exceptions first.
+
+### HTMX scan workspace: OOB swap exclusion pattern
+`_build_scan_action_response()` returns `detail_html + "\n" + list_html (OOB)`. Two `htmx:afterSwap` events fire — one for the main detail swap and one for the OOB list swap. The `htmx:afterSwap` handler for `#scan-list` must skip the auto-detail-load for OOB updates (which already carry the correct next-email detail in the main response). Detection: `evt.detail.elt.getAttribute('hx-post')?.includes('/invoices/scan/')`.
+
+### Jinja2 `{% from "X" import name %}` only works for macros
+Using `{% from "partial.html" import _ with context %}` raises `ImportError` if the template file doesn't define a macro named `_`. This causes a 500 that HTMX silently swallows (no visible error in the browser). Symptom: clicking a row in a list does nothing; detail panel never updates. Check server logs for Jinja2 ImportError before debugging HTMX.
+
+### NOT NULL columns with DEFAULT: explicit NULL still violates
+SQL `DEFAULT ''` only fires when the column is OMITTED from the INSERT. If you pass `None` (Python `None` → SQL `NULL`) explicitly via a parameter, the NOT NULL constraint fires even though a DEFAULT exists. Pattern: use `field.strip()` (returns empty string `""`) NOT `field.strip() or None` when the column is NOT NULL.
 
 ## Database / Schema Gotchas
 

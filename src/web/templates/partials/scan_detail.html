@@ -1,0 +1,566 @@
+{# partials/scan_detail.html
+   Right panel of the scan workspace — full email context + sticky action strip.
+   Context: c (candidate dict), email (email dict), attachments (list),
+            next_id (int|None), keywords_str, require_amount, tab, scan_qs,
+            lawyers, procedures, statuses
+#}
+
+{# Hidden scan-context fields injected into every action form #}
+{% macro scan_ctx(next_override=None) %}
+  <input type="hidden" name="scan_email_id"        value="{{ c.email_id }}">
+  <input type="hidden" name="scan_keywords"         value="{{ keywords_str }}">
+  <input type="hidden" name="scan_require_amount"   value="{{ 'true' if require_amount else 'false' }}">
+  <input type="hidden" name="scan_tab"              value="{{ tab }}">
+  <input type="hidden" name="scan_next_id"          value="{{ next_override if next_override is not none else (next_id or '') }}">
+{% endmacro %}
+
+{# Determine card status class #}
+{% if c.invoice_linked and c.payment_confirmed %}
+  {% set status_cls = "sd--full-done" %}
+{% elif c.invoice_linked %}
+  {% set status_cls = "sd--invoice-only" %}
+{% elif c.payment_confirmed %}
+  {% set status_cls = "sd--payment-only" %}
+{% elif c.dismissed %}
+  {% set status_cls = "sd--dismissed" %}
+{% else %}
+  {% set status_cls = "" %}
+{% endif %}
+
+<div id="scan-detail" class="scan-detail {{ status_cls }}">
+
+  <!-- ── Header ───────────────────────────────────────────────────────────── -->
+  <div class="sd-header">
+    <div class="sd-header-left">
+      <div class="sd-meta-row">
+        <span class="text-muted" style="font-size:12px">{{ c.date }}</span>
+
+        {% if c.direction == 'sent' %}
+        <span class="badge" style="background:#cfe2ff;color:#084298;border-color:#b6d4fe;font-size:10px">↑ sent</span>
+        {% else %}
+        <span class="badge" style="background:#1e3a5f22;color:#1e3a5f;border-color:#1e3a5f44;font-size:10px">↓ received</span>
+        {% endif %}
+
+        {% if c.contact_name != '—' %}
+        <span class="badge" style="background:#6f42c122;color:#6f42c1;border-color:#6f42c144;font-size:10px">{{ c.contact_name }}</span>
+        {% endif %}
+
+        {# Status icons #}
+        {% if c.has_invoice_attachment and c.invoice_linked %}
+        <span class="sd-status-icon si--attach-done" title="Invoice PDF + record ✓">📎✓</span>
+        {% elif c.has_invoice_attachment %}
+        <span class="sd-status-icon si--attach-pending" title="Invoice PDF — no record yet">📎</span>
+        {% elif c.invoice_linked %}
+        <span class="sd-status-icon si--invoice" title="Invoice record exists">💶</span>
+        {% endif %}
+        {% if c.payment_confirmed %}
+        <span class="sd-status-icon si--payment"
+              title="Payment confirmed{% if c.pay_amount %}: {{ '%.2f'|format(c.pay_amount) }} €{% endif %}{% if c.pay_type %} · {{ c.pay_type.replace('_',' ') }}{% endif %}">💳</span>
+        {% endif %}
+        {% if c.dismissed %}
+        <span class="sd-status-icon si--dismissed" title="Assessed">🚫</span>
+        {% endif %}
+      </div>
+
+      <div class="sd-subject">{{ c.subject }}</div>
+
+      <div class="text-muted" style="font-size:11px;margin-top:2px">
+        {{ email.from_name or email.from_address }}
+        {% if email.from_name and email.from_address and email.from_name != email.from_address %}
+          &lt;{{ email.from_address }}&gt;
+        {% endif %}
+      </div>
+    </div>
+
+    <div class="sd-header-right">
+      {# Keyboard nav buttons #}
+      {% if next_id %}
+      <button class="btn btn-secondary"
+              style="font-size:12px"
+              title="Skip to next (→)"
+              hx-get="/invoices/scan/detail?email_id={{ next_id }}&{{ scan_qs }}"
+              hx-target="#scan-detail"
+              hx-swap="outerHTML">
+        Next →
+      </button>
+      {% endif %}
+    </div>
+  </div>
+
+  <!-- ── Body ─────────────────────────────────────────────────────────────── -->
+  <div class="sd-body">
+    <div class="sd-full-body">{{ email.delta_text or email.body_text or '' }}</div>
+  </div>
+
+  <!-- ── Attachments ──────────────────────────────────────────────────────── -->
+  {% if attachments %}
+  <div class="sd-attachments">
+    {% for att in attachments %}
+      {% set available = att.has_content or (att.download_path and att.download_path != '') %}
+      <div class="sd-att-row" id="att-{{ att.id }}">
+        <span class="sd-att-icon">
+          {% if att.content_type and 'pdf' in att.content_type %}📄
+          {% elif att.content_type and ('word' in att.content_type or 'document' in att.content_type) %}📝
+          {% elif att.content_type and 'image' in att.content_type %}🖼️
+          {% else %}📎{% endif %}
+        </span>
+        <span class="sd-att-name" title="{{ att.filename }}">{{ att.filename or '(unnamed)' | truncate(40, True, '…') }}</span>
+        {% if att.category %}
+        <span class="badge" style="font-size:9px;background:#e8f0fe;color:#1a73e8;border-color:#c5d8fb">{{ att.category }}</span>
+        {% endif %}
+        <span class="sd-att-actions">
+          {% if available %}
+          <a href="/attachments/{{ att.id }}" target="_blank" rel="noopener"
+             class="btn btn-secondary" style="font-size:11px;padding:2px 8px;text-decoration:none">↗ Open</a>
+          {% else %}
+          <button class="btn btn-primary" style="font-size:11px;padding:2px 8px"
+                  hx-post="/attachments/{{ att.id }}/fetch"
+                  hx-target="#att-{{ att.id }}"
+                  hx-swap="outerHTML"
+                  hx-indicator="#loading-bar">☁ Fetch</button>
+          {% endif %}
+          <select style="font-size:10px;padding:1px 3px;max-width:110px"
+                  hx-post="/attachments/{{ att.id }}/classify"
+                  hx-target="#att-{{ att.id }}"
+                  hx-swap="outerHTML"
+                  hx-trigger="change">
+            <option value="">— type —</option>
+            {% for k, label in [
+              ('invoice','🧾 Invoice'),('court_filing','🏛️ Court Filing'),
+              ('conclusion_draft','📝 Draft'),('conclusion_final','📄 Final'),
+              ('judgment','⚖️ Judgment'),('ordonnance','📋 Ordonnance'),
+              ('expert_report','🔬 Expert'),('convocation','📬 Convocation'),
+              ('pv_audience','🎙️ PV Audience'),('official_email','📧 Official'),
+              ('proof','📸 Proof'),('proof_adverse','🔍 Adverse Proof'),
+              ('correspondence_adverse','✉️ Adverse Party'),('convention','🤝 Convention'),
+              ('attestation','📜 Attestation'),('mise_en_demeure','⚠️ MED'),
+              ('requete','📑 Requête'),('other','📁 Other')
+            ] %}
+            <option value="{{ k }}" {% if att.category == k %}selected{% endif %}>{{ label }}</option>
+            {% endfor %}
+          </select>
+        </span>
+      </div>
+    {% endfor %}
+  </div>
+  {% endif %}
+
+  <!-- ── Detected amounts (chips) ─────────────────────────────────────────── -->
+  {% if c.amounts %}
+  <div class="sd-amounts">
+    <span class="text-xs text-muted" style="margin-right:4px">Detected amounts:</span>
+    {% for a in c.amounts %}
+    <button type="button"
+            class="sd-amount-chip"
+            onclick="scanFillAmount(this, '{{ '%.2f'|format(a) }}')"
+            title="Click to fill amount fields">
+      {{ '%.2f'|format(a) }} €
+    </button>
+    {% endfor %}
+  </div>
+  {% endif %}
+
+  <!-- ── Sticky action strip ──────────────────────────────────────────────── -->
+  <div class="sd-action-strip">
+
+    {# ── Tab switcher ── #}
+    <div class="sd-action-tabs">
+      <button type="button" class="sd-action-tab active" data-panel="panel-invoice"
+              onclick="scanSwitchTab(this)">💶 Invoice</button>
+      <button type="button" class="sd-action-tab" data-panel="panel-payment"
+              onclick="scanSwitchTab(this)">💳 Payment</button>
+      <button type="button" class="sd-action-tab" data-panel="panel-assessed"
+              onclick="scanSwitchTab(this)">🚫 Assessed</button>
+    </div>
+
+    {# ── Invoice panel ── #}
+    <div class="sd-action-panel" id="panel-invoice">
+      {% if c.invoice_linked %}
+      <div class="sd-action-done">
+        💶 Invoice record created
+        <a href="/invoices/{{ c.linked_invoice_id }}"
+           target="_blank" rel="noopener"
+           class="btn btn-secondary" style="font-size:11px;text-decoration:none;margin-left:8px">View →</a>
+      </div>
+      {% else %}
+      <form hx-post="/invoices/scan/invoice"
+            hx-target="#scan-detail"
+            hx-swap="outerHTML">
+        {{ scan_ctx() }}
+        <div class="sd-form-grid">
+
+          <div class="sd-field">
+            <label class="sd-label">Lawyer *</label>
+            <select name="contact_id" required class="sd-input">
+              <option value="">— select —</option>
+              {% for l in lawyers %}
+              <option value="{{ l.id }}" {% if l.id == c.contact_id %}selected{% endif %}>
+                {{ l.name }}
+              </option>
+              {% endfor %}
+            </select>
+          </div>
+
+          <div class="sd-field">
+            <label class="sd-label">Date *</label>
+            <input type="date" name="invoice_date" required class="sd-input" value="{{ c.date }}">
+          </div>
+
+          <div class="sd-field">
+            <label class="sd-label">Amount TTC (€)</label>
+            <input type="number" name="amount_ttc" step="0.01" min="0" class="sd-input amount-ttc-field"
+                   placeholder="0.00" value="{{ '%.2f'|format(c.amounts[0]) if c.amounts else '' }}">
+          </div>
+
+          <div class="sd-field">
+            <label class="sd-label">Amount HT (€)</label>
+            <input type="number" name="amount_ht" step="0.01" min="0" class="sd-input amount-ht-field"
+                   placeholder="0.00">
+          </div>
+
+          <div class="sd-field">
+            <label class="sd-label">Status</label>
+            <select name="status" class="sd-input">
+              {% for s in statuses %}
+              <option value="{{ s }}" {% if s == 'paid' %}selected{% endif %}>{{ s | capitalize }}</option>
+              {% endfor %}
+            </select>
+          </div>
+
+          <div class="sd-field">
+            <label class="sd-label">Procedure</label>
+            <select name="procedure_id" class="sd-input">
+              <option value="">— none —</option>
+              {% for p in procedures %}
+              <option value="{{ p.id }}">{{ p.name }}</option>
+              {% endfor %}
+            </select>
+          </div>
+
+          <div class="sd-field sd-field--wide">
+            <label class="sd-label">Description</label>
+            <input type="text" name="description" class="sd-input"
+                   placeholder="Rédaction conclusions, audience JAF…">
+          </div>
+
+          <div class="sd-field">
+            <label class="sd-label">Invoice #</label>
+            <input type="text" name="invoice_number" class="sd-input" placeholder="e.g. 2015-042">
+          </div>
+
+          <div class="sd-field">
+            <label class="sd-label">Payment date</label>
+            <input type="date" name="payment_date" class="sd-input">
+          </div>
+
+        </div>
+
+        <div class="sd-form-actions">
+          {% if next_id %}
+          <button type="submit" class="btn btn-primary">💾 Save &amp; next →</button>
+          {% else %}
+          <button type="submit" class="btn btn-primary">💾 Save</button>
+          {% endif %}
+        </div>
+      </form>
+      {% endif %}
+    </div>
+
+    {# ── Payment panel ── #}
+    <div class="sd-action-panel" id="panel-payment" style="display:none">
+      {% if c.payment_confirmed %}
+      <div class="sd-action-done">
+        💳 Payment confirmed
+        {% if c.pay_amount %}<strong>{{ '%.2f'|format(c.pay_amount) }} €</strong>{% endif %}
+        {% if c.pay_type %}<span class="badge" style="background:#cfe2ff;color:#084298;border-color:#b6d4fe">{{ c.pay_type.replace('_',' ') }}</span>{% endif %}
+      </div>
+      {% else %}
+      <form hx-post="/invoices/scan/payment"
+            hx-target="#scan-detail"
+            hx-swap="outerHTML">
+        {{ scan_ctx() }}
+        <div class="sd-form-grid">
+
+          <div class="sd-field">
+            <label class="sd-label">Amount paid (€)</label>
+            <input type="number" name="amount" step="0.01" min="0" class="sd-input amount-ttc-field"
+                   placeholder="0.00" value="{{ '%.2f'|format(c.amounts[0]) if c.amounts else '' }}">
+          </div>
+
+          <div class="sd-field">
+            <label class="sd-label">Type</label>
+            <select name="payment_type" class="sd-input">
+              <option value="acompte">Acompte (partial)</option>
+              <option value="solde_final">Solde final (full)</option>
+              <option value="autre">Autre</option>
+            </select>
+          </div>
+
+          <div class="sd-field sd-field--wide">
+            <label class="sd-label">Notes</label>
+            <input type="text" name="notes" class="sd-input"
+                   placeholder="e.g. Virement 14/03/2015…">
+          </div>
+
+        </div>
+
+        <div class="sd-form-actions">
+          {% if next_id %}
+          <button type="submit" class="btn btn-primary">💾 Save &amp; next →</button>
+          {% else %}
+          <button type="submit" class="btn btn-primary">💾 Save</button>
+          {% endif %}
+        </div>
+      </form>
+      {% endif %}
+    </div>
+
+    {# ── Assessed panel ── #}
+    <div class="sd-action-panel" id="panel-assessed" style="display:none">
+      {% if c.dismissed %}
+      <div class="sd-action-done" style="gap:8px">
+        🚫 Marked as assessed.
+        <form hx-post="/invoices/scan/undismiss"
+              hx-target="#scan-detail"
+              hx-swap="outerHTML"
+              style="display:inline">
+          {{ scan_ctx() }}
+          <button type="submit" class="btn btn-secondary" style="font-size:11px">↩ Undo</button>
+        </form>
+      </div>
+      {% else %}
+      <div class="sd-assessed-layout">
+        <p class="text-sm text-muted" style="margin:0">
+          Mark this email as reviewed — no invoice or payment to record.
+        </p>
+        <form hx-post="/invoices/scan/dismiss"
+              hx-target="#scan-detail"
+              hx-swap="outerHTML"
+              style="display:flex;gap:var(--space-2);align-items:center;flex-wrap:wrap">
+          {{ scan_ctx() }}
+          {% if next_id %}
+          <button type="submit" class="btn btn-primary">🚫 Assessed &amp; next →</button>
+          {% else %}
+          <button type="submit" class="btn btn-primary">🚫 Mark assessed</button>
+          {% endif %}
+        </form>
+      </div>
+      {% endif %}
+    </div>
+
+  </div>{# /.sd-action-strip #}
+
+</div>{# /#scan-detail #}
+
+<script>
+/* ── Scan workspace JS ──────────────────────────────────────────────────── */
+
+function scanSwitchTab(btn) {
+  var strip = btn.closest('.sd-action-strip');
+  strip.querySelectorAll('.sd-action-tab').forEach(function(t) { t.classList.remove('active'); });
+  strip.querySelectorAll('.sd-action-panel').forEach(function(p) { p.style.display = 'none'; });
+  btn.classList.add('active');
+  var panel = document.getElementById(btn.dataset.panel);
+  if (panel) panel.style.display = 'block';
+}
+
+function scanFillAmount(chip, value) {
+  /* Fill all amount fields in #scan-detail that accept EUR amounts */
+  var detail = document.getElementById('scan-detail');
+  if (!detail) return;
+  detail.querySelectorAll('.amount-ttc-field').forEach(function(el) { el.value = value; });
+  /* Optionally compute HT from TTC assuming 20% TVA */
+  detail.querySelectorAll('.amount-ht-field').forEach(function(el) {
+    el.value = (parseFloat(value) / 1.20).toFixed(2);
+  });
+  chip.style.background = '#d1e7dd';
+  chip.style.borderColor = '#198754';
+}
+
+/* Keyboard shortcuts — J/K to navigate, 1/2/3 for tabs, Enter to submit */
+(function() {
+  function onKey(e) {
+    /* Ignore when typing in an input/select/textarea */
+    var tag = (e.target || {}).tagName || '';
+    if (['INPUT','SELECT','TEXTAREA'].includes(tag)) return;
+
+    var detail = document.getElementById('scan-detail');
+    if (!detail) return;
+
+    if (e.key === '1') {
+      var t = detail.querySelector('[data-panel="panel-invoice"]');
+      if (t) scanSwitchTab(t);
+    } else if (e.key === '2') {
+      var t = detail.querySelector('[data-panel="panel-payment"]');
+      if (t) scanSwitchTab(t);
+    } else if (e.key === '3') {
+      var t = detail.querySelector('[data-panel="panel-assessed"]');
+      if (t) scanSwitchTab(t);
+    } else if (e.key === 'j' || e.key === 'ArrowRight') {
+      var nextBtn = detail.querySelector('[hx-get*="scan/detail"]');
+      if (nextBtn) nextBtn.click();
+    } else if (e.key === 'f' || e.key === 'F') {
+      /* Fetch first unfetched attachment */
+      var fetchBtn = detail.querySelector('button[hx-post*="/fetch"]');
+      if (fetchBtn) fetchBtn.click();
+    }
+  }
+  document.removeEventListener('keydown', onKey);
+  document.addEventListener('keydown', onKey);
+})();
+</script>
+
+<style>
+/* ── Scan detail panel ────────────────────────────────────────────────────── */
+.scan-detail {
+  display: flex;
+  flex-direction: column;
+  /* No height:100% — natural content height; .scan-panel-detail does the scrolling */
+  border-left: 3px solid transparent;
+  transition: border-color .2s;
+}
+.scan-detail.sd--full-done  { border-left-color: #198754; }
+.scan-detail.sd--invoice-only { border-left-color: #ffc107; }
+.scan-detail.sd--payment-only { border-left-color: #0d6efd; }
+.scan-detail.sd--dismissed   { border-left-color: #adb5bd; opacity: .7; }
+
+/* Header */
+.sd-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+  background: var(--surface);
+}
+.sd-header-left { flex: 1; min-width: 0; }
+.sd-header-right { display: flex; gap: var(--space-2); flex-shrink: 0; align-items: flex-start; }
+.sd-meta-row { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-bottom: 4px; }
+.sd-subject { font-size: 15px; font-weight: 600; line-height: 1.3; }
+.sd-status-icon { font-size: 14px; }
+
+/* Body */
+.sd-body {
+  flex-shrink: 0;
+  padding: var(--space-3) var(--space-4);
+  border-bottom: 1px solid var(--border);
+}
+.sd-snippet {
+  font-size: 12px;
+  color: var(--text-muted);
+  font-style: italic;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.sd-full-body {
+  font-size: 12px;
+  color: var(--text);
+  white-space: pre-wrap;
+  word-break: break-word;
+  margin-top: var(--space-2);
+}
+.btn-link { background: none; border: none; cursor: pointer; padding: 0; }
+
+/* Attachments */
+.sd-attachments {
+  flex-shrink: 0;
+  padding: var(--space-2) var(--space-4);
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.sd-att-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  padding: 3px 4px;
+  border-radius: var(--radius);
+}
+.sd-att-row:hover { background: var(--surface); }
+.sd-att-icon { font-size: 14px; flex-shrink: 0; }
+.sd-att-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sd-att-actions { display: flex; gap: 4px; align-items: center; flex-shrink: 0; }
+
+/* Amount chips */
+.sd-amounts {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: var(--space-2) var(--space-4);
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+.sd-amount-chip {
+  background: #d1e7dd22;
+  border: 1px solid #28a74555;
+  color: #0f5132;
+  border-radius: 12px;
+  padding: 2px 10px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background .1s, border-color .1s;
+}
+.sd-amount-chip:hover { background: #d1e7dd; border-color: #198754; }
+
+/* Action strip */
+.sd-action-strip {
+  flex-shrink: 0;
+  border-top: 2px solid var(--border);
+  background: var(--surface);
+  position: sticky;
+  bottom: 0;
+}
+.sd-action-tabs {
+  display: flex;
+  border-bottom: 1px solid var(--border);
+}
+.sd-action-tab {
+  flex: 1;
+  padding: 8px 4px;
+  font-size: 12px;
+  font-weight: 500;
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+  cursor: pointer;
+  color: var(--text-muted);
+  transition: color .12s, border-color .12s;
+}
+.sd-action-tab:hover { color: var(--text); background: var(--bg); }
+.sd-action-tab.active { color: var(--primary); border-bottom-color: var(--primary); background: var(--bg); }
+
+.sd-action-panel { padding: var(--space-3) var(--space-4); }
+
+.sd-form-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: var(--space-2);
+  margin-bottom: var(--space-2);
+}
+@media (max-width: 900px) { .sd-form-grid { grid-template-columns: repeat(2, 1fr); } }
+.sd-field { display: flex; flex-direction: column; gap: 3px; }
+.sd-field--wide { grid-column: span 2; }
+.sd-label { font-size: 10px; font-weight: 600; color: var(--text-muted); text-transform: uppercase; letter-spacing: .4px; }
+.sd-input { font-size: 12px; padding: 4px 6px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg); width: 100%; box-sizing: border-box; }
+.sd-input:focus { outline: 2px solid var(--primary); outline-offset: 1px; }
+
+.sd-form-actions { display: flex; gap: var(--space-2); justify-content: flex-end; margin-top: var(--space-1); }
+
+.sd-action-done {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text);
+  padding: var(--space-2) 0;
+}
+.sd-assessed-layout { display: flex; align-items: center; gap: var(--space-3); flex-wrap: wrap; }
+</style>

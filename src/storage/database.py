@@ -437,6 +437,26 @@ _MIGRATIONS = [
         DROP TABLE procedure_events;
         ALTER TABLE procedure_events_new RENAME TO procedure_events;
     """),
+    (15, "Add payment_confirmations table for invoice scan workflow", """
+        CREATE TABLE IF NOT EXISTS payment_confirmations (
+            id            INTEGER PRIMARY KEY AUTOINCREMENT,
+            email_id      INTEGER NOT NULL REFERENCES emails(id) ON DELETE CASCADE,
+            amount        REAL,
+            payment_type  TEXT NOT NULL DEFAULT 'autre',
+            invoice_id    INTEGER REFERENCES lawyer_invoices(id) ON DELETE SET NULL,
+            notes         TEXT NOT NULL DEFAULT '',
+            created_at    TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+        );
+        CREATE INDEX IF NOT EXISTS idx_payment_confirmations_email
+            ON payment_confirmations(email_id);
+    """),
+    (16, "Add invoice_scan_dismissed table for assessed emails", """
+        CREATE TABLE IF NOT EXISTS invoice_scan_dismissed (
+            email_id     INTEGER PRIMARY KEY REFERENCES emails(id) ON DELETE CASCADE,
+            reason       TEXT NOT NULL DEFAULT '',
+            dismissed_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+        );
+    """),
 ]
 
 

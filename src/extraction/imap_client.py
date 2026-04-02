@@ -156,6 +156,18 @@ def count_messages_in_folder(folder: str) -> int:
         return status.get(b"MESSAGES", 0)
 
 
+def _is_transient_imap_error(exc: Exception) -> bool:
+    """Return True for Yahoo transient server errors that are safe to retry."""
+    msg = str(exc).upper()
+    return any(token in msg for token in (
+        "UNAVAILABLE",
+        "SERVER ERROR",
+        "TRY AGAIN",
+        "INUSE",
+        "OVERQUOTA",    # Yahoo occasionally returns this transiently
+    ))
+
+
 def fetch_mime_part(folder: str, uid: int, section: str) -> Optional[bytes]:
     """Fetch a single MIME part from an IMAP message (read-only).
 
@@ -166,7 +178,11 @@ def fetch_mime_part(folder: str, uid: int, section: str) -> Optional[bytes]:
     and decodes base64 / quoted-printable content automatically so the returned
     bytes are always the raw binary (e.g. a valid PDF, not base64 text).
 
-    Returns the decoded part bytes, or None if not found.
+    Returns the decoded part bytes, or None if the UID was not found in the
+    folder (including [UNAVAILABLE] responses, which Yahoo returns when a UID
+    no longer exists in a folder after the email was moved elsewhere).
+
+    Non-transient IMAP errors are re-raised immediately.
     """
     import base64
     import quopri
@@ -175,10 +191,19 @@ def fetch_mime_part(folder: str, uid: int, section: str) -> Optional[bytes]:
     with imap_connection() as client:
         client.select_folder(folder, readonly=True)
 
-        # Fetch body content + MIME headers for the section in one round-trip
-        body_key  = f"BODY.PEEK[{section}]".encode()
-        mime_key  = f"BODY.PEEK[{section}.MIME]".encode()
-        response  = client.fetch([uid], [body_key, mime_key])
+        body_key = f"BODY.PEEK[{section}]".encode()
+        mime_key = f"BODY.PEEK[{section}.MIME]".encode()
+
+        try:
+            response = client.fetch([uid], [body_key, mime_key])
+        except Exception as exc:
+            if _is_transient_imap_error(exc):
+                # [UNAVAILABLE] is Yahoo's response for both "server busy" and
+                # "UID no longer exists here (email was moved)".  Return None so
+                # the caller can trigger stale-UID recovery instead of retrying
+                # the wrong folder indefinitely.
+                return None
+            raise
 
         if uid not in response:
             return None
@@ -196,7 +221,6 @@ def fetch_mime_part(folder: str, uid: int, section: str) -> Optional[bytes]:
             cte = part_msg.get("Content-Transfer-Encoding", "").lower().strip()
 
         if cte == "base64":
-            # Strip whitespace before decoding (IMAP may include CRLF line breaks)
             raw = base64.b64decode(raw.replace(b"\r", b"").replace(b"\n", b""))
         elif cte in ("quoted-printable", "qp"):
             raw = quopri.decodestring(raw)
