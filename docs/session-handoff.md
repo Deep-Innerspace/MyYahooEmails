@@ -10,65 +10,35 @@
 
 ### Phase 6e — Procedure Document Upload + PDF Analysis (continued)
 
-The session was entirely focused on populating procedure metadata by uploading court judgment PDFs and analysing them with pdfplumber. This is the "document-first" strategy: upload the PDF, Claude extracts text and auto-fills all metadata + creates procedure_events.
+This session completed procedure #11 "Plainte pour Maltraitance", which had been blocked by a CID/Type 3 font-encoded PDF that neither pdfplumber nor pypdf could decode.
 
-#### Procedures fully populated this session
+#### Procedure #11 — Plainte pour Maltraitance (PV n° 00962/2023/001368)
 
-| # | Name | RG | Status | Doc |
-|---|---|---|---|---|
-| 1 | Contestation Paternité | RG 17/10390 | closed | jugement_contestation_200225.pdf |
-| 8 | Incident (JME) | RG 15/33553 | closed | ordonnance du JME du 20.02.2017.pdf (imported from Downloads) |
-| 9 | Incident — Appel | RG 17/18289 | closed | Incident appel_5_139789124_DECISION.PDF |
-| 10 | Acquiescements | Protocole 04/09/2020 | closed | Protocole d_accord signé GM 040920 rev-.pdf |
-| 12 | Liquidation Financière | RG 23/06050 | open | MINUTE_75_.PDF (22 pages) |
-| 13 | Révision de Pensions | RG 24/07044 | closed | MINUTE - 2025-07-02T095107.815.pdf |
+**Problem**: The PDF (`12_2023-1368 MAISON GAEL VIOLENCES SUR MINEURS.pdf`, 89 KB, 4 pages) uses proprietary CID/Type 3 font encoding — pdfplumber outputs `(cid:0)(cid:1)...`, pypdf outputs `/0 /1 /2...`. Standard OCR tools (tesseract, ocrmypdf, pytesseract) not installed.
 
-#### Bug fixed: UPDATE not committed when INSERT fails in same script
-When the first SQL script for procedure #1 errored on `NOT NULL constraint failed: procedure_events.notes` before reaching `conn.commit()`, the entire transaction was silently rolled back — including the already-executed UPDATE. Lesson: always use `notes=''` (not `None`) for NOT NULL columns, and use separate committed transactions.
+**Solution**: macOS Vision framework via Swift 6.2.4. Compiled a Swift script (`/tmp/ocr_pdf.swift`) that renders each PDF page to a CGImage at 2× scale then runs `VNRecognizeTextRequest` with `recognitionLevel = .accurate` and `recognitionLanguages = ["fr-FR", "en-US"]`. Full 4-page text extracted successfully (~95% accuracy).
 
-#### Procedure #8 "Incident" — document imported from Downloads
-The user shared `/Users/innerspace/Downloads/ordonnance du JME du 20.02.2017.pdf`. Claude identified it as belonging to procedure #8 (not #9) based on RG 15/33553 (TGI Paris JME, 20/02/2017). The file was copied with `shutil.copy2` to `data/documents/procedures/8/` and a DB record was inserted.
+**Key legal facts extracted:**
+- **Plaignant**: Gaël MAISON, architecte, résidant à Abu Dhabi (The Arc Tower C 2016)
+- **Victimes**: Matheys (né 19/09/2008) et Lounys (né 30/07/2011)
+- **Mis en cause**: MULLER Maud + BAREYRE Frédéric (compagnon)
+- **Rédactrice PV**: Laurine TRENEC, Gardienne de la Paix, APJ, CSP Sèvres
+- **Faits depuis 2021**: Bareyre ceinturerait régulièrement Matheys au sol ; insults récurrentes ("vous êtes stupides") ; comportements d'intimidation
+- **25/03/2023**: Bareyre tient fortement la mâchoire de Lounys (photos WhatsApp remises)
+- **26/03/2023**: Maud mord la main de Matheys + casse sa montre ; Bareyre le plaque au sol et le ceinture (photo de morsure remise ~5h après)
+- **29/03/2023**: Email de Gaël à Maud → Maud nie les faits par écrit
+- **07/04/2023**: Dépôt de plainte au CSP Sèvres, 14h11 ; annexes : photos, WhatsApp, email
+- **Suites**: Inconnues (renvoi possible au Parquet de Nanterre)
+- **Maylis**: Citée pour un fait isolé ~2017 (Frédéric lui aurait mis un coup de portefeuille dans le visage) mais non retenue comme victime dans la plainte
 
-#### Key legal facts extracted
+**Metadata populated:**
+- `jurisdiction`: CSP de Sèvres (Police Judiciaire)
+- `case_number`: PV n° 00962/2023/001368
+- `filing_date`: 2023-04-07, `date_start`: 2023-04-07
+- `status`: unknown (suites inconnues)
+- 4 procedure_events: incident 25/03, incident 26/03, correspondence 29/03, filing 07/04
 
-**Proc #1 — Contestation Paternité:**
-- Iannÿs Müller (ex-Maison) — non-paternité confirmée par 18 exclusions ADN (rapport 07/01/2019)
-- Père biologique: Frédéric BAREYRE (reconnu 30/12/2017 à Ville-d'Avray)
-- Admin ad hoc: Me Laurence JARRET (SCP LC2J, Hauts-de-Seine, vestiaire 752)
-- Gaël connaissait sa non-paternité depuis juillet 2014 (test privé) → rejet partiel remboursement
-
-**Proc #8 — Incident JME TGI Paris:**
-- Gaël demandait cessation du devoir de secours + modification contribution enfants
-- Maud demandait augmentation (700-900 €/enfant), provision ad litem 15k€, avance liquidation 95k€
-- → Toutes demandes rejetées (aucun élément nouveau depuis l'ONC du 26/11/2015)
-
-**Proc #9 — Incident appel (art. 526 CPC):**
-- Maud obtient radiation du rôle (02/10/2018) pour défaut d'exécution par Gaël des frais de scolarité internationale (Ecole internationale de la Celle Saint-Cloud)
-- Gaël condamné aux dépens + 1 500 € art. 700
-- L'appel a été réinscrit et jugé sur le fond (procédure #6)
-
-**Proc #10 — Acquiescements (Protocole 04/09/2020):**
-- Compensation croisée: 35 132,49 € (Maud → Gaël) vs 35 762,65 € (Gaël → Maud)
-- Solde net: 600 € + arrièrés 12 181,58 € dus par Gaël
-- Prestation compensatoire 30k€ incluse dans la compensation
-- Devoir de secours éteint au 01/09/2020
-- Gaël prend 100% frais transport Iannÿs
-- Engagement de procéder à la liquidation (→ procédure #12 ouverte en 2023)
-
-**Proc #12 — Liquidation Financière (jugement 04/11/2025):**
-- Partage judiciaire ordonné, notaire Me Hélène Boidin désignée
-- Indemnité d'occupation 37 512 € (Gaël a bloqué la vente Sèvres 3 ans)
-- Récompense 230 000 AED (loyers 2014 remboursés par employeur, non restitués)
-- Gaël: avocat postulant Me Guillaume BOULAN (SCP CRTD, vestiaire 713, Hauts-de-Seine)
-- Maud: avocat postulant Me Florence BERNARD-FERTIER (JRF & TEYTAUD SALEH, vestiaire PN 81)
-- Procédure toujours OPEN (opérations notariales en cours)
-
-**Proc #13 — Révision de Pensions (jugement 01/07/2025):**
-- Pension augmentée de 568,78 → **800 €/enfant/mois** (2 400 € total)
-- Maud comparante en PERSONNE (sans avocat)
-- Revenus Gaël 2024: 23 160 €/mois net (ESRI, Dubai)
-- Appel devant Cour d'Appel de VERSAILLES (pas Paris — TJ Nanterre)
-- Gaël autorisé à inscrire Matheÿs au Club de Boxe Jaguar
+**OCR transcript saved**: `data/documents/procedures/11/ocr_PV_2023-1368.txt` (11 KB) registered as `procedure_document id=13` with `content_type: text/plain` and a note explaining the CID encoding issue.
 
 ---
 
@@ -86,13 +56,13 @@ The user shared `/Users/innerspace/Downloads/ordonnance du JME du 20.02.2017.pdf
 | 8 | Incident (JME) | RG 15/33553 | closed ✅ | 1 | 4 |
 | 9 | Incident — Appel | RG 17/18289 | closed ✅ | 1 | 3 |
 | 10 | Acquiescements | Protocole 04/09/2020 | closed ✅ | 1 | 3 |
-| 11 | Plainte pour Maltraitance | — | unknown ⚠️ | 0 | 0 |
+| 11 | Plainte pour Maltraitance | PV 2023/001368 | unknown ⚠️ | 2 | 4 |
 | 12 | Liquidation Financière | RG 23/06050 | open 🔄 | 1 | 3 |
 | 13 | Révision de Pensions | RG 24/07044 | closed ✅ | 1 | 4 |
 | 14 | Révision de Pensions — Appel | — | unknown ⚠️ | 0 | 0 |
 | 15 | Procédure Lounys vivre à Dubai | — | unknown ⚠️ | 0 | 0 |
 
-**Total: 11 procedure_documents, 41 procedure_events**
+**Total: 13 procedure_documents, 45 procedure_events**
 
 ---
 
@@ -100,11 +70,20 @@ The user shared `/Users/innerspace/Downloads/ordonnance du JME du 20.02.2017.pdf
 
 ### Current branch: `feature/corpus-filter-ui`
 
-### Procedures awaiting documents / analysis
-- **#7 Négociation Amiable** — no document yet; may be undocumented (informal)
-- **#11 Plainte pour Maltraitance** — no document yet
-- **#14 Révision de Pensions — Appel** — no document uploaded yet (may not exist if no appeal was filed)
-- **#15 Procédure Lounys vivre à Dubai** — no document uploaded yet
+### Procedures awaiting documents
+- **#7 Négociation Amiable** — no document; likely informal/undocumented
+- **#14 Révision de Pensions — Appel** — no document uploaded (may not exist if appeal not yet filed / CA Versailles)
+- **#15 Procédure Lounys vivre à Dubai** — no document uploaded
+
+### OCR approach for future CID-encoded PDFs
+```bash
+# Compile once per session
+swiftc /tmp/ocr_pdf.swift -o /tmp/ocr_pdf
+
+# Run on any PDF
+/tmp/ocr_pdf "path/to/document.pdf"
+```
+The Swift source is at `/tmp/ocr_pdf.swift` (not committed — regenerate from session summary if needed).
 
 ### Next tasks (Phase 6 remaining)
 
@@ -118,9 +97,9 @@ The user shared `/Users/innerspace/Downloads/ordonnance du JME du 20.02.2017.pdf
 - Color-coded by source type
 
 **Phase 6i — Judgment PDF Analysis (partially done)**
-- pdfplumber installed and used ad-hoc this session
-- Formal structured extraction (parties, amounts, outcome) not yet a CLI command
-- New dependency: `pdfplumber` (already installed in .venv)
+- pdfplumber installed and used ad-hoc
+- Vision framework OCR now proven for CID-encoded PDFs
+- Formal structured extraction CLI command not yet built
 
 ### Quick Start
 ```bash
