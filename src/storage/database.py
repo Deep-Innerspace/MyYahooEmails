@@ -457,6 +457,23 @@ _MIGRATIONS = [
             dismissed_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
         );
     """),
+    (17, "Add procedure_documents table for per-procedure file uploads", """
+        CREATE TABLE IF NOT EXISTS procedure_documents (
+            id            INTEGER PRIMARY KEY AUTOINCREMENT,
+            procedure_id  INTEGER NOT NULL REFERENCES procedures(id) ON DELETE CASCADE,
+            doc_type      TEXT NOT NULL DEFAULT 'other',
+            filename      TEXT NOT NULL,
+            original_name TEXT NOT NULL DEFAULT '',
+            file_path     TEXT NOT NULL,
+            content_type  TEXT NOT NULL DEFAULT 'application/octet-stream',
+            size_bytes    INTEGER NOT NULL DEFAULT 0,
+            doc_date      TEXT,
+            notes         TEXT NOT NULL DEFAULT '',
+            uploaded_at   TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+        );
+        CREATE INDEX IF NOT EXISTS idx_proc_docs_procedure
+            ON procedure_documents(procedure_id);
+    """),
 ]
 
 

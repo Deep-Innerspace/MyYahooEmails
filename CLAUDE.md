@@ -399,10 +399,14 @@ Two-layer protection:
   - `invoice_scan_dismissed` — emails assessed as having no invoice/payment to record
 - Per-lawyer and per-procedure cost summaries on dashboard
 
-#### 🔲 Phase 6e — Procedures Model
-- CRUD for procedures + procedure_events (replaces court_events)
-- LLM extraction from lawyer emails
-- Web UI: procedure list with events timeline
+#### ✅ Phase 6e — Procedure Document Upload + PDF Analysis (data entry complete)
+- 11 court PDFs uploaded via web UI and analysed ad-hoc with pdfplumber
+- 41 procedure_events created with dates, types, descriptions, and source_attachment_id links
+- **Document-first strategy**: upload PDF → Claude extracts text → auto-fills metadata + events in one transaction
+- Procedures fully populated: #1 Contestation Paternité (RG 17/10390), #2 ONC (RG 15/33553), #3 Appel ONC (RG 15/13023), #4 Référé (RG 15/42684), #5 Divorce pour Faute (RG 15/33553), #6 Appel Divorce (RG 19/07859), #8 Incident JME (RG 15/33553), #9 Incident Appel (RG 17/18289), #10 Acquiescements (protocole 04/09/2020), #12 Liquidation Financière (RG 23/06050, open), #13 Révision de Pensions (RG 24/07044)
+- Procedures awaiting documents: #7 Négociation Amiable, #11 Plainte pour Maltraitance, #14 Révision Pensions Appel, #15 Procédure Lounys Dubai
+- Key bug: commit each SQL unit separately — a mid-script NOT NULL error rolls back the entire uncommitted transaction including prior UPDATEs
+- 🔲 Web UI for procedure list/detail still needed
 
 #### 🔲 Phase 6h — Unified Timeline
 - Merge both corpora + procedure events + cost events

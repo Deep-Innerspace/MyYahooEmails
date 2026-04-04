@@ -486,3 +486,37 @@ parsed = raw.parse()  # get the actual response content
 **Auto-fallback in routes**: Both `scan_list` and `scan_detail` routes auto-switch `active_tab` to `"all"` when the requested tab has no matches, so the user always sees content after a filter change rather than an empty-tab + scan_done flash.
 
 **Impact**: `invoice_scan.html` JS section rewritten (~40 lines). `invoices.py` scan_list + scan_detail routes updated with fallback logic.
+
+---
+
+## 2026-04-04 — Document-first strategy for procedure metadata
+
+**Decision**: Populate procedure metadata by uploading court PDFs and having Claude extract+insert all fields via pdfplumber, rather than an Excel round-trip or manual entry.
+
+**Rationale**: LLMs cannot infer RG numbers, jurisdictions, dates, lawyers, or financial outcomes from email context alone — they need the actual documents. The upload infrastructure (procedure_documents table + file storage) was already in place from last session. pdfplumber extracts text reliably from French court PDFs. Claude can then parse all relevant fields and generate SQL in a single step.
+
+**Workflow**: User uploads PDF via web UI → user asks Claude to "analyse the judgment of [procedure name]" → Claude reads via pdfplumber → generates UPDATE + INSERT procedure_events SQL → commits in a single transaction.
+
+**Bug discovered**: When an INSERT fails mid-script before `conn.commit()`, any previously executed UPDATEs in the same transaction are also rolled back. Fix: always commit each logical unit separately, or use explicit `notes=''` (empty string, not `None`) for NOT NULL columns with DEFAULT ''.
+
+**Impact**: Procedures #1, #8, #9, #10, #12, #13 fully populated this session. 41 procedure_events total. pdfplumber now a de-facto dependency (already installed).
+
+---
+
+## 2026-04-04 — Procedure #8 vs #9 disambiguation
+
+**Decision**: The ordonnance du JME du 20/02/2017 (TGI Paris, RG 15/33553) belongs to procedure #8 "Incident", not procedure #9 "Incident — Appel".
+
+**Rationale**: Procedure #9 is the art. 526 CPC radiation incident at the Cour d'Appel (RG 17/18289, 02/10/2018). Procedure #8 is an earlier incident during the first-instance divorce instruction, decided by the JME Sophie LECARME at the TGI Paris. Both share the same underlying RG 15/33553 but are distinct proceedings at different court levels and dates.
+
+**Impact**: `data/documents/procedures/8/9_ordonnance_JME_20022017.pdf` — copied from Downloads and linked to procedure #8.
+
+---
+
+## 2026-04-04 — Acquiescements procedure type = private protocol, not court judgment
+
+**Decision**: Procedure #10 "Acquiescements" is a private settlement protocol (not a court judgment). The document type is `convention`, not `judgment`.
+
+**Rationale**: The "Protocole d'accord" signed 04/09/2020 is a private contract between the parties and their lawyers that formalises acquiescements to two recent judgments and settles the financial accounts between them. It has no RG number from a court. The case_number field was set to "Protocole du 04/09/2020" to distinguish it from court proceedings.
+
+**Impact**: `procedure_documents.doc_type` updated to `'convention'` for doc #11. Highlights that not all procedures in the system map to court cases — some are private agreements.

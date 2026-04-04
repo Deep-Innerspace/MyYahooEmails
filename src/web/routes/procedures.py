@@ -1,17 +1,24 @@
-"""Procedures CRUD routes — Phase 6e.1."""
+"""Procedures CRUD routes — Phase 6e.1 / 6e.2."""
+import re
 import sqlite3
 from typing import Optional
-from fastapi import APIRouter, Depends, Form, Query, Request
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi import APIRouter, Depends, File, Form, Request, UploadFile
+from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from pathlib import Path
 
+from src.config import procedure_docs_dir
 from src.web.deps import get_conn, get_perspective
 
 BASE_DIR = Path(__file__).parent.parent
 templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
 
 router = APIRouter()
+
+DOC_TYPES = [
+    "judgment", "ordonnance", "conclusions_a", "conclusions_b",
+    "assignation", "expertise", "convocation", "correspondence", "other",
+]
 
 PROCEDURE_TYPES = [
     "contestation", "premiere_instance", "appel", "refere", "divorce_faute",
@@ -115,6 +122,14 @@ async def procedure_detail(
     """, (proc_id,)).fetchall()
     events = [dict(r) for r in event_rows]
 
+    # Fetch documents
+    doc_rows = conn.execute("""
+        SELECT * FROM procedure_documents
+        WHERE procedure_id = ?
+        ORDER BY doc_date ASC, uploaded_at ASC
+    """, (proc_id,)).fetchall()
+    documents = [dict(r) for r in doc_rows]
+
     lawyers = _get_lawyer_contacts(conn)
 
     ctx = {
@@ -123,11 +138,13 @@ async def procedure_detail(
         "page": "procedures",
         "proc": proc,
         "events": events,
+        "documents": documents,
         "lawyers": lawyers,
         "procedure_types": PROCEDURE_TYPES,
         "status_options": STATUS_OPTIONS,
         "event_types": EVENT_TYPES,
         "precision_options": PRECISION_OPTIONS,
+        "doc_types": DOC_TYPES,
     }
     return templates.TemplateResponse("pages/procedure_detail.html", ctx)
 
@@ -289,4 +306,112 @@ async def delete_event(
     conn.execute("DELETE FROM procedure_events WHERE id = ? AND procedure_id = ?",
                  (event_id, proc_id))
     conn.commit()
+    return RedirectResponse(f"/procedures/{proc_id}", status_code=303)
+
+
+# ── Upload document ──────────────────────────────────────────────────────────
+
+def _safe_filename(name: str) -> str:
+    """Strip unsafe characters from an uploaded filename."""
+    name = Path(name).name  # strip any directory components
+    name = re.sub(r"[^\w.\- ]", "_", name)
+    return name or "document"
+
+
+@router.post("/{proc_id}/documents", response_class=HTMLResponse)
+async def upload_document(
+    request: Request,
+    proc_id: int,
+    file: UploadFile = File(...),
+    doc_type: str = Form("other"),
+    doc_date: str = Form(""),
+    notes: str = Form(""),
+    conn: sqlite3.Connection = Depends(get_conn),
+):
+    proc = conn.execute("SELECT id FROM procedures WHERE id = ?", (proc_id,)).fetchone()
+    if not proc:
+        return HTMLResponse("Procedure not found", status_code=404)
+
+    content = await file.read()
+    original_name = _safe_filename(file.filename or "document")
+    content_type = file.content_type or "application/octet-stream"
+    size_bytes = len(content)
+
+    # Insert record first to get auto-assigned ID
+    cur = conn.execute("""
+        INSERT INTO procedure_documents
+            (procedure_id, doc_type, filename, original_name,
+             file_path, content_type, size_bytes, doc_date, notes)
+        VALUES (?, ?, ?, ?, '', ?, ?, ?, ?)
+    """, (
+        proc_id,
+        doc_type,
+        original_name,
+        original_name,
+        content_type,
+        size_bytes,
+        doc_date or None,
+        notes.strip() or "",
+    ))
+    doc_id = cur.lastrowid
+
+    # Save to filesystem: data/documents/procedures/{proc_id}/{doc_id}_{filename}
+    proc_dir = procedure_docs_dir() / str(proc_id)
+    proc_dir.mkdir(parents=True, exist_ok=True)
+    stored_name = f"{doc_id}_{original_name}"
+    file_path = proc_dir / stored_name
+    file_path.write_bytes(content)
+
+    # Update record with final file_path and stored filename
+    conn.execute(
+        "UPDATE procedure_documents SET file_path = ?, filename = ? WHERE id = ?",
+        (str(file_path), stored_name, doc_id),
+    )
+    conn.commit()
+    return RedirectResponse(f"/procedures/{proc_id}", status_code=303)
+
+
+# ── Serve / download document ────────────────────────────────────────────────
+
+@router.get("/{proc_id}/documents/{doc_id}")
+async def serve_document(
+    proc_id: int,
+    doc_id: int,
+    conn: sqlite3.Connection = Depends(get_conn),
+):
+    row = conn.execute("""
+        SELECT * FROM procedure_documents WHERE id = ? AND procedure_id = ?
+    """, (doc_id, proc_id)).fetchone()
+    if not row:
+        return HTMLResponse("Document not found", status_code=404)
+
+    doc = dict(row)
+    file_path = Path(doc["file_path"])
+    if not file_path.exists():
+        return HTMLResponse("File not found on disk", status_code=404)
+
+    return FileResponse(
+        path=str(file_path),
+        media_type=doc["content_type"],
+        filename=doc["original_name"],
+    )
+
+
+# ── Delete document ──────────────────────────────────────────────────────────
+
+@router.post("/{proc_id}/documents/{doc_id}/delete", response_class=HTMLResponse)
+async def delete_document(
+    proc_id: int,
+    doc_id: int,
+    conn: sqlite3.Connection = Depends(get_conn),
+):
+    row = conn.execute("""
+        SELECT file_path FROM procedure_documents WHERE id = ? AND procedure_id = ?
+    """, (doc_id, proc_id)).fetchone()
+    if row:
+        file_path = Path(row["file_path"])
+        if file_path.exists():
+            file_path.unlink()
+        conn.execute("DELETE FROM procedure_documents WHERE id = ?", (doc_id,))
+        conn.commit()
     return RedirectResponse(f"/procedures/{proc_id}", status_code=303)
