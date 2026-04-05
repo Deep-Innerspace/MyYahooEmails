@@ -140,6 +140,57 @@
         </div>
       </div>
 
+      <!-- Legal corpus analysis KPIs -->
+      <div class="card" style="grid-column: 1 / -1;">
+        <div class="card-header">
+          <span class="card-title">⚖️ Legal Corpus Analysis <span class="corpus-tag" style="background:var(--primary);color:#fff">Legal</span></span>
+          <a href="/emails/?corpus=legal" class="btn btn-secondary btn-sm">Browse</a>
+        </div>
+        <div class="card-body">
+          <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:1.5rem;align-items:start">
+
+            <!-- Email analysis coverage -->
+            <div>
+              <div class="text-xs text-muted" style="margin-bottom:.4rem;font-weight:600;text-transform:uppercase;letter-spacing:.05em">Email Analysis</div>
+              {% set legal_pct = (overview.legal_analysis_count / (overview.legal_count or 1) * 100)|round(1) %}
+              <div class="progress-row" style="margin-bottom:.3rem">
+                <span class="progress-label">Legal Analysis</span>
+                <div class="progress-track">
+                  <div class="progress-fill" data-value="{{ legal_pct }}" style="width:0%;background:var(--primary)"></div>
+                </div>
+                <span class="progress-pct">{{ legal_pct }}%</span>
+              </div>
+              <div class="text-xs text-muted">
+                {{ "{:,}".format(overview.legal_analysis_count) }} / {{ "{:,}".format(overview.legal_count) }} emails
+              </div>
+            </div>
+
+            <!-- Procedures -->
+            <div>
+              <div class="text-xs text-muted" style="margin-bottom:.4rem;font-weight:600;text-transform:uppercase;letter-spacing:.05em">Procedures</div>
+              <div style="font-size:2rem;font-weight:700;color:var(--primary);line-height:1">{{ overview.procedures_count }}</div>
+              <div class="text-xs text-muted" style="margin-top:.3rem">tracked proceedings</div>
+            </div>
+
+            <!-- Procedure events -->
+            <div>
+              <div class="text-xs text-muted" style="margin-bottom:.4rem;font-weight:600;text-transform:uppercase;letter-spacing:.05em">Procedure Events</div>
+              <div style="font-size:2rem;font-weight:700;color:var(--primary);line-height:1">{{ "{:,}".format(overview.procedure_events_count) }}</div>
+              <div class="text-xs text-muted" style="margin-top:.3rem">hearings, filings, judgments</div>
+            </div>
+
+            <!-- Invoices -->
+            <div>
+              <div class="text-xs text-muted" style="margin-bottom:.4rem;font-weight:600;text-transform:uppercase;letter-spacing:.05em">Lawyer Invoices</div>
+              <div style="font-size:2rem;font-weight:700;color:var(--primary);line-height:1">{{ overview.invoices_count }}</div>
+              <div class="text-xs text-muted" style="margin-top:.3rem">cost records tracked</div>
+              <a href="/invoices/" class="text-xs" style="color:var(--primary)">View invoices →</a>
+            </div>
+
+          </div>
+        </div>
+      </div>
+
       <!-- Top aggressive emails -->
       <div class="card">
         <div class="card-header">

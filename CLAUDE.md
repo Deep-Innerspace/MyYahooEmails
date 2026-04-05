@@ -332,16 +332,20 @@ Two-layer protection:
 - Creates both topics if they don't exist; creates a run with provider="manual", model="rule-based"
 - These count toward classification coverage % but are excluded from topic distribution charts in the web dashboard
 
-### Current Analysis Coverage (as of 2026-03-27)
-- Total emails: 3,922 (3,791 personal + 131 legal corpus)
+### Current Analysis Coverage (as of 2026-04-05)
+- Total emails: 3,922 personal corpus
 - Classification: 3,922/3,922 (100%) ✅ COMPLETE
 - Tone analysis: 3,922/3,922 (100%) ✅ COMPLETE
 - Manipulation: 3,922/3,922 (100%) ✅ COMPLETE — runs #62–78 + all 17 batches via ChatGPT gpt-5.4-thinking
 - Timeline extraction: 3,922/3,922 (100%) ✅ COMPLETE — 915 events found — 21 runs total (runs #4, #14, #109, #112, #113, #118–#133)
 - Contradictions: 45 pairs total across 9 topics ✅ COMPLETE — (enfants 7, vacances 12, éducation 10, procédure 4, santé 5, logement 2, école 2, finances 1, (none) 2)
   - All 17 batch files imported (including finances_1 + finances_2 — run#114 + run#115/117)
-- Procedures: 0 — tables created, awaiting LLM extraction from lawyer emails
-- Legal corpus emails: 2,743 (as of 2026-03-30) — recovered from vclavocat (349+40 emails) and Onyx (408 emails) Yahoo folders
+- Legal corpus: 2,743 emails total
+  - legal_analysis (run #156): 2,743/2,743 (100%) ✅ COMPLETE
+    - Batches 1–19: Excel round-trip via ChatGPT gpt-5.4-thinking (imported)
+    - 150 oversized emails (>30k chars, May–July 2015): analyzed directly in-session as Claude
+  - 2,114 procedure_events stored; 15 procedures tracked; 37 lawyer invoices
+- Procedures: 15 total — 13 with documents and events populated via Phase 6e document uploads
 
 ### 🔲 Phase 6 — Lawyer Correspondence Module (IN PROGRESS — branch: `feature/lawyer-corpus`)
 

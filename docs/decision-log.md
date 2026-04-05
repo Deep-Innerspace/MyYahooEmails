@@ -520,3 +520,32 @@ parsed = raw.parse()  # get the actual response content
 **Rationale**: The "Protocole d'accord" signed 04/09/2020 is a private contract between the parties and their lawyers that formalises acquiescements to two recent judgments and settles the financial accounts between them. It has no RG number from a court. The case_number field was set to "Protocole du 04/09/2020" to distinguish it from court proceedings.
 
 **Impact**: `procedure_documents.doc_type` updated to `'convention'` for doc #11. Highlights that not all procedures in the system map to court cases — some are private agreements.
+
+---
+
+## 2026-04-05 — Direct in-session LLM analysis for oversized legal emails
+
+**Decision**: Analyze the 150 legal corpus emails that exceeded the Excel cell limit (30,000 chars) directly in-session as Claude, reading from DB and writing results back without an external API call.
+
+**Rationale**: These emails (May–July 2015 forwarded evidence chains) were excluded from the Excel export pipeline by `_LEGAL_CELL_LIMIT = 30000`. Options considered:
+1. Raise the limit — rejected: Excel crashes on 30k+ cells; ChatGPT context would be overwhelmed by a single email
+2. Call Claude API externally — rejected by user: preferred in-session approach for traceability and cost
+3. Direct in-session analysis — chosen: read emails from DB in batches of 10–25, analyze as Claude, write JSON results back to `analysis_results` and events to `procedure_events`/`timeline_events`
+
+**Storage pattern**: identical to `_import_legal_analysis()` in `excel_import.py` — ensures consistency with Excel-imported results.
+
+**IDs tracking**: `/tmp/legal_remaining_ids.json` stores `{run_id, ids}` for session-resumable batch processing.
+
+**Impact**: `run_id=156` completed with 150/150 emails, 131 procedure_events. This approach is reusable for any future oversized batch.
+
+---
+
+## 2026-04-05 — Legal corpus KPIs added to dashboard
+
+**Decision**: Add a dedicated "Legal Corpus Analysis" card to the dashboard (legal-only perspective) showing completion percentage, procedures count, procedure events count, and invoice count.
+
+**Rationale**: The legal analysis is now 100% complete. The dashboard previously showed only personal corpus analysis coverage. Legal corpus data (2,743 emails, 15 procedures, 2,114 events) is a significant body of work that deserves visibility in the top-level overview.
+
+**Implementation**: New full-width card in the `legal-only` section, spanning all grid columns. Three new fields added to `overview_stats()`: `legal_analysis_count`, `procedures_count`, `invoices_count`.
+
+**Impact**: `src/statistics/aggregator.py` + `src/web/templates/pages/dashboard.html`.

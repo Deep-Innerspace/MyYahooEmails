@@ -242,3 +242,32 @@ The tone chart showed almost no received emails from the ex-wife during 2017–2
 - **Sent Patterns chart is visibly sparser.** Your manipulation patterns were concentrated in specific periods (spikes), while hers were continuous throughout the correspondence. This may indicate reactive vs systematic behaviour.
 - **~77% of all analysed emails had no detected manipulation** (score = 0). Manipulation was not the norm — it concentrated in ~23% of emails with measurable presence.
 - **Batch 17 was the smallest** (213 emails, 19 scored). Consistent with ChatGPT being conservative on short or ambiguous emails in the final batch.
+
+---
+
+## 2026-04-05 — Legal corpus analysis complete (2,743 / 2,743)
+
+### Pipeline summary
+- Batches 1–14: Excel round-trip via ChatGPT gpt-5.4-thinking (prior sessions)
+- Batches 15–19: Excel round-trip via ChatGPT gpt-5.4-thinking (this session)
+- 150 oversized emails (>30k chars): direct in-session analysis as Claude (run #156)
+
+### May–July 2015 period — key narrative findings (from 150 oversized emails)
+
+These emails were all forwarded evidence chains — Gaël systematically transmitting the entire correspondence trail to Valérie as legal exhibits. This bulk evidence assembly happened across two periods:
+
+**July 7, 2015 (pieces 1–15)**: First wave — general evidence of family situation (lease, employment history, job searches, Maud's early 2014 emails, visa correspondence, housing search). Pieces numbered sequentially starting from 1.
+
+**July 13, 2015 (pieces 109–131)**: Second wave — specifically targeted at the MAREP/Necker dispute and visa conflict, submitted just 7 days before the Référé hearing (July 20). The high piece numbers (109–131) suggest Gaël had compiled a very large dossier — hundreds of pieces — with the key medical evidence in the 100+ range.
+
+**Central evidence piece**: Dr. Crétolle's June 26 letter (Pièce 112) — the most legally significant document in this batch. Dr. Crétolle explicitly complained that she was receiving contradictory parallel requests from both parents, effectively documenting Maud's unauthorized unilateral actions regarding Lounÿs's medical care.
+
+**Mood pattern**: Gaël's mood across all 108 sent emails was nearly uniform — `determined` or `frustrated`, intensity 3–4, consistently noting `trust_in_lawyer: confident`. This contrasts with the personal corpus where mood fluctuated widely. The legal correspondence shows a man in "execution mode" — methodical, strategic, focused on building the case rather than expressing emotion.
+
+**Valérie's strategy pattern**: Her `lawyer_stance` values were predominantly `strategic` with `proactive` for approvals. She pushed back on communication approach (shorten emails, use confidential not official letters) but broadly endorsed Gaël's evidence-gathering instincts.
+
+### Observations on legal analysis quality vs personal corpus
+
+- Legal analysis (`legal_analysis`) covers different fields from personal analysis (`tone`, `manipulation`): mood_valence, lawyer_stance, strategy_signal, procedure_ref, children_mentioned, amounts_mentioned — these are more factual and less subjective than tone/manipulation scores
+- The Excel-imported batches (via ChatGPT) showed ~2–5% blank rows per batch for sent emails, consistent with very short coordination messages ("ok je m'arrangerai", "C'est noté!")
+- The 150 oversized emails had zero blank/undecided cases — they all had clear, analyzable content despite being mostly evidence-forwarding emails

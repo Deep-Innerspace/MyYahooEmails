@@ -314,6 +314,434 @@ def _build_meta_sheet(wb, analysis_type, email_count, output_cols):
     ws["A5"], ws["B5"] = "output_columns", ",".join(c[0] for c in output_cols)
 
 
+# ── Legal analysis export (legal corpus, 3-sheet format) ─────────────────────
+
+_LEGAL_EVENT_TYPES = [
+    # Billing
+    "invoice_issued", "payment_request", "payment_confirmed", "fee_estimate",
+    "expense_note", "cost_warning", "retainer_requested",
+    # Procedural filings
+    "conclusions_filed", "requete_filed", "assignation", "appeal_filed",
+    "document_communicated", "constitution_avocat", "desistement",
+    "signification", "consignation", "incident_filed",
+    # Court
+    "hearing_scheduled", "hearing_occurred", "hearing_postponed",
+    "hearing_cancelled", "judgment_rendered", "ordonnance_rendered",
+    "arret_rendered", "expert_appointed", "expert_report_delivered",
+    "deadline_set", "mise_en_etat",
+    # Strategy
+    "strategy_decision", "evidence_discussed", "settlement_offer_received",
+    "settlement_offer_made", "settlement_rejected", "adverse_move",
+    "judge_observation", "case_assessment", "client_instruction",
+    "lawyer_recommendation",
+    # Admin
+    "meeting_scheduled", "meeting_occurred", "document_exchange",
+    "procuration", "change_of_lawyer",
+]
+
+_LEGAL_MOOD_VALUES      = "distressed | anxious | angry | frustrated | resigned | determined | hopeful | relieved | neutral"
+_LEGAL_URGENCY_VALUES   = "none | moderate | urgent | panic"
+_LEGAL_TRUST_VALUES     = "high | medium | low | questioning"
+_LEGAL_STANCE_VALUES    = "reassuring | cautious | tactical | concerned | optimistic | pessimistic | urgent | evasive"
+_LEGAL_RISK_VALUES      = "none | low | medium | high | critical"
+_LEGAL_CHILDREN_VALUES  = "none | Matheys | Lounys | Maylis | multiple"
+
+# Content threshold: if delta_text shorter than this, fall back to body_text
+_DELTA_MIN_CHARS = 150
+# Truncation limit — leave headroom so the marker fits within the 32,767 Excel cell limit
+_LEGAL_CELL_LIMIT = 30000
+
+
+def export_legal_analysis(
+    conn: sqlite3.Connection,
+    output_path: Path,
+    limit: Optional[int] = 150,
+    offset: int = 0,
+    unanalyzed_only: bool = True,
+) -> tuple:
+    """
+    Export legal corpus emails to Excel for comprehensive ChatGPT analysis.
+
+    Three output sheets:
+      - Emails   : blue read-only input  (email_id, date, direction, contact, subject, content)
+      - Events   : orange/yellow output  (0..N events per email — email_id pre-filled)
+      - Analysis : orange/yellow output  (exactly 1 metadata row per email — email_id pre-filled)
+
+    Content field: delta_text if ≥ 150 chars, else body_text (fallback for short/stripped deltas).
+    Emails whose combined content exceeds 30,000 chars are truncated with a visible marker.
+
+    Returns (output_path, email_count, truncated_count).
+    """
+    if not _HAS_OPENPYXL:
+        raise ImportError("openpyxl required: pip install openpyxl")
+
+    # ── Fetch procedures & lawyers for instructions ───────────────────────────
+    procedures = conn.execute(
+        "SELECT id, name, case_number FROM procedures ORDER BY id"
+    ).fetchall()
+
+    lawyers = conn.execute(
+        "SELECT name, role FROM contacts "
+        "WHERE role IN ('my_lawyer','her_lawyer','opposing_counsel','notaire') "
+        "ORDER BY role, name"
+    ).fetchall()
+
+    # ── Fetch legal emails ────────────────────────────────────────────────────
+    wheres = ["e.corpus = 'legal'"]
+
+    if unanalyzed_only:
+        wheres.append("""e.id NOT IN (
+            SELECT DISTINCT ar.email_id
+            FROM analysis_results ar
+            JOIN analysis_runs ru ON ru.id = ar.run_id
+            WHERE ru.analysis_type = 'legal_analysis'
+              AND ru.status IN ('complete', 'partial')
+        )""")
+
+    limit_sql = ""
+    if limit:
+        limit_sql = f"LIMIT {limit} OFFSET {offset}"
+    elif offset:
+        limit_sql = f"LIMIT -1 OFFSET {offset}"
+
+    rows = conn.execute(f"""
+        SELECT e.id, e.date, e.direction, e.subject,
+               e.delta_text, e.body_text,
+               c.name AS contact_name, c.role AS contact_role
+        FROM emails e
+        LEFT JOIN contacts c ON c.id = e.contact_id
+        WHERE {' AND '.join(wheres)}
+        ORDER BY e.date ASC
+        {limit_sql}
+    """).fetchall()
+
+    if not rows:
+        raise ValueError(
+            "No legal corpus emails to export — all are already analyzed, "
+            "or no legal emails in the database."
+        )
+
+    # ── Build content field for each row ─────────────────────────────────────
+    _TRUNC_MARKER = (
+        "\n\n[... TRUNCATED — email exceeds 30,000 chars. Full text available in DB.]"
+    )
+    email_data = []
+    truncated_count = 0
+    for row in rows:
+        delta   = (row["delta_text"] or "").strip()
+        body    = (row["body_text"]  or "").strip()
+        content = delta if len(delta) >= _DELTA_MIN_CHARS else (body or delta)
+        if len(content) > _LEGAL_CELL_LIMIT:
+            content = content[:_LEGAL_CELL_LIMIT] + _TRUNC_MARKER
+            truncated_count += 1
+        email_data.append({
+            "id":           row["id"],
+            "date":         str(row["date"])[:10] if row["date"] else "",
+            "direction":    row["direction"] or "",
+            "contact_name": row["contact_name"] or "(inconnu)",
+            "contact_role": row["contact_role"] or "",
+            "subject":      row["subject"] or "(no subject)",
+            "content":      content,
+        })
+
+    # ── Build workbook ────────────────────────────────────────────────────────
+    wb = openpyxl.Workbook()
+    _build_legal_instructions_sheet(wb, len(email_data), procedures, lawyers)
+    _build_legal_emails_sheet(wb, email_data)
+    _build_legal_events_sheet(wb, email_data)
+    _build_legal_analysis_sheet(wb, email_data)
+    _build_legal_meta_sheet(wb, len(email_data))
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    wb.save(str(output_path))
+    return output_path, len(email_data), truncated_count
+
+
+# ── Legal sheet builders ──────────────────────────────────────────────────────
+
+def _build_legal_instructions_sheet(wb, email_count, procedures, lawyers):
+    ws = wb.active
+    ws.title = "Instructions"
+
+    def w(row, col, value, bold=False, size=11, color="000000", bg=None, wrap=False, italic=False):
+        cell = ws.cell(row=row, column=col, value=value)
+        cell.font = Font(bold=bold, size=size, color=color, italic=italic)
+        if bg:
+            cell.fill = PatternFill("solid", fgColor=bg)
+        if wrap:
+            cell.alignment = Alignment(wrap_text=True, vertical="top")
+        return cell
+
+    r = 1
+    w(r, 1, "MyYahooEmails — Legal Corpus Analysis", bold=True, size=16, color=_NAVY)
+    r += 1
+    w(r, 1,
+      f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M')}  |  "
+      f"{email_count} emails  |  "
+      "corpus: legal  |  "
+      "Import: python cli.py analyze import-results <file.xlsx> --type legal_analysis",
+      color=_GRAY, size=10)
+
+    r += 2
+    w(r, 1, "CONTEXT", bold=True, color=_NAVY)
+    ctx = (
+        "These are emails between Gaël MAISON (architecte, Abu Dhabi) and his lawyers, "
+        "opposing counsel, and a notaire — spanning a 10-year French divorce and custody "
+        "battle (2014–present). The emails are predominantly in French. "
+        "Gaël's lawyers: Valérie Charriot-Lecuyer (2014–2016), then Hélène Hartwig-Deblauwe "
+        "and the Onyx Avocats team (2017–present), and François Teytaud for appeals. "
+        "Opposing party: Maud MULLER (ex-wife). Her lawyers appear in the LAWYERS table below."
+    )
+    cell = ws.cell(row=r, column=2, value=ctx)
+    cell.font = Font(size=11)
+    cell.alignment = Alignment(wrap_text=True, vertical="top")
+    ws.row_dimensions[r].height = 55
+
+    r += 2
+    w(r, 1, "YOUR TASK", bold=True, color=_NAVY)
+    task = (
+        "For EACH email in the 'Emails' sheet:\n"
+        "  1. Fill the 'Events' sheet — add one row per legal/financial event you detect "
+        "(0 rows if no event). The email_id column is pre-filled; copy it if you add extra rows.\n"
+        "  2. Fill the 'Analysis' sheet — fill the row that already has the matching email_id "
+        "(exactly one row per email). Fill ALL yellow cells.\n"
+        "Do NOT modify the 'Emails' sheet. Work through emails in order (top to bottom)."
+    )
+    cell = ws.cell(row=r, column=2, value=task)
+    cell.font = Font(size=11)
+    cell.alignment = Alignment(wrap_text=True, vertical="top")
+    ws.row_dimensions[r].height = 70
+
+    r += 2
+    w(r, 1, "LANGUAGE", bold=True, color=_NAVY)
+    w(r, 2,
+      "All description / key_concern / strategy_signal fields: write in FRENCH. "
+      "All vocabulary fields (event_type, mood_valence, etc.): use the EXACT English keywords listed below.",
+      wrap=True)
+    ws.row_dimensions[r].height = 30
+
+    # ── Events sheet columns ──────────────────────────────────────────────────
+    r += 2
+    w(r, 1, "EVENTS SHEET — COLUMNS", bold=True, color=_ORANGE)
+    r += 1
+    events_cols = [
+        ("email_id",       "Pre-filled. Copy it for additional event rows on the same email."),
+        ("event_date",     "Date of the event: YYYY-MM-DD, YYYY-MM, or YYYY. Leave blank if unknown."),
+        ("event_type",     "See EVENT TYPE VOCABULARY below. Pick the most specific type."),
+        ("procedure_ref",  "Procedure ID number (1–15) from the PROCEDURES table below. Leave blank if unclear."),
+        ("description",    "In French. 1–2 sentences describing the specific event."),
+        ("amount_eur",     "EUR amount as a number (e.g. 3500.00). Only for billing events. Leave blank otherwise."),
+        ("significance",   "high | medium | low — how important is this event to the case?"),
+    ]
+    for col_name, desc in events_cols:
+        w(r, 1, col_name, bold=True)
+        w(r, 2, desc, wrap=True)
+        ws.row_dimensions[r].height = 22
+        r += 1
+
+    # ── Analysis sheet columns ────────────────────────────────────────────────
+    r += 1
+    w(r, 1, "ANALYSIS SHEET — COLUMNS", bold=True, color=_ORANGE)
+    r += 1
+    analysis_cols = [
+        ("email_id",           "Pre-filled. Do not change."),
+        ("mood_valence",       f"SENT emails only. Leave blank for received. Values: {_LEGAL_MOOD_VALUES}"),
+        ("mood_intensity",     "SENT emails only. 1 (routine) → 5 (peak emotion/crisis). Leave blank for received."),
+        ("urgency",            f"SENT emails only. Values: {_LEGAL_URGENCY_VALUES}. Leave blank for received."),
+        ("key_concern",        "SENT emails only. In French: what is Gaël's main concern in this email? Leave blank for received."),
+        ("trust_in_lawyer",    f"SENT emails only. Values: {_LEGAL_TRUST_VALUES}. 'questioning' = Gaël pushes back or doubts. Leave blank for received."),
+        ("father_role_stress", "SENT only. none | mild | significant — is Gaël expressing stress about being a father (children, custody, parental alienation, distance)? Leave blank for received."),
+        ("financial_stress",   "SENT only. none | mild | significant — is Gaël expressing financial stress (cost, affordability, billing)? Leave blank for received."),
+        ("lawyer_stance",      f"RECEIVED emails only. Values: {_LEGAL_STANCE_VALUES}. Leave blank for sent."),
+        ("strategy_signal",    "RECEIVED only. In French: what strategic direction is the lawyer signaling (1 sentence)? Leave blank for sent."),
+        ("action_required",    "RECEIVED only. In French: what action is the lawyer asking Gaël to do? Leave blank if none. Leave blank for sent."),
+        ("risk_signal",        f"RECEIVED only. Values: {_LEGAL_RISK_VALUES}. Leave blank for sent."),
+        ("procedure_ref",      "Procedure ID number (1–15). Use the most relevant procedure for this email."),
+        ("persons_mentioned",  "Comma-separated names of judges, experts, opposing counsel, social workers, or other key persons named in this email. Leave blank if none."),
+        ("amounts_mentioned",  "Comma-separated amounts with labels, e.g. '3500€ provision, 850€ frais huissier'. Leave blank if none."),
+        ("children_mentioned", f"Values: {_LEGAL_CHILDREN_VALUES}. Which child(ren) are mentioned?"),
+    ]
+    for col_name, desc in analysis_cols:
+        w(r, 1, col_name, bold=True)
+        w(r, 2, desc, wrap=True)
+        ws.row_dimensions[r].height = 22
+        r += 1
+
+    # ── Event type vocabulary ─────────────────────────────────────────────────
+    r += 1
+    w(r, 1, "EVENT TYPE VOCABULARY", bold=True, color=_NAVY)
+    r += 1
+    vocab_groups = [
+        ("Billing",        ["invoice_issued", "payment_request", "payment_confirmed",
+                            "fee_estimate", "expense_note", "cost_warning", "retainer_requested"]),
+        ("Filings",        ["conclusions_filed", "requete_filed", "assignation", "appeal_filed",
+                            "document_communicated", "constitution_avocat", "desistement",
+                            "signification", "consignation", "incident_filed"]),
+        ("Court",          ["hearing_scheduled", "hearing_occurred", "hearing_postponed",
+                            "hearing_cancelled", "judgment_rendered", "ordonnance_rendered",
+                            "arret_rendered", "expert_appointed", "expert_report_delivered",
+                            "deadline_set", "mise_en_etat"]),
+        ("Strategy",       ["strategy_decision", "evidence_discussed", "settlement_offer_received",
+                            "settlement_offer_made", "settlement_rejected", "adverse_move",
+                            "judge_observation", "case_assessment", "client_instruction",
+                            "lawyer_recommendation"]),
+        ("Admin",          ["meeting_scheduled", "meeting_occurred", "document_exchange",
+                            "procuration", "change_of_lawyer"]),
+    ]
+    for group_name, types in vocab_groups:
+        w(r, 1, group_name, bold=True, color=_GRAY, italic=True)
+        w(r, 2, "  |  ".join(types))
+        r += 1
+
+    # ── Procedures reference ──────────────────────────────────────────────────
+    r += 1
+    w(r, 1, "PROCEDURES (use ID in procedure_ref)", bold=True, color=_NAVY)
+    r += 1
+    for proc in procedures:
+        rg = proc["case_number"] or "—"
+        w(r, 1, f"#{proc['id']}", bold=True)
+        w(r, 2, f"{proc['name']}  ({rg})")
+        r += 1
+
+    # ── Lawyers reference ─────────────────────────────────────────────────────
+    r += 1
+    w(r, 1, "LAWYERS", bold=True, color=_NAVY)
+    r += 1
+    role_label = {"my_lawyer": "Gaël's lawyer", "her_lawyer": "Maud's lawyer",
+                  "opposing_counsel": "opposing counsel", "notaire": "notaire"}
+    for lw in lawyers:
+        w(r, 1, role_label.get(lw["role"], lw["role"]), bold=True, color=_GRAY, italic=True)
+        w(r, 2, lw["name"])
+        r += 1
+
+    # ── Import command ────────────────────────────────────────────────────────
+    r += 1
+    w(r, 1, "IMPORT COMMAND", bold=True, color=_NAVY)
+    w(r, 2,
+      "python cli.py analyze import-results <this_file.xlsx> "
+      "--type legal_analysis --provider openai --model gpt-4o")
+
+    ws.column_dimensions["A"].width = 22
+    ws.column_dimensions["B"].width = 100
+
+
+def _build_legal_emails_sheet(wb, email_data):
+    ws = wb.create_sheet("Emails")
+    headers = ["email_id", "date", "direction", "contact_name", "contact_role", "subject", "content"]
+
+    for col_idx, h in enumerate(headers, start=1):
+        cell = ws.cell(row=1, column=col_idx, value=h)
+        cell.fill = PatternFill("solid", fgColor=_BLUE_HDR)
+        cell.font = Font(color=_WHITE, bold=True)
+        cell.alignment = Alignment(horizontal="center", vertical="center")
+    ws.row_dimensions[1].height = 22
+
+    for row_idx, em in enumerate(email_data, start=2):
+        ws.cell(row=row_idx, column=1, value=em["id"])
+        ws.cell(row=row_idx, column=2, value=em["date"])
+        ws.cell(row=row_idx, column=3, value=em["direction"])
+        ws.cell(row=row_idx, column=4, value=em["contact_name"])
+        ws.cell(row=row_idx, column=5, value=em["contact_role"])
+        ws.cell(row=row_idx, column=6, value=em["subject"])
+        cell = ws.cell(row=row_idx, column=7, value=em["content"])
+        cell.alignment = Alignment(wrap_text=False, vertical="top")
+
+    ws.column_dimensions["A"].width = 9
+    ws.column_dimensions["B"].width = 12
+    ws.column_dimensions["C"].width = 11
+    ws.column_dimensions["D"].width = 20
+    ws.column_dimensions["E"].width = 18
+    ws.column_dimensions["F"].width = 38
+    ws.column_dimensions["G"].width = 70
+    ws.freeze_panes = "A2"
+
+
+def _build_legal_events_sheet(wb, email_data):
+    """Pre-populate one row per email with email_id (blue). Output cells are yellow."""
+    ws = wb.create_sheet("Events")
+    headers = ["email_id", "event_date", "event_type", "procedure_ref",
+               "description", "amount_eur", "significance"]
+
+    blue_fill   = PatternFill("solid", fgColor=_BLUE_HDR)
+    orange_fill = PatternFill("solid", fgColor=_ORANGE)
+    yellow_fill = PatternFill("solid", fgColor=_YELLOW_BG)
+
+    for col_idx, h in enumerate(headers, start=1):
+        cell = ws.cell(row=1, column=col_idx, value=h)
+        cell.fill = orange_fill
+        cell.font = Font(color=_WHITE, bold=True)
+        cell.alignment = Alignment(horizontal="center")
+    ws.row_dimensions[1].height = 22
+
+    for row_idx, em in enumerate(email_data, start=2):
+        # email_id: blue (pre-filled, read-only)
+        id_cell = ws.cell(row=row_idx, column=1, value=em["id"])
+        id_cell.fill = blue_fill
+        id_cell.font = Font(color=_WHITE, bold=True)
+        # output cells: yellow blank
+        for col_idx in range(2, len(headers) + 1):
+            ws.cell(row=row_idx, column=col_idx, value="").fill = yellow_fill
+
+    ws.column_dimensions["A"].width = 10   # email_id
+    ws.column_dimensions["B"].width = 13   # event_date
+    ws.column_dimensions["C"].width = 26   # event_type
+    ws.column_dimensions["D"].width = 14   # procedure_ref
+    ws.column_dimensions["E"].width = 70   # description
+    ws.column_dimensions["F"].width = 13   # amount_eur
+    ws.column_dimensions["G"].width = 13   # significance
+    ws.freeze_panes = "B2"
+
+
+def _build_legal_analysis_sheet(wb, email_data):
+    """Pre-populate one row per email with email_id (blue). All other cells are yellow."""
+    ws = wb.create_sheet("Analysis")
+    headers = [
+        "email_id",
+        "mood_valence", "mood_intensity", "urgency", "key_concern",
+        "trust_in_lawyer", "father_role_stress", "financial_stress",
+        "lawyer_stance", "strategy_signal", "action_required", "risk_signal",
+        "procedure_ref", "persons_mentioned", "amounts_mentioned", "children_mentioned",
+    ]
+
+    blue_fill   = PatternFill("solid", fgColor=_BLUE_HDR)
+    orange_fill = PatternFill("solid", fgColor=_ORANGE)
+    yellow_fill = PatternFill("solid", fgColor=_YELLOW_BG)
+
+    for col_idx, h in enumerate(headers, start=1):
+        cell = ws.cell(row=1, column=col_idx, value=h)
+        cell.fill = orange_fill
+        cell.font = Font(color=_WHITE, bold=True)
+        cell.alignment = Alignment(horizontal="center")
+    ws.row_dimensions[1].height = 22
+
+    for row_idx, em in enumerate(email_data, start=2):
+        id_cell = ws.cell(row=row_idx, column=1, value=em["id"])
+        id_cell.fill = blue_fill
+        id_cell.font = Font(color=_WHITE, bold=True)
+        for col_idx in range(2, len(headers) + 1):
+            ws.cell(row=row_idx, column=col_idx, value="").fill = yellow_fill
+
+    # Column widths
+    widths = {
+        "A": 10, "B": 16, "C": 16, "D": 13, "E": 50,
+        "F": 16, "G": 20, "H": 18,
+        "I": 16, "J": 50, "K": 40, "L": 13,
+        "M": 14, "N": 40, "O": 35, "P": 20,
+    }
+    for col_letter, width in widths.items():
+        ws.column_dimensions[col_letter].width = width
+    ws.freeze_panes = "B2"
+
+
+def _build_legal_meta_sheet(wb, email_count):
+    ws = wb.create_sheet("_meta")
+    ws["A1"], ws["B1"] = "analysis_type", "legal_analysis"
+    ws["A2"], ws["B2"] = "export_date",   datetime.now().isoformat()
+    ws["A3"], ws["B3"] = "email_count",   email_count
+    ws["A4"], ws["B4"] = "corpus",        "legal"
+    ws["A5"], ws["B5"] = "schema_version", "1"
+
+
 # ── Contradictions export (topic-based, special format) ───────────────────────
 
 _CONTRADICTION_PATTERNS = [

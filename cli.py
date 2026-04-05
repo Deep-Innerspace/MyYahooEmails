@@ -1924,7 +1924,8 @@ def analyze_mark_tone_reviewed(short_threshold, dry_run):
 @click.option(
     "--type", "analysis_type",
     default="classify", show_default=True,
-    type=click.Choice(["classify", "tone", "timeline", "manipulation", "contradictions"]),
+
+    type=click.Choice(["classify", "tone", "timeline", "manipulation", "contradictions", "legal_analysis"]),
     help="Type of analysis to prepare.",
 )
 @click.option("--limit", default=None, type=int,
@@ -1955,7 +1956,10 @@ def analyze_export(analysis_type, limit, offset, all_emails, include_large, outp
     """
     from pathlib import Path
     from src.storage.database import get_db
-    from src.analysis.excel_export import export_for_analysis, export_contradictions_batch, _EXCEL_CELL_LIMIT
+    from src.analysis.excel_export import (
+        export_for_analysis, export_contradictions_batch,
+        export_legal_analysis, _EXCEL_CELL_LIMIT,
+    )
 
     if output_path is None:
         date_str = __import__("datetime").datetime.now().strftime("%Y%m%d_%H%M")
@@ -1963,6 +1967,33 @@ def analyze_export(analysis_type, limit, offset, all_emails, include_large, outp
 
     out = Path(output_path)
     exclude_large = not include_large
+
+    # Legal analysis uses a dedicated 3-sheet export
+    if analysis_type == "legal_analysis":
+        with get_db() as conn:
+            try:
+                path, count, truncated = export_legal_analysis(
+                    conn, out,
+                    limit=limit or 150,
+                    offset=offset,
+                    unanalyzed_only=not all_emails,
+                )
+            except ValueError as e:
+                console.print(f"[red]{e}[/red]")
+                return
+        console.print(f"\n[bold green]✓ Exported {count} legal emails[/bold green]")
+        if truncated:
+            console.print(
+                f"  [yellow]⚠ {truncated} email(s) truncated at 30,000 chars "
+                f"(marker added — ChatGPT will see the truncation).[/yellow]"
+            )
+        console.print(f"  File   : [cyan]{path}[/cyan]")
+        console.print()
+        console.print("[bold]Next steps:[/bold]")
+        console.print("  1. Upload to ChatGPT — read Instructions sheet, fill Events + Analysis sheets")
+        console.print(f"  2. Run: [cyan]python cli.py analyze import-results <file.xlsx> "
+                      f"--type legal_analysis --provider openai --model gpt-4o[/cyan]")
+        return
 
     # Contradictions uses a separate export function
     if analysis_type == "contradictions":
@@ -2039,7 +2070,7 @@ def analyze_export(analysis_type, limit, offset, all_emails, include_large, outp
 @click.option(
     "--type", "analysis_type",
     required=True,
-    type=click.Choice(["classify", "tone", "timeline", "manipulation", "contradictions"]),
+    type=click.Choice(["classify", "tone", "timeline", "manipulation", "contradictions", "legal_analysis"]),
     help="Analysis type that was filled in.",
 )
 @click.option("--provider", required=True,
@@ -2070,8 +2101,18 @@ def analyze_import_results(excel_file, analysis_type, provider, model):
 
     console.print()
     if stats["imported"]:
-        console.print(f"[bold green]✓ Imported {stats['imported']} results[/bold green]"
-                      f"  (run #{stats['run_id']}, status: {stats['status']})")
+        if analysis_type == "legal_analysis":
+            console.print(
+                f"[bold green]✓ Imported {stats['imported']} results[/bold green]"
+                f"  (run #{stats['run_id']}, status: {stats['status']})"
+            )
+            console.print(f"  Events   : {stats.get('events_imported', 0)}"
+                          f"  (→ procedure_events / timeline_events)")
+            console.print(f"  Analysis : {stats.get('analysis_imported', 0)}"
+                          f"  (→ analysis_results)")
+        else:
+            console.print(f"[bold green]✓ Imported {stats['imported']} results[/bold green]"
+                          f"  (run #{stats['run_id']}, status: {stats['status']})")
     if stats["skipped"]:
         console.print(f"  Skipped  : {stats['skipped']} rows (empty output columns)")
     if stats["errors"]:

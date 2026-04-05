@@ -108,6 +108,16 @@ def overview_stats(conn: sqlite3.Connection,
     r["procedure_events_count"] = conn.execute("SELECT COUNT(*) FROM procedure_events").fetchone()[0]
     r["timeline_events_count"] = conn.execute("SELECT COUNT(*) FROM timeline_events").fetchone()[0]
 
+    # Legal corpus analysis coverage
+    r["legal_analysis_count"] = conn.execute(
+        """SELECT COUNT(DISTINCT ar.email_id) FROM analysis_results ar
+           JOIN analysis_runs ru ON ru.id=ar.run_id
+           JOIN emails e ON e.id=ar.email_id
+           WHERE ru.analysis_type='legal_analysis' AND e.corpus='legal'""",
+    ).fetchone()[0]
+    r["procedures_count"] = conn.execute("SELECT COUNT(*) FROM procedures").fetchone()[0]
+    r["invoices_count"] = conn.execute("SELECT COUNT(*) FROM lawyer_invoices").fetchone()[0]
+
     return r
 
 
