@@ -218,6 +218,16 @@ The ex-wife used 4 email addresses. Contacts have a `primary email` + `aliases (
 - All LLM prompts (Phase 2+) must instruct the model to process French legal terminology
 - Default language when ambiguous: `fr`
 
+### Analysis Corpus Constraint
+classify, tone, and manipulation analysis are **personal corpus only**. These prompts are calibrated for intimate partner conflict and are meaningless on legal correspondence.
+- `get_emails_for_analysis()` in `runner.py` hardcodes `e.corpus = 'personal'`
+- `export_for_analysis()` in `excel_export.py` hardcodes `e.corpus = 'personal'`
+- `mark-uncovered` in `cli.py` filters `corpus = 'personal'`
+- Legal corpus uses `legal_analysis` only; `procedure_events` is its authoritative event source
+- `timeline_events` table contains personal corpus events only (legal events are in `procedure_events`)
+- `email_topics` table contains personal corpus emails only
+- `emails.procedure_id` FK is set for legal corpus emails, NULL for personal corpus
+
 ### Delta Text & Deduplication
 - `delta_text` = email body with all quoted reply sections stripped
 - All LLM analysis runs on `delta_text` only (not full body)
@@ -332,20 +342,22 @@ Two-layer protection:
 - Creates both topics if they don't exist; creates a run with provider="manual", model="rule-based"
 - These count toward classification coverage % but are excluded from topic distribution charts in the web dashboard
 
-### Current Analysis Coverage (as of 2026-04-05)
-- Total emails: 3,922 personal corpus
-- Classification: 3,922/3,922 (100%) ✅ COMPLETE
-- Tone analysis: 3,922/3,922 (100%) ✅ COMPLETE
-- Manipulation: 3,922/3,922 (100%) ✅ COMPLETE — runs #62–78 + all 17 batches via ChatGPT gpt-5.4-thinking
-- Timeline extraction: 3,922/3,922 (100%) ✅ COMPLETE — 915 events found — 21 runs total (runs #4, #14, #109, #112, #113, #118–#133)
+### Current Analysis Coverage (as of 2026-04-06)
+- Personal emails: 3,791 (authoritative live count — 131 emails reclassified to legal corpus)
+- Legal emails: 2,743
+- Classification: 3,791/3,791 (100%) ✅ COMPLETE — personal corpus only
+- Tone analysis: 3,791/3,791 (100%) ✅ COMPLETE — personal corpus only
+- Manipulation: 3,791/3,791 (100%) ✅ COMPLETE — personal corpus only
+- Timeline extraction: 902 events from personal corpus ✅ COMPLETE
 - Contradictions: 45 pairs total across 9 topics ✅ COMPLETE — (enfants 7, vacances 12, éducation 10, procédure 4, santé 5, logement 2, école 2, finances 1, (none) 2)
   - All 17 batch files imported (including finances_1 + finances_2 — run#114 + run#115/117)
 - Legal corpus: 2,743 emails total
-  - legal_analysis (run #156): 2,743/2,743 (100%) ✅ COMPLETE
-    - Batches 1–19: Excel round-trip via ChatGPT gpt-5.4-thinking (imported)
-    - 150 oversized emails (>30k chars, May–July 2015): analyzed directly in-session as Claude
+  - legal_analysis (run #156): 2,743/2,743 (100%) ✅ COMPLETE — only analysis type applicable to legal corpus
+  - classify/tone/manipulation: NOT run on legal corpus (wrong paradigm — see design constraint below)
+  - timeline_events: NOT kept for legal corpus — procedure_events is the authoritative event source
   - 2,114 procedure_events stored; 15 procedures tracked; 37 lawyer invoices
-- Procedures: 15 total — 13 with documents and events populated via Phase 6e document uploads
+  - 2,892 legal emails have procedure_id FK (migration #18) — 1 unlinked
+- Procedures: 15 total — all with date ranges set; 13 with uploaded documents
 
 ### 🔲 Phase 6 — Lawyer Correspondence Module (IN PROGRESS — branch: `feature/lawyer-corpus`)
 
@@ -408,13 +420,42 @@ Two-layer protection:
 - 41 procedure_events created with dates, types, descriptions, and source_attachment_id links
 - **Document-first strategy**: upload PDF → Claude extracts text → auto-fills metadata + events in one transaction
 - Procedures fully populated: #1 Contestation Paternité (RG 17/10390), #2 ONC (RG 15/33553), #3 Appel ONC (RG 15/13023), #4 Référé (RG 15/42684), #5 Divorce pour Faute (RG 15/33553), #6 Appel Divorce (RG 19/07859), #8 Incident JME (RG 15/33553), #9 Incident Appel (RG 17/18289), #10 Acquiescements (protocole 04/09/2020), #12 Liquidation Financière (RG 23/06050, open), #13 Révision de Pensions (RG 24/07044)
-- Procedures awaiting documents: #7 Négociation Amiable, #11 Plainte pour Maltraitance, #14 Révision Pensions Appel, #15 Procédure Lounys Dubai
+- Procedures awaiting documents: #11 Plainte pour Maltraitance, #14 Révision Pensions Appel, #15 Procédure Lounys Dubai
+- #7 Négociation Amiable: no formal court document (informal negotiation); dates set from attachment evidence
 - Key bug: commit each SQL unit separately — a mid-script NOT NULL error rolls back the entire uncommitted transaction including prior UPDATEs
-- 🔲 Web UI for procedure list/detail still needed
+- Web UI for procedure list/detail: already built at `/procedures/` (was marked as needed but is complete)
+
+#### ✅ Phase 6e.1 — Procedure Date Ranges + Analysis Corpus Constraints (COMPLETE 2026-04-06)
+- All 15 procedures now have date ranges set (or NULL with documented reason for #11 #14 #15 ongoing)
+- **Procedure dates resolved**:
+  - #2 Première Instance: `2015-02-05 → 2017-07-21` closed (shares judgment date with #5)
+  - #7 Négociation Amiable: `2015-08-10 → 2016-02-22` abandoned (derived from convention de divorce attachment trail)
+  - #11 Plainte Maltraitance: `2023-04-07 → NULL` closed (children's procedure, father not direct party; exact end unknown)
+  - #14 Révision Pensions Appel: `2025-07-03 → NULL` active
+  - #15 Procédure Lounys Dubai: `2026-01-28 → NULL` active (formal requête filed at Nanterre)
+- **Analysis corpus constraint enforced**: classify/tone/manipulation restricted to `corpus='personal'` only
+  - `src/analysis/runner.py` `get_emails_for_analysis()`: hardcoded `e.corpus = 'personal'` filter
+  - `src/analysis/excel_export.py` `export_for_analysis()`: same filter on export
+  - `cli.py` `analyze mark-uncovered`: personal corpus only
+  - `cli.py` `analyze stats`: now shows personal/legal separately with correct denominators
+- **DB cleanup performed**:
+  - Deleted 417 `analysis_results` rows (classify/tone/manipulation) for 131 legal corpus emails
+  - Deleted 304 `email_topics` rows for legal corpus emails
+  - Deleted 22 `timeline_events` rows for legal corpus emails (covered by `procedure_events`)
+  - `legal_analysis` (2,893 rows) and `timeline` (131 rows) on legal emails preserved
+
+#### ✅ Phase 6e.2 — Email→Procedure Backfill (COMPLETE 2026-04-06)
+- Migration #18: added `procedure_id INTEGER REFERENCES procedures(id)` + index to `emails` table
+- Backfill script: mined `procedure_ref` from all `legal_analysis` `result_json` blobs
+- Result: 2,892 of 2,743 legal emails linked to their procedure via FK (1 had no procedure_ref)
+- Procedure email distribution: #5 Divorce pour Faute 713, #12 Liquidation 355, #1 Contestation 317, #8 Incident 258, #7 Négociation 243…
+- Personal corpus `procedure_id` = NULL (correct by design)
 
 #### 🔲 Phase 6h — Unified Timeline
 - Merge both corpora + procedure events + cost events
 - Color-coded by source type
+- Two views: chronological stream + procedure dossier view
+- Cross-corpus correlation: personal email aggression scores ±14 days around procedure_events
 
 #### 🔲 Phase 6i — Judgment PDF Analysis
 - PDF text extraction + LLM parsing (parties, judge, ruling, obligations)

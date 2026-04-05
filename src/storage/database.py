@@ -457,6 +457,10 @@ _MIGRATIONS = [
             dismissed_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
         );
     """),
+    (18, "Add procedure_id FK to emails for legal corpus procedure linkage", """
+        ALTER TABLE emails ADD COLUMN procedure_id INTEGER REFERENCES procedures(id);
+        CREATE INDEX IF NOT EXISTS idx_emails_procedure ON emails(procedure_id);
+    """),
     (17, "Add procedure_documents table for per-procedure file uploads", """
         CREATE TABLE IF NOT EXISTS procedure_documents (
             id            INTEGER PRIMARY KEY AUTOINCREMENT,

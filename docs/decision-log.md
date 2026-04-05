@@ -549,3 +549,52 @@ parsed = raw.parse()  # get the actual response content
 **Implementation**: New full-width card in the `legal-only` section, spanning all grid columns. Three new fields added to `overview_stats()`: `legal_analysis_count`, `procedures_count`, `invoices_count`.
 
 **Impact**: `src/statistics/aggregator.py` + `src/web/templates/pages/dashboard.html`.
+
+---
+
+## 2026-04-06 — Classify/Tone/Manipulation restricted to personal corpus only
+
+**Decision**: These three analysis types are permanently restricted to `corpus='personal'` emails. Legal corpus emails will never be classified, tone-analysed, or manipulation-scored.
+
+**Rationale**: The prompts are calibrated for intimate partner conflict dynamics (gaslighting, emotional weaponization, children instrumentalization, aggression scoring). Legal correspondence is formal by construction — the same language that scores "high aggression" in personal emails is standard register in lawyer letters. Running these analyses on legal emails produces noise, not signal. The `legal_analysis` type already captures the relevant legal dimensions (`lawyer_stance`, `risk_signal`, `strategy_signal`, `action_required`).
+
+**Implementation**:
+- `src/analysis/runner.py` `get_emails_for_analysis()`: hardcoded `e.corpus = 'personal'`
+- `src/analysis/excel_export.py` `export_for_analysis()`: hardcoded `e.corpus = 'personal'`
+- `cli.py` `analyze_mark_uncovered`: added `corpus = 'personal'` filter
+- `cli.py` `analyze_stats`: refactored to show both corpora separately with correct denominators
+- DB cleanup: 417 analysis_results rows + 304 email_topics rows deleted for 131 legal emails that were originally personal
+
+---
+
+## 2026-04-06 — procedure_events is the authoritative event source for legal corpus; timeline_events is personal only
+
+**Decision**: `timeline_events` table contains only personal corpus events. `procedure_events` is the sole event source for the legal corpus.
+
+**Rationale**: Inspection of the 18 legal emails that had both `timeline_events` and `procedure_events` showed pure duplication — same event, different framing — with `procedure_events` being richer (structured `event_type`, `date_precision`, `outcome`). The 2,114 `procedure_events` from `legal_analysis` already cover the legal event space comprehensively. Adding `timeline_events` on top would create maintenance burden with no analytical gain.
+
+**Implementation**: Deleted 22 `timeline_events` rows for legal corpus emails.
+
+**Impact on Phase 6h**: Unified timeline queries `timeline_events` for personal events and `procedure_events` for legal events — two clean, non-overlapping tables.
+
+---
+
+## 2026-04-06 — Email→Procedure FK via migration #18
+
+**Decision**: Add `procedure_id INTEGER REFERENCES procedures(id)` directly to the `emails` table and backfill from `legal_analysis` result_json.
+
+**Rationale**: The `procedure_ref` field was already extracted by the LLM for every legal email and stored in `analysis_results.result_json`. It was trapped inside a JSON blob. Surfacing it as a proper FK enables: procedure-filtered email browsing, email counts per procedure, procedure dossier export, and efficient unified timeline queries without JSON extraction at query time.
+
+**Implementation**: Migration #18 in `database.py`. Backfill script read `procedure_ref` from 2,743 `legal_analysis` results and wrote `procedure_id` to 2,892 `emails` rows (2,743 legal emails; some had multiple analysis results). 1 email had no `procedure_ref` and remains unlinked.
+
+**Impact**: Personal corpus `procedure_id` = NULL by design. Legal corpus `procedure_id` = the procedure they belong to. This is the foundation for Phase 6h procedure dossier view.
+
+---
+
+## 2026-04-06 — Procedure #7 date range derived from attachment trail
+
+**Decision**: Use attachment filenames and email dates to establish the date range for Négociation Amiable (#7), rather than leaving it NULL.
+
+**Rationale**: #7 has no formal court filing — it was an informal exchange of divorce convention drafts between lawyers. The attachment trail is unambiguous: `projet de convention de divorce.doc` first appeared 2015-08-10; the last document (`160205 MULLER Convention de divorce corrigée MM.doc`) was exchanged 2016-02-22, one week before Divorce pour Faute was filed (2016-02-29), confirming negotiation collapsed at that point.
+
+**Result**: `date_start=2015-08-10`, `date_end=2016-02-22`, `status=abandoned`.

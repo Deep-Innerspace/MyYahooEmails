@@ -129,6 +129,7 @@ def export_for_analysis(
 
     # ── Fetch emails ──────────────────────────────────────────────────────────
     wheres = [
+        "e.corpus = 'personal'",
         "e.delta_text IS NOT NULL",
         "LENGTH(TRIM(e.delta_text)) > 10",
     ]

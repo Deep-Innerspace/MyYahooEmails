@@ -1662,34 +1662,63 @@ def analyze_stats():
     """Show analysis coverage statistics."""
     from src.storage.database import get_db
     with get_db() as conn:
-        total_emails = conn.execute("SELECT COUNT(*) FROM emails").fetchone()[0]
+        total_personal = conn.execute(
+            "SELECT COUNT(*) FROM emails WHERE corpus = 'personal'"
+        ).fetchone()[0]
+        total_legal = conn.execute(
+            "SELECT COUNT(*) FROM emails WHERE corpus = 'legal'"
+        ).fetchone()[0]
+        total_emails = total_personal + total_legal
+
+        # Personal-corpus analyses
         classified = conn.execute(
-            "SELECT COUNT(DISTINCT email_id) FROM analysis_results ar "
-            "JOIN analysis_runs r ON r.id=ar.run_id WHERE r.analysis_type='classify'"
+            "SELECT COUNT(DISTINCT ar.email_id) FROM analysis_results ar "
+            "JOIN analysis_runs r ON r.id=ar.run_id "
+            "JOIN emails e ON e.id=ar.email_id "
+            "WHERE r.analysis_type='classify' AND e.corpus='personal'"
         ).fetchone()[0]
         toned = conn.execute(
-            "SELECT COUNT(DISTINCT email_id) FROM analysis_results ar "
-            "JOIN analysis_runs r ON r.id=ar.run_id WHERE r.analysis_type='tone'"
+            "SELECT COUNT(DISTINCT ar.email_id) FROM analysis_results ar "
+            "JOIN analysis_runs r ON r.id=ar.run_id "
+            "JOIN emails e ON e.id=ar.email_id "
+            "WHERE r.analysis_type='tone' AND e.corpus='personal'"
         ).fetchone()[0]
+        manipulation_analyzed = conn.execute(
+            "SELECT COUNT(DISTINCT ar.email_id) FROM analysis_results ar "
+            "JOIN analysis_runs r ON r.id=ar.run_id "
+            "JOIN emails e ON e.id=ar.email_id "
+            "WHERE r.analysis_type='manipulation' AND e.corpus='personal'"
+        ).fetchone()[0]
+        topic_links = conn.execute(
+            "SELECT COUNT(DISTINCT et.email_id) FROM email_topics et "
+            "JOIN emails e ON e.id=et.email_id WHERE e.corpus='personal'"
+        ).fetchone()[0]
+
+        # Timeline covers both corpora
         timeline_emails = conn.execute(
             "SELECT COUNT(DISTINCT email_id) FROM timeline_events"
         ).fetchone()[0]
         timeline_events = conn.execute("SELECT COUNT(*) FROM timeline_events").fetchone()[0]
-        topic_links = conn.execute("SELECT COUNT(DISTINCT email_id) FROM email_topics").fetchone()[0]
 
-        # Phase 3 stats
-        manipulation_analyzed = conn.execute(
-            "SELECT COUNT(DISTINCT email_id) FROM analysis_results ar "
-            "JOIN analysis_runs r ON r.id=ar.run_id WHERE r.analysis_type='manipulation'"
+        # Legal-corpus analyses
+        legal_analyzed = conn.execute(
+            "SELECT COUNT(DISTINCT ar.email_id) FROM analysis_results ar "
+            "JOIN analysis_runs r ON r.id=ar.run_id "
+            "JOIN emails e ON e.id=ar.email_id "
+            "WHERE r.analysis_type='legal_analysis' AND e.corpus='legal'"
         ).fetchone()[0]
+
         contradiction_pairs = conn.execute("SELECT COUNT(*) FROM contradictions").fetchone()[0]
         court_events_count = conn.execute("SELECT COUNT(*) FROM procedure_events").fetchone()[0]
 
-        # Top topics (exclude system topics)
+        # Top topics (exclude system topics, personal only)
         top_topics = conn.execute(
             """SELECT t.name, COUNT(DISTINCT et.email_id) as cnt
-               FROM email_topics et JOIN topics t ON t.id=et.topic_id
+               FROM email_topics et
+               JOIN topics t ON t.id=et.topic_id
+               JOIN emails e ON e.id=et.email_id
                WHERE t.name NOT IN ('trop_court', 'non_classifiable')
+                 AND e.corpus = 'personal'
                GROUP BY t.name ORDER BY cnt DESC LIMIT 10"""
         ).fetchall()
 
@@ -1698,20 +1727,27 @@ def analyze_stats():
     table.add_column("Count", justify="right")
     table.add_column("Coverage", justify="right")
 
-    def pct(n):
-        return f"{n/total_emails*100:.1f}%" if total_emails else "—"
+    def pct(n, total):
+        return f"{n/total*100:.1f}%" if total else "—"
 
-    table.add_row("Total emails in DB", str(total_emails), "100%")
-    table.add_row("Classified (topics)", str(classified), pct(classified))
-    table.add_row("Tone analysed", str(toned), pct(toned))
-    table.add_row("Timeline processed", str(timeline_emails), pct(timeline_emails))
-    table.add_row("Timeline events found", str(timeline_events), "—")
-    table.add_row("Emails with topic link", str(topic_links), pct(topic_links))
+    table.add_row("Total emails — personal", str(total_personal), "")
+    table.add_row("Total emails — legal", str(total_legal), "")
+    table.add_row("Total emails", str(total_emails), "")
+    table.add_row("", "", "")
+    table.add_row("[bold]Personal corpus[/bold]", "", "")
+    table.add_row("  Classified (topics)", str(classified), pct(classified, total_personal))
+    table.add_row("  Tone analysed", str(toned), pct(toned, total_personal))
+    table.add_row("  Manipulation analysed", str(manipulation_analyzed), pct(manipulation_analyzed, total_personal))
+    table.add_row("  Emails with topic link", str(topic_links), pct(topic_links, total_personal))
+    table.add_row("  Timeline processed", str(timeline_emails), pct(timeline_emails, total_personal))
+    table.add_row("  Timeline events found", str(timeline_events), "—")
+    table.add_row("", "", "")
+    table.add_row("[bold]Legal corpus[/bold]", "", "")
+    table.add_row("  Legal analysis", str(legal_analyzed), pct(legal_analyzed, total_legal))
+    table.add_row("  Procedure events", str(court_events_count), "—")
     table.add_row("", "", "")
     table.add_row("[bold]Phase 3 — Deep Analysis[/bold]", "", "")
-    table.add_row("Manipulation analysed", str(manipulation_analyzed), pct(manipulation_analyzed))
-    table.add_row("Contradiction pairs", str(contradiction_pairs), "—")
-    table.add_row("Procedure events in DB", str(court_events_count), "—")
+    table.add_row("  Contradiction pairs", str(contradiction_pairs), "—")
     console.print(table)
 
     if top_topics:
@@ -1749,11 +1785,12 @@ def analyze_mark_uncovered(short_threshold, dry_run):
                 (name, desc),
             )
 
-        # Find unclassified emails — exclude oversized (waiting for Groq)
+        # Find unclassified personal emails — exclude oversized (waiting for Groq)
         unclassified = conn.execute(
             """SELECT id, LENGTH(delta_text) as len
                FROM emails
-               WHERE id NOT IN (SELECT DISTINCT email_id FROM email_topics)
+               WHERE corpus = 'personal'
+               AND id NOT IN (SELECT DISTINCT email_id FROM email_topics)
                AND delta_text IS NOT NULL
                AND LENGTH(delta_text) <= 32767
                ORDER BY id"""

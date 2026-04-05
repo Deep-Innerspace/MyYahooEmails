@@ -4,75 +4,73 @@
 
 ---
 
-**Last Updated: 2026-04-05**
+**Last Updated: 2026-04-06**
 
 ## What Was Accomplished This Session
 
-### 1. Legal analysis Excel import — batches 15–19
+### 1. Strategic planning — pre-Phase 6h analysis
 
-Five batches imported from `data/imports/`:
+Reviewed what was needed before building the unified timeline. Key findings:
+- Legal corpus (2,743 emails) had classify/tone/manipulation results on 131 emails (wrongly — those were reclassified personal emails)
+- `procedure_ref` in `legal_analysis` JSON already linked 2,742 emails to procedures — just not surfaced
+- 5 procedures had missing date ranges
+- `procedure_events` (2,114 rows) is the authoritative event source for legal corpus; `timeline_events` had 22 spurious legal rows
+- Decided: classify/tone/manipulation are personal corpus only; timeline_events is personal corpus only
 
-| Batch | Emails | Notes |
-|-------|--------|-------|
-| 15 | ~120 | mood_valence confirmed present in DB |
-| 16 | ~120 | |
-| 17 | ~120 | |
-| 18 | ~120 | |
-| 19 | ~120 | |
+### 2. Analysis pipeline restricted to personal corpus
 
-All tagged `provider='openai'`, `model='gpt-5.4-thinking'`, `analysis_type='legal_analysis'`.
+**Files changed**:
+- `src/analysis/runner.py`: `get_emails_for_analysis()` — added `e.corpus = 'personal'` filter
+- `src/analysis/excel_export.py`: `export_for_analysis()` — added `e.corpus = 'personal'` filter
+- `cli.py` `analyze_mark_uncovered`: added `corpus = 'personal'` to query
+- `cli.py` `analyze_stats`: refactored to show personal/legal separately with correct denominators
 
-**Bug fix**: Import summary was not reporting mood fill rates. Going forward all summaries include `mood_valence: X/Y sent` and `lawyer_stance: X/Y received`.
+### 3. DB cleanup — legal corpus contamination removed
 
-### 2. Direct in-session analysis of 150 oversized legal emails
+| Table | Rows deleted | Reason |
+|---|---|---|
+| `analysis_results` (classify) | 155 | Wrong paradigm for legal emails |
+| `analysis_results` (tone) | 131 | Wrong paradigm for legal emails |
+| `analysis_results` (manipulation) | 131 | Wrong paradigm for legal emails |
+| `email_topics` | 304 | Legal emails have no business in topic classification |
+| `timeline_events` | 22 | procedure_events is authoritative for legal corpus |
 
-**Context**: 150 legal corpus emails from May–July 2015 excluded from Excel export (content >30k chars). These are forwarded evidence chains sent by Gaël to Valérie for the ONC/Appel ONC proceedings.
+**Preserved**: `legal_analysis` (2,893 rows) and `timeline` (131 rows — from when emails were personal) untouched.
 
-**Run**: `run_id=156`, `analysis_type='legal_analysis'`, `provider='claude'`, `model='claude-sonnet-4-6'`
+### 4. Procedure date ranges — all 15 procedures now complete
 
-**Results**:
-- 150/150 analysis rows stored ✅
-- 131 procedure_events stored (all linked to valid procedure IDs)
-- 108/108 sent emails: mood_valence covered ✅
+| # | Name | Before | After |
+|---|---|---|---|
+| #2 | Première Instance | `2015-02-05 → NULL` active | `2015-02-05 → 2017-07-21` closed |
+| #7 | Négociation Amiable | `NULL → NULL` unknown | `2015-08-10 → 2016-02-22` abandoned |
+| #11 | Plainte Maltraitance | `2023-04-07 → NULL` closed | unchanged + note appended |
+| #14 | Révision Pensions Appel | `NULL → NULL` unknown | `2025-07-03 → NULL` active |
+| #15 | Procédure Lounys Dubai | `NULL → NULL` unknown | `2026-01-28 → NULL` active |
 
-**Narrative covered (May–July 2015)**:
-- June 18: ONC judgment — custody to Gaël, children stay in Abu Dhabi
-- Late June: Maud's non-compliance, MAREP/Necker dispute (Lounÿs medical care)
-- July 1–13: Référé set for July 20; Gaël assembles 130+ evidence pieces for Appel ONC (pieces 1–131: Emiraje contract, Necker correspondence, visa dispute, Dr. Crétolle letter)
-- July 10: Valérie sends draft Appel ONC conclusions
-- July 13: Final preparation — photos, subsidiaire, last pieces
+Key methodology for #7: date derived from `convention de divorce` attachment filenames in email trail (first `projet de convention de divorce.doc` 2015-08-10, last `160205 MULLER Convention de divorce corrigée MM.doc` 2016-02-22). #15 formal start = requête filed at Nanterre 2026-01-28 (prior emails since 2021 were pre-procedure discussions).
 
-**Key evidence identified**: Dr. Crétolle's June 26 letter (Pièce 112) = central evidence of Maud's unilateral medical decisions on Lounÿs.
+### 5. Email→Procedure backfill — migration #18
 
-**IDs file**: `/tmp/legal_remaining_ids.json` — contains `{run_id: 156, ids: [...150 IDs...]}` (ephemeral, not committed)
-
-### 3. Dashboard KPI — Legal Corpus Analysis card
-
-Added full-width card to dashboard (legal-only perspective) showing:
-- Email analysis progress bar: 2,743/2,743 (100%)
-- Procedures count
-- Procedure events count
-- Invoices count (with link to /invoices/)
-
-Files changed:
-- `src/statistics/aggregator.py`: added `legal_analysis_count`, `procedures_count`, `invoices_count` to `overview_stats()`
-- `src/web/templates/pages/dashboard.html`: new card in `legal-only` section
+- Added `procedure_id INTEGER REFERENCES procedures(id)` + index to `emails` table
+- Backfill: read `procedure_ref` from all `legal_analysis` result_json, wrote to `emails.procedure_id`
+- **Result**: 2,892 legal emails linked; 1 unlinked (no procedure_ref in result); personal corpus untouched
 
 ---
 
 ## Current DB State
 
 | Metric | Value |
-|--------|-------|
-| Personal emails | 3,922 |
+|---|---|
+| Personal emails | 3,791 |
 | Legal emails | 2,743 |
-| Personal analysis | 100% all types ✅ |
-| Legal analysis (run #156) | 2,743/2,743 (100%) ✅ |
-| Procedures | 15 |
+| Personal: classify/tone/manipulation | 100% ✅ |
+| Personal: timeline events | 902 events |
+| Legal: legal_analysis | 2,743/2,743 (100%) ✅ |
+| Legal: procedure_id set | 2,892/2,743 (all but 1) |
+| Procedures | 15 — all with date ranges |
 | Procedure events | 2,114 |
-| Procedure documents | 13 |
-| Lawyer invoices | 37 |
 | Contradictions | 45 pairs |
+| Lawyer invoices | 37 (€63,138.96 total) |
 
 ---
 
@@ -80,20 +78,33 @@ Files changed:
 
 **Branch**: `feature/corpus-filter-ui`
 
-### Priority next tasks
+### Next task: Phase 6h — Unified Timeline
 
-1. **Procedures Web UI** (Phase 6e web — not started)
-   - `/procedures/` list page + detail page with events and documents
-   - No route exists yet; upload infrastructure is in place
+**What to build**:
+1. **View A — Chronological stream**: all events from all sources, color-coded by type, filterable by procedure/date/topic
+2. **View B — Procedure dossier view**: select one procedure → its events as spine + related emails + cost markers
+3. **Cross-corpus correlation overlay**: personal email aggression scores ±14 days around procedure_events (hearing, judgment, filing)
 
-2. **Unified Timeline** (Phase 6h — not started)
-   - Merge personal + legal + procedure events + cost events
-   - Color-code by source type
+**Data sources for the timeline (all ready)**:
+- `timeline_events` JOIN `emails` WHERE `corpus='personal'` — narrative events from personal emails
+- `procedure_events` JOIN `procedures` — formal legal milestones
+- `emails` WHERE `corpus='legal'` AND `procedure_id IS NOT NULL` — lawyer correspondence grouped by procedure
+- `lawyer_invoices` JOIN `procedures` — cost markers
+- `analysis_results` (tone/manipulation) — aggression overlay on personal emails
 
-3. **Procedure documents for #7, #14, #15** (if they exist)
-   - #7 Négociation Amiable — likely undocumented
-   - #14 Révision de Pensions Appel — may not be filed yet
-   - #15 Procédure Lounys Dubai — no document
+**Key queries needed**:
+```sql
+-- Unified event stream
+SELECT 'timeline' as source, te.event_date as date, te.event_type, te.description, te.significance, NULL as procedure_id
+FROM timeline_events te JOIN emails e ON e.id = te.email_id
+UNION ALL
+SELECT 'procedure', pe.event_date, pe.event_type, pe.description, NULL, pe.procedure_id
+FROM procedure_events pe
+UNION ALL
+SELECT 'invoice', li.invoice_date, 'invoice', li.description, NULL, li.procedure_id
+FROM lawyer_invoices li WHERE li.invoice_date IS NOT NULL
+ORDER BY date ASC
+```
 
 ### Quick Start
 ```bash

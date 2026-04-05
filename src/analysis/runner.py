@@ -222,6 +222,9 @@ def get_emails_for_analysis(
             )""")
             params.append(run_id)
 
+        # Classify / tone / manipulation are personal-corpus only
+        wheres.append("e.corpus = 'personal'")
+
         # Skip emails with no substantive new content
         wheres.append("TRIM(e.delta_text) != ''")
         wheres.append("LENGTH(TRIM(e.delta_text)) > 20")
