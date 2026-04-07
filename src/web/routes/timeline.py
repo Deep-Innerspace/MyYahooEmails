@@ -1,4 +1,4 @@
-"""Timeline route — merged event timeline from email analysis + court events."""
+"""Timeline route — unified event timeline: emails + court proceedings + invoices."""
 import sqlite3
 from typing import Optional
 from fastapi import APIRouter, Depends, Query, Request
@@ -7,12 +7,18 @@ from fastapi.templating import Jinja2Templates
 from pathlib import Path
 
 from src.web.deps import get_conn, get_corpus, get_perspective
-from src.statistics.aggregator import merged_timeline
+from src.statistics.aggregator import (
+    merged_timeline,
+    dossier_timeline,
+    court_event_window_aggression,
+)
 
 BASE_DIR = Path(__file__).parent.parent
 templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
 
 router = APIRouter()
+
+_WINDOW_DAYS = 14  # aggression correlation window
 
 
 def _get_all_topics(conn: sqlite3.Connection):
@@ -30,13 +36,31 @@ async def timeline_page(
     source: Optional[str] = Query(None),
     topics: Optional[str] = Query(None),
     corpus: Optional[str] = Query(None),
+    view: Optional[str] = Query("stream"),
     conn: sqlite3.Connection = Depends(get_conn),
     perspective: str = Depends(get_perspective),
     corpus_cookie: str = Depends(get_corpus),
 ):
-    # URL param overrides cookie; cookie overrides default
     active_corpus = corpus if corpus is not None else corpus_cookie
     sig_filter = significance if significance and significance != "all" else None
+    active_view = view if view in ("stream", "dossier") else "stream"
+
+    if active_view == "dossier":
+        procedures = dossier_timeline(conn, since=date_from or None, until=date_to or None)
+        ctx = {
+            "request": request,
+            "perspective": perspective,
+            "page": "timeline",
+            "procedures": procedures,
+            "date_from": date_from or "",
+            "date_to": date_to or "",
+            "view": active_view,
+            "total_events": sum(len(p["events"]) for p in procedures),
+        }
+        if request.headers.get("HX-Request"):
+            return templates.TemplateResponse("partials/timeline_dossier.html", ctx)
+        return templates.TemplateResponse("pages/timeline.html", ctx)
+
     events = _get_filtered_events(conn, date_from, date_to, sig_filter, source, topics, active_corpus)
     all_topics = _get_all_topics(conn)
     topic_list = [t.strip() for t in topics.split(",")] if topics else []
@@ -54,6 +78,7 @@ async def timeline_page(
         "selected_topics": topic_list,
         "total_events": len(events),
         "corpus": active_corpus,
+        "view": active_view,
     }
 
     if request.headers.get("HX-Request"):
@@ -71,12 +96,27 @@ async def timeline_events_partial(
     source: Optional[str] = Query(None),
     topics: Optional[str] = Query(None),
     corpus: Optional[str] = Query(None),
+    view: Optional[str] = Query("stream"),
     conn: sqlite3.Connection = Depends(get_conn),
     perspective: str = Depends(get_perspective),
     corpus_cookie: str = Depends(get_corpus),
 ):
-    """HTMX partial — filtered event list."""
+    """HTMX partial — filtered event list or dossier view."""
     active_corpus = corpus if corpus is not None else corpus_cookie
+    active_view = view if view in ("stream", "dossier") else "stream"
+
+    if active_view == "dossier":
+        procedures = dossier_timeline(conn, since=date_from or None, until=date_to or None)
+        return templates.TemplateResponse("partials/timeline_dossier.html", {
+            "request": request,
+            "perspective": perspective,
+            "procedures": procedures,
+            "date_from": date_from or "",
+            "date_to": date_to or "",
+            "view": active_view,
+            "total_events": sum(len(p["events"]) for p in procedures),
+        })
+
     sig_filter = significance if significance and significance != "all" else None
     events = _get_filtered_events(conn, date_from, date_to, sig_filter, source, topics, active_corpus)
     topic_list = [t.strip() for t in topics.split(",")] if topics else []
@@ -92,6 +132,25 @@ async def timeline_events_partial(
         "selected_topics": topic_list,
         "total_events": len(events),
         "corpus": active_corpus,
+        "view": active_view,
+    })
+
+
+@router.get("/court-event/{event_date}/correlation", response_class=HTMLResponse)
+async def court_event_correlation(
+    request: Request,
+    event_date: str,
+    conn: sqlite3.Connection = Depends(get_conn),
+    perspective: str = Depends(get_perspective),
+):
+    """HTMX partial — aggression correlation panel for a court event date."""
+    data = court_event_window_aggression(conn, event_date, _WINDOW_DAYS)
+    return templates.TemplateResponse("partials/court_correlation_tooltip.html", {
+        "request": request,
+        "perspective": perspective,
+        "event_date": event_date,
+        "window_days": _WINDOW_DAYS,
+        **data,
     })
 
 
@@ -127,7 +186,7 @@ def _get_filtered_events(conn, date_from, date_to, significance, source, topics,
             )
             events = [
                 e for e in events
-                if e.get("source") == "court"  # court events have no topic, always include
+                if e.get("source") in ("court", "invoice")  # non-email events always included
                 or e.get("email_id") in email_ids_for_topics
             ]
 

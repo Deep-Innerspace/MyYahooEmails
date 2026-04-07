@@ -598,3 +598,51 @@ parsed = raw.parse()  # get the actual response content
 **Rationale**: #7 has no formal court filing — it was an informal exchange of divorce convention drafts between lawyers. The attachment trail is unambiguous: `projet de convention de divorce.doc` first appeared 2015-08-10; the last document (`160205 MULLER Convention de divorce corrigée MM.doc`) was exchanged 2016-02-22, one week before Divorce pour Faute was filed (2016-02-29), confirming negotiation collapsed at that point.
 
 **Result**: `date_start=2015-08-10`, `date_end=2016-02-22`, `status=abandoned`.
+
+---
+
+## 2026-04-07 — MULLER conclusions: three-tier CLI download strategy
+
+**Decision**: `fetch conclusions` CLI command uses a three-tier fallback: stored IMAP location → full stale-UID recovery (two-pass, identical to web route logic) → BLOB content from DB.
+
+**Rationale**: Legal corpus attachments were imported as metadata-only (no BLOB). When Yahoo moves emails between folders, stored UIDs are invalidated. The web route's `_find_email_imap_location()` already handles this. Rather than calling into the web route from CLI, the logic was inlined in CLI as `_locate_email_imap()` (same algorithm: Pass 1 = DB-known folders by Message-ID; Pass 2 = all IMAP folders by SENTON+FROM; subject disambiguation for same-sender same-day collisions). The BLOB fallback is needed for the 5 emails that were originally personal corpus (had `attachments.content` stored) and later reclassified to legal.
+
+**Deduplication key**: `(filename.lower().strip(), procedure_id)` — keeps the earliest email carrying the attachment, discards 17 forwarded copies. This ensures we download the original filing, not a re-sent copy.
+
+**Idempotency**: `procedure_events` insert checks for existing `(procedure_id, source_attachment_id, event_type='conclusions_received')` before inserting. `--force` flag bypasses the `downloaded=1` check to re-download existing files.
+
+**Result**: 33/33 MULLER adverse conclusions downloaded and linked as `procedure_events.conclusions_received` across 11 procedures.
+
+---
+
+## 2026-04-07 — Emails page layout breakpoint raised from 1200px → 1400px
+
+**Decision**: The CSS breakpoint that collapses `.emails-layout` from two-column to one-column was raised from `max-width: 1200px` to `max-width: 1400px`.
+
+**Rationale**: The sidebar is 240px fixed. A 1440px laptop display (common MacBook resolution) leaves ~1200px for the main content area — exactly at the old breakpoint, causing the layout to collapse unpredictably. The two-column grid needs `1fr + 500px` = at least 600 + 24 + 500 = 1124px of content space, so 1400px total (with sidebar) is the correct minimum. The `dashboard-two-col` breakpoint was kept at 1200px (it's a simpler 1fr/1fr grid) by splitting it into its own media query block.
+
+**Belt-and-suspenders**: An `htmx:afterSwap` listener in `emails.html` auto-scrolls to `#detail-panel` when a detail is loaded and the panel is outside the viewport — covers any edge case where the layout still collapses (e.g. window resize after load).
+
+**Impact**: `src/web/static/css/style.css` (version bumped to `?v=8`), `src/web/templates/pages/emails.html`, `src/web/templates/base.html`.
+
+---
+
+## 2026-04-07 — Procedure documents unified view: merge two sources in route
+
+**Decision**: The procedure detail page Documents section merges `procedure_documents` (manual uploads) and `attachments` (downloaded email attachments) in the route layer, not the template.
+
+**Rationale**: Both sources have different PKs, URLs, and metadata shapes. Merging in the route normalises them to a common dict shape with `_source` and `_serve_url` keys, keeping template logic simple (one loop, two conditionals: badge + delete button). Invoices are excluded (`category != 'invoice'`) to keep the Documents section focused on court filings and evidence. Sort is by `doc_date` after merge so the combined list is chronological.
+
+**Impact**: `src/web/routes/procedures.py` `procedure_detail()`, `src/web/templates/pages/procedure_detail.html`.
+
+---
+
+## 2026-04-07 — Thematic Threads: separate stats query from paginated content query
+
+**Decision**: For the `/themes` route, run two separate SQL queries: one lightweight stats query (no body text, all emails for the topic) and one paginated content query (with `delta_text`, `LIMIT PAGE_SIZE OFFSET`).
+
+**Rationale**: Topics like `enfants` have 2,225 emails. Fetching all `delta_text` for the stats strip would be unnecessarily heavy and risk a timeout or memory spike. The stats query only selects `direction`, `aggression`, `date` — three small columns — and runs on the full topic without pagination. The content query fetches `delta_text` for 50 emails at a time. This pattern supports both accurate stats (total, avg aggression, date range) and fast page loads.
+
+**Bug avoided**: `analysis_results` has no `analysis_type` column — it's on `analysis_runs`. The JOIN must be `LEFT JOIN analysis_runs run ON run.id = ar.run_id AND run.analysis_type = 'tone'` (not `WHERE ar.analysis_type = 'tone'`).
+
+**Impact**: `src/web/routes/book.py` `GET /themes`, `src/web/templates/pages/themes.html` (new file).

@@ -43,6 +43,9 @@ python cli.py fetch emails --all-folders --dry-run  # Count only, no download
 python cli.py fetch emails --folder Divorce --folder Avocat  # Specific folders only
 python cli.py fetch emails --since 2014-01-01   # Date-filtered fetch
 python cli.py fetch status                      # DB stats + resume state per folder
+python cli.py fetch conclusions                 # Auto-download MULLER adverse conclusions, create procedure_events
+python cli.py fetch conclusions --dry-run       # Preview candidates without downloading
+python cli.py fetch conclusions --force         # Re-process already-downloaded attachments
 
 python cli.py contacts list                     # Show contacts with primary email + aliases
 python cli.py contacts add --name "..." --email "..." --role ex-wife
@@ -358,6 +361,7 @@ Two-layer protection:
   - 2,114 procedure_events stored; 15 procedures tracked; 37 lawyer invoices
   - 2,892 legal emails have procedure_id FK (migration #18) — 1 unlinked
 - Procedures: 15 total — all with date ranges set; 13 with uploaded documents
+  - 33 MULLER adverse conclusions downloaded + linked as `procedure_events` (type=conclusions_received) across 11 procedures
 
 ### 🔲 Phase 6 — Lawyer Correspondence Module (IN PROGRESS — branch: `feature/lawyer-corpus`)
 
@@ -451,18 +455,63 @@ Two-layer protection:
 - Procedure email distribution: #5 Divorce pour Faute 713, #12 Liquidation 355, #1 Contestation 317, #8 Incident 258, #7 Négociation 243…
 - Personal corpus `procedure_id` = NULL (correct by design)
 
-#### 🔲 Phase 6h — Unified Timeline
-- Merge both corpora + procedure events + cost events
-- Color-coded by source type
-- Two views: chronological stream + procedure dossier view
-- Cross-corpus correlation: personal email aggression scores ±14 days around procedure_events
+#### ✅ Phase 6j — Adverse Conclusions Auto-Download (COMPLETE 2026-04-07)
+- `python cli.py fetch conclusions` — detects MULLER adverse conclusion PDFs across all legal-corpus emails
+- Detection: `corpus='legal'` + `LOWER(filename) LIKE '%muller%'` + `LIKE '%conclusion%'` or `LIKE '%dire%'`
+- Deduplication: same `(filename.lower(), procedure_id)` → keeps earliest email (removes 17 forwarded duplicates)
+- Three-tier download strategy:
+  1. **Stored IMAP location** (folder + uid from `attachments` table)
+  2. **Full stale-UID recovery** (two-pass: Message-ID search across all DB-known folders, then all current IMAP folders using SENTON+FROM date+sender — same logic as `_find_email_imap_location()` in web routes)
+  3. **BLOB fallback** (emails reclassified from personal corpus still have content in `attachments.content`)
+- On success: saves to `data/attachments/<email_id>/<filename>`, sets `category='conclusion_adverse'`, creates `procedure_events` row of type `conclusions_received` with `source_attachment_id` FK
+- Idempotent: checks existing event by `(procedure_id, source_attachment_id, event_type)` before insert
+- **Result**: 33/33 MULLER conclusions downloaded and linked across 11 procedures (2015–2026)
+- **Options**: `--dry-run`, `--force`, `--limit`
+
+#### ✅ Phase 6k — Procedure Documents Unified View (COMPLETE 2026-04-07)
+- Procedure detail page Documents section now shows BOTH sources:
+  - `procedure_documents` (manual uploads via web UI) — with delete button
+  - `attachments` with `downloaded=1` and `download_path` set, linked via `emails.procedure_id` — with amber "email" badge, no delete button
+- Invoices (`category='invoice'`) excluded from document view
+- Both sources sorted by date, served via their own URLs (`/procedures/{id}/documents/{doc_id}` vs `/attachments/{doc_id}`)
+- Document count header shows "N · M from emails"
+- `_source` and `_serve_url` keys added to each document dict for template routing
+
+#### ✅ Phase 6h — Unified Timeline (COMPLETE — partial)
+- `src/statistics/aggregator.py`: `merged_timeline()` merges email events + procedure_events + invoice events; `dossier_timeline()` groups by procedure with KPIs; `court_event_window_aggression()` for ±14 day aggression correlation
+- `src/web/routes/timeline.py`: stream/dossier views; `GET /timeline/court-event/{date}/correlation` lazy panel
+- `src/web/templates/pages/timeline.html`: stream/dossier toggle, source legend
+- `src/web/templates/partials/timeline_list.html`, `timeline_dossier.html`, `court_correlation_tooltip.html`
+- Remaining: dashboard-level systematic aggression correlation across all procedure events
+
+#### ✅ Procedures Page Enhancements (COMPLETE 2026-04-07)
+- **Gantt chart** at `/charts/procedure-gantt`: horizontal bars coloured by initiator, hatched for appeals, faded tail for ongoing; legend at bottom-left
+- **Procedure period overlay** on frequency and tone-trend charts: `_add_procedure_bands()` in `charts.py` adds shaded vertical bands
+- **Initiator KPI strip** on procedures list: primary cases filed by Party A / Party B / Both / Unknown; appeals attributed to parent case by name matching
+- **Procedures list sorted chronologically** (oldest → newest, NULL dates last)
+- **`initiated_by` dropdown** in both add and edit forms (party_a / party_b / both / blank=Unknown)
+- **Bug fixed**: `NOT NULL constraint failed: procedures.jurisdiction` — `update_procedure` and `create_procedure` now use `field.strip()` not `field.strip() or None` for NOT NULL string columns
+
+#### ✅ Thematic Threads Page (COMPLETE 2026-04-07)
+- New page at `GET /themes` (book perspective) — nav link was `href="#"`, now wired to `/href="/themes"`
+- Left sidebar: all topics with email count, active topic highlighted
+- Stats strip: total/sent/received counts, avg aggression, date range
+- Paginated email thread (50 per page, Prev/Next) with full `delta_text` in `white-space:pre-wrap`
+- **"Full email ↗" button** on each card: opens right-side slide-in overlay panel (fixed position, 700px wide) via HTMX `hx-get="/emails/{id}"` → `#theme-detail-content`; backdrop click + Escape to close
+- Route in `src/web/routes/book.py` `GET /themes`; template `src/web/templates/pages/themes.html`
 
 #### 🔲 Phase 6i — Judgment PDF Analysis
 - PDF text extraction + LLM parsing (parties, judge, ruling, obligations)
 - New dependency: `pdfplumber`
 
-### Web Dashboard Bug Fixes (2026-03-25)
-- **"View email" modal on timeline**: `hx-on::after-swap` added directly to "View email" link in `partials/timeline_list.html`; `href` changed to `#` to prevent fallback navigation. The global `htmx:afterSwap` handler in `app.js` was not reliably firing when the link resided inside a dynamically-swapped HTMX partial.
+#### 🔲 Phase 6h remainder — Cross-corpus correlation dashboard
+- Systematic aggression delta across all procedure events (not just on-demand)
+- Pre-conclusion behavior detector: frequency spikes + manipulation scores before `conclusions_received` events
+
+### Web Dashboard Bug Fixes
+- **2026-03-25 — "View email" modal on timeline**: `hx-on::after-swap` added directly to "View email" link in `partials/timeline_list.html`; `href` changed to `#` to prevent fallback navigation. The global `htmx:afterSwap` handler in `app.js` was not reliably firing when the link resided inside a dynamically-swapped HTMX partial.
+- **2026-04-07 — Procedures NOT NULL bug**: `update_procedure` and `create_procedure` routes used `field.strip() or None` which converts empty strings to NULL, violating NOT NULL DEFAULT '' columns. Fixed by removing `or None` for jurisdiction, description, outcome_summary, notes.
+- **2026-04-07 — Emails page row click (FIXED)**: clicking an email row after a search didn't display the detail. Root cause: CSS breakpoint at `max-width: 1200px` collapsed `.emails-layout` to 1-column; with the 240px sidebar, a 1440px laptop content area was right at the threshold, pushing `#detail-panel` below the fold. Fix: (1) raised breakpoint to `1400px` for `emails-layout` + `detail-panel`, splitting them from `dashboard-two-col` (remains at 1200px); (2) added `htmx:afterSwap` auto-scroll in `emails.html` for narrow-screen fallback. CSS version bumped to `?v=8`.
 
 ### ✅ Phase 3 — Deep Analysis (COMPLETE)
 - `src/analysis/contradictions.py`: two-pass contradiction detection (screening summaries → confirming with full delta_text)

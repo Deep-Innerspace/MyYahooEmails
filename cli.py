@@ -385,6 +385,355 @@ def fetch_lawyers(folder, since, resume, dry_run):
         )
 
 
+@fetch.command("conclusions")
+@click.option("--dry-run", is_flag=True, help="Preview candidates without downloading.")
+@click.option("--force", is_flag=True, help="Re-process already-downloaded attachments.")
+@click.option("--limit", type=int, default=None, help="Max files to process (for testing).")
+def fetch_conclusions(dry_run, force, limit):
+    """Download Mme MULLER's adverse conclusions via IMAP and create procedure_events.
+
+    Detects PDFs with 'MULLER' + 'conclusion'/'dire' in the filename across
+    all legal-corpus emails.  Deduplicates (same file forwarded multiple times
+    → one canonical copy from the earliest email).  For each unique conclusion:
+
+    \b
+      1. Downloads the PDF via IMAP (with stale-UID recovery).
+      2. Saves to data/attachments/<email_id>/<filename>.
+      3. Sets attachment.category = 'conclusion_adverse'.
+      4. Creates a procedure_event (type=conclusions_received) linked to the
+         correct procedure via emails.procedure_id.
+
+    Safe to re-run: already-processed files are skipped (unless --force).
+
+    Examples:
+      python cli.py fetch conclusions --dry-run
+      python cli.py fetch conclusions --limit 5
+      python cli.py fetch conclusions
+    """
+    import re as _re
+    from pathlib import Path
+    from src.storage.database import init_db, get_db
+    from src.extraction.imap_client import fetch_mime_part, imap_connection
+    from src.config import attachment_download_dir
+
+    init_db()
+
+    with get_db() as conn:
+        # ── 1. Detect candidates ──────────────────────────────────────────────
+        rows = conn.execute("""
+            SELECT a.id        AS att_id,
+                   a.filename,
+                   a.mime_section,
+                   a.imap_uid,
+                   a.folder,
+                   a.downloaded,
+                   a.download_path,
+                   a.category,
+                   e.id        AS email_id,
+                   e.date,
+                   e.subject,
+                   e.from_address,
+                   e.message_id,
+                   e.procedure_id,
+                   p.name     AS proc_name
+              FROM attachments a
+              JOIN emails e ON e.id = a.email_id
+              LEFT JOIN procedures p ON p.id = e.procedure_id
+             WHERE e.corpus = 'legal'
+               AND LOWER(a.filename) LIKE '%.pdf'
+               AND LOWER(a.filename) LIKE '%muller%'
+               AND (
+                     LOWER(a.filename) LIKE '%conclusion%'
+                  OR LOWER(a.filename) LIKE '%dire %'
+                  OR LOWER(a.filename) LIKE '%dire.pdf'
+                  OR LOWER(a.filename) LIKE '%dire_%'
+                  OR LOWER(a.filename) LIKE '%_dire.%'
+               )
+             ORDER BY e.date ASC, a.id ASC
+        """).fetchall()
+        rows = [dict(r) for r in rows]
+
+        if not rows:
+            console.print("[yellow]No MULLER conclusion candidates found.[/yellow]")
+            return
+
+        # ── 2. Deduplicate — same filename + procedure → earliest email ───────
+        seen: dict = {}
+        dup_count = 0
+        for row in rows:
+            key = (row["filename"].lower().strip(), row["procedure_id"])
+            if key not in seen:
+                seen[key] = row
+            else:
+                dup_count += 1
+
+        unique = list(seen.values())
+        if limit:
+            unique = unique[:limit]
+
+        # ── 3. Preview table ──────────────────────────────────────────────────
+        already_done = [a for a in unique
+                        if a["downloaded"] and a["category"] == "conclusion_adverse" and not force]
+        to_process   = [a for a in unique
+                        if not (a["downloaded"] and a["category"] == "conclusion_adverse" and not force)]
+
+        table = Table(title=f"MULLER Adverse Conclusions — {len(unique)} unique files"
+                            f" ({dup_count} forwarded copies ignored)")
+        table.add_column("Date",      style="dim", no_wrap=True)
+        table.add_column("Procedure", style="cyan")
+        table.add_column("Filename")
+        table.add_column("Status",    no_wrap=True)
+        for att in unique:
+            if att["downloaded"] and att["category"] == "conclusion_adverse":
+                status = "[green]✓ done[/green]"
+            elif att["downloaded"]:
+                status = "[yellow]dl, not tagged[/yellow]"
+            else:
+                status = "[red]need download[/red]"
+            table.add_row(
+                (att["date"] or "?")[:10],
+                att["proc_name"] or "(no procedure)",
+                (att["filename"] or "")[:70],
+                status,
+            )
+        console.print(table)
+        console.print(
+            f"[dim]{len(already_done)} already done · "
+            f"{len(to_process)} to process[/dim]"
+        )
+
+        if dry_run:
+            console.print("[yellow]--dry-run: no changes made.[/yellow]")
+            return
+
+        if not to_process:
+            console.print("[green]All conclusions already processed. Use --force to re-run.[/green]")
+            return
+
+        # ── 4. Download + tag + create procedure_events ───────────────────────
+        dl_base  = Path(attachment_download_dir())
+        success  = error = 0
+
+        from datetime import datetime as _dt
+
+        _SKIP_TOKENS = frozenset(["trash", "spam", "bulk", "draft", "deleted"])
+
+        # Cache known legal corpus folders for stale-UID search
+        db_folders = [
+            r[0] for r in conn.execute(
+                "SELECT DISTINCT folder FROM emails WHERE corpus='legal' AND folder IS NOT NULL"
+            ).fetchall()
+        ]
+
+        def _locate_email_imap(att: dict):
+            """Full two-pass stale-UID recovery (Message-ID + SENTON+FROM).
+
+            Pass 1 — all DB-known legal-corpus folders (stored folder first).
+            Pass 2 — every folder currently on the IMAP server (catches folders
+                     created/used after the initial fetch, e.g. vclavocat, Onyx).
+
+            Within each folder tries:
+              a) HEADER Message-ID search (exact, fast).
+              b) SENTON date + FROM address (Yahoo strips Message-ID on move).
+
+            Returns (folder, uid) or (None, None).
+            """
+            msg_id   = (att["message_id"] or "").strip()
+            from_addr = (att["from_address"] or "").strip()
+            email_date = att["date"] or ""
+            db_subject = (att["subject"] or "").lower().strip()
+
+            sent_on = None
+            for fmt in ("%Y-%m-%dT%H:%M:%S", "%Y-%m-%d %H:%M:%S", "%Y-%m-%d"):
+                try:
+                    sent_on = _dt.strptime(email_date[:19], fmt).date()
+                    break
+                except ValueError:
+                    continue
+
+            stored_folder = att["folder"] or ""
+            priority = [stored_folder] + [f for f in db_folders if f != stored_folder]
+            searched: set = set()
+
+            def _pick_uid(client, uids):
+                if len(uids) == 1:
+                    return uids[0]
+                if not db_subject:
+                    return uids[0]
+                try:
+                    resp = client.fetch(uids, [b"ENVELOPE"])
+                    import email.header as _ehdr
+                    for uid in uids:
+                        if uid not in resp:
+                            continue
+                        env = resp[uid].get(b"ENVELOPE")
+                        if not env or not env.subject:
+                            continue
+                        subj = env.subject
+                        if isinstance(subj, bytes):
+                            subj = "".join(
+                                p.decode(e or "utf-8", errors="replace")
+                                if isinstance(p, bytes) else p
+                                for p, e in _ehdr.decode_header(
+                                    subj.decode("utf-8", errors="replace")
+                                )
+                            )
+                        if db_subject in subj.lower():
+                            return uid
+                except Exception:
+                    pass
+                return uids[0]
+
+            def _search_folder(client, folder):
+                if msg_id:
+                    uids = client.search([b"HEADER", b"Message-ID", msg_id.encode()])
+                    if uids:
+                        return uids[0]
+                if sent_on and from_addr:
+                    uids = client.search([b"SENTON", sent_on, b"FROM", from_addr.encode()])
+                    if uids:
+                        return _pick_uid(client, uids)
+                return None
+
+            try:
+                with imap_connection() as client:
+                    # Pass 1 — DB-known folders
+                    for folder in priority:
+                        if folder in searched:
+                            continue
+                        searched.add(folder)
+                        try:
+                            client.select_folder(folder, readonly=True)
+                            uid = _search_folder(client, folder)
+                            if uid:
+                                return folder, uid
+                        except Exception:
+                            continue
+
+                    # Pass 2 — all current IMAP folders (catches vclavocat, Onyx, etc.)
+                    try:
+                        imap_folders = []
+                        for _flags, _delim, name in client.list_folders():
+                            if isinstance(name, bytes):
+                                name = name.decode("utf-8", errors="replace")
+                            if not any(t in name.lower() for t in _SKIP_TOKENS):
+                                imap_folders.append(name)
+                    except Exception:
+                        imap_folders = []
+
+                    for folder in imap_folders:
+                        if folder in searched:
+                            continue
+                        searched.add(folder)
+                        try:
+                            client.select_folder(folder, readonly=True)
+                            uid = _search_folder(client, folder)
+                            if uid:
+                                return folder, uid
+                        except Exception:
+                            continue
+            except Exception:
+                pass
+
+            return None, None
+
+        for att in to_process:
+            filename = att["filename"] or f"attachment_{att['att_id']}"
+            console.print(f"  [cyan]{(att['date'] or '?')[:10]}[/cyan]  "
+                          f"{filename[:68]}", end="  ")
+
+            raw: bytes | None = None
+
+            # Try stored IMAP location first
+            if att["mime_section"] and att["imap_uid"] and att["folder"]:
+                raw = fetch_mime_part(att["folder"], att["imap_uid"], att["mime_section"])
+
+            # Full stale-UID recovery: Message-ID + SENTON+FROM across all folders
+            if raw is None and att["mime_section"]:
+                found_folder, found_uid = _locate_email_imap(att)
+                if found_folder and found_uid:
+                    raw = fetch_mime_part(found_folder, found_uid, att["mime_section"])
+                    if raw:
+                        conn.execute(
+                            "UPDATE attachments SET folder=?, imap_uid=? WHERE id=?",
+                            (found_folder, found_uid, att["att_id"]),
+                        )
+                        conn.execute(
+                            "UPDATE emails SET folder=?, uid=? WHERE id=?",
+                            (found_folder, found_uid, att["email_id"]),
+                        )
+
+            # Fallback: read from BLOB if attachment was stored in DB content column
+            # (happens when email was originally in personal corpus before reclassification)
+            if raw is None:
+                blob_row = conn.execute(
+                    "SELECT content FROM attachments WHERE id=?", (att["att_id"],)
+                ).fetchone()
+                if blob_row and blob_row[0]:
+                    raw = bytes(blob_row[0]) if isinstance(blob_row[0], memoryview) else blob_row[0]
+
+            if raw is None:
+                console.print("[red]✗ not found in IMAP[/red]")
+                error += 1
+                continue
+
+            # Save to filesystem
+            safe_name = (
+                _re.sub(r"[^\w.\-_ ()]", "_", filename).strip()
+                or f"att_{att['att_id']}"
+            )
+            dl_dir = dl_base / str(att["email_id"])
+            dl_dir.mkdir(parents=True, exist_ok=True)
+            dl_path = dl_dir / safe_name
+            dl_path.write_bytes(raw)
+
+            # Update attachment record
+            conn.execute(
+                """UPDATE attachments
+                      SET downloaded=1, download_path=?, category='conclusion_adverse'
+                    WHERE id=?""",
+                (str(dl_path), att["att_id"]),
+            )
+
+            # Create procedure_event if not already present
+            if att["procedure_id"]:
+                existing = conn.execute(
+                    """SELECT id FROM procedure_events
+                        WHERE procedure_id=? AND source_attachment_id=?
+                          AND event_type='conclusions_received'""",
+                    (att["procedure_id"], att["att_id"]),
+                ).fetchone()
+                if not existing:
+                    conn.execute(
+                        """INSERT INTO procedure_events
+                               (procedure_id, event_date, event_type, description,
+                                source_email_id, source_attachment_id, date_precision)
+                           VALUES (?, ?, 'conclusions_received', ?, ?, ?, 'exact')""",
+                        (
+                            att["procedure_id"],
+                            (att["date"] or "")[:10] or None,
+                            f"Conclusions adverses reçues — {filename[:120]}",
+                            att["email_id"],
+                            att["att_id"],
+                        ),
+                    )
+
+            conn.commit()
+            console.print(f"[green]✓[/green] [dim]{len(raw) // 1024} KB[/dim]")
+            success += 1
+
+        console.print(
+            f"\n[bold]Results:[/bold] [green]{success} downloaded[/green]"
+            + (f" · [red]{error} failed[/red]" if error else "")
+        )
+        if error:
+            console.print(
+                "[dim]Failed files may have been moved in Yahoo. "
+                "Run [cyan]python cli.py fetch emails --folder <folder> --corpus legal[/cyan] "
+                "to re-import the source folder, then retry.[/dim]"
+            )
+
+
 # ═══════════════════════════════════════════════════════════════════════════
 #  CONTACTS — Manage tracked contacts
 # ═══════════════════════════════════════════════════════════════════════════

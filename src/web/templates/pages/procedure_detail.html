@@ -68,7 +68,12 @@
           </div>
           <div class="form-group">
             <label class="form-label">Initiated By</label>
-            <input type="text" name="initiated_by" value="{{ proc.initiated_by or '' }}">
+            <select name="initiated_by" class="form-input">
+              <option value="" {% if not proc.initiated_by or proc.initiated_by not in ('party_a','party_b','both') %}selected{% endif %}>— Unknown —</option>
+              <option value="party_a" {% if proc.initiated_by == 'party_a' %}selected{% endif %}>Party A (you)</option>
+              <option value="party_b" {% if proc.initiated_by == 'party_b' %}selected{% endif %}>Party B (ex-wife)</option>
+              <option value="both"    {% if proc.initiated_by == 'both'    %}selected{% endif %}>Both (mutual)</option>
+            </select>
           </div>
           <div class="form-group">
             <label class="form-label">Start Date</label>
@@ -191,7 +196,7 @@
   <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:var(--space-4)">
     <h2 style="margin:0;font-size:var(--font-size-xl)">
       Documents
-      <span style="color:var(--text-muted);font-weight:400;font-size:var(--font-size-base)">({{ documents | length }})</span>
+      <span style="color:var(--text-muted);font-weight:400;font-size:var(--font-size-base)">({{ documents | length }}{% set email_doc_count = documents | selectattr('_source', 'equalto', 'attachment') | list | length %}{% if email_doc_count %} · {{ email_doc_count }} from emails{% endif %})</span>
     </h2>
     <button class="btn btn-primary btn-sm"
             onclick="document.getElementById('upload-doc-form').toggleAttribute('hidden')">
@@ -255,10 +260,14 @@
           <tr style="border-bottom:1px solid var(--border)">
             <td style="padding:var(--space-3) var(--space-4)">
               <span class="badge badge-primary">{{ doc.doc_type | replace('_', ' ') | title }}</span>
+              {% if doc._source == 'attachment' %}
+              <span class="badge" style="background:#fef3c7;color:#d97706;border:1px solid #fde68a;font-size:10px;margin-left:4px">email</span>
+              {% endif %}
             </td>
             <td style="padding:var(--space-3) var(--space-4)">
-              <a href="/procedures/{{ proc.id }}/documents/{{ doc.id }}"
-                 style="color:var(--accent);text-decoration:none;font-weight:500">
+              <a href="{{ doc._serve_url }}"
+                 style="color:var(--accent);text-decoration:none;font-weight:500"
+                 target="_blank">
                 {{ doc.original_name }}
               </a>
             </td>
@@ -278,12 +287,14 @@
               {{ doc.notes or '' }}
             </td>
             <td style="padding:var(--space-3) var(--space-4);text-align:right">
+              {% if doc._source == 'procedure_document' %}
               <form method="post"
                     action="/procedures/{{ proc.id }}/documents/{{ doc.id }}/delete"
                     style="margin:0;display:inline">
                 <button type="submit" class="btn btn-danger btn-sm"
                         hx-confirm="Delete {{ doc.original_name }}?">×</button>
               </form>
+              {% endif %}
             </td>
           </tr>
           {% endfor %}

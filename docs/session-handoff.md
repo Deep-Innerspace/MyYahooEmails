@@ -4,56 +4,75 @@
 
 ---
 
-**Last Updated: 2026-04-06**
+**Last Updated: 2026-04-07**
 
 ## What Was Accomplished This Session
 
-### 1. Strategic planning — pre-Phase 6h analysis
+### 1. `fetch conclusions` CLI command (new)
 
-Reviewed what was needed before building the unified timeline. Key findings:
-- Legal corpus (2,743 emails) had classify/tone/manipulation results on 131 emails (wrongly — those were reclassified personal emails)
-- `procedure_ref` in `legal_analysis` JSON already linked 2,742 emails to procedures — just not surfaced
-- 5 procedures had missing date ranges
-- `procedure_events` (2,114 rows) is the authoritative event source for legal corpus; `timeline_events` had 22 spurious legal rows
-- Decided: classify/tone/manipulation are personal corpus only; timeline_events is personal corpus only
+Built `python cli.py fetch conclusions` — automatically detects, deduplicates, and downloads all MULLER adverse conclusions from legal-corpus emails.
 
-### 2. Analysis pipeline restricted to personal corpus
+**Detection**: `corpus='legal'` + filename contains `muller` + (`conclusion` or `dire`), PDF only
+**Deduplication**: `(filename.lower(), procedure_id)` key → keeps earliest email (removed 17 forwarded copies)
+**Three-tier download strategy**:
+1. Stored IMAP (folder + uid)
+2. Full stale-UID recovery — two-pass: Message-ID across DB-known folders, then SENTON+FROM across ALL current IMAP folders (same logic as `_find_email_imap_location()` in web routes, now inlined in CLI as `_locate_email_imap()`)
+3. BLOB fallback — emails reclassified from personal corpus still have `attachments.content`
+
+**Result**: 33/33 conclusions processed (19 via IMAP, 9 via stale-UID recovery, 5 via BLOB), 33 `procedure_events` of type `conclusions_received` created across 11 procedures (2015–2026).
 
 **Files changed**:
-- `src/analysis/runner.py`: `get_emails_for_analysis()` — added `e.corpus = 'personal'` filter
-- `src/analysis/excel_export.py`: `export_for_analysis()` — added `e.corpus = 'personal'` filter
-- `cli.py` `analyze_mark_uncovered`: added `corpus = 'personal'` to query
-- `cli.py` `analyze_stats`: refactored to show personal/legal separately with correct denominators
+- `cli.py`: added `@fetch.command("conclusions")` with `--dry-run`, `--force`, `--limit` options
 
-### 3. DB cleanup — legal corpus contamination removed
+### 2. Procedure Documents unified view
 
-| Table | Rows deleted | Reason |
-|---|---|---|
-| `analysis_results` (classify) | 155 | Wrong paradigm for legal emails |
-| `analysis_results` (tone) | 131 | Wrong paradigm for legal emails |
-| `analysis_results` (manipulation) | 131 | Wrong paradigm for legal emails |
-| `email_topics` | 304 | Legal emails have no business in topic classification |
-| `timeline_events` | 22 | procedure_events is authoritative for legal corpus |
+The procedure detail page now shows **both** `procedure_documents` (manual uploads) and downloaded `attachments` (from emails) in the same Documents table.
 
-**Preserved**: `legal_analysis` (2,893 rows) and `timeline` (131 rows — from when emails were personal) untouched.
+- Non-invoice downloaded attachments linked via `emails.procedure_id` are merged and sorted by date
+- Amber "email" badge distinguishes email-sourced docs; no delete button (they're part of emails)
+- Both types served via their own correct URLs (`/procedures/{id}/documents/{doc_id}` vs `/attachments/{id}`)
+- Document count: "N · M from emails"
 
-### 4. Procedure date ranges — all 15 procedures now complete
+**Files changed**:
+- `src/web/routes/procedures.py`: `procedure_detail()` — fetches `attachments` with `downloaded=1`, `category != 'invoice'`, `download_path IS NOT NULL` linked to procedure; merges with `procedure_documents`
+- `src/web/templates/pages/procedure_detail.html`: uses `_serve_url` and `_source` to route; conditional delete button; document count with email breakdown
 
-| # | Name | Before | After |
-|---|---|---|---|
-| #2 | Première Instance | `2015-02-05 → NULL` active | `2015-02-05 → 2017-07-21` closed |
-| #7 | Négociation Amiable | `NULL → NULL` unknown | `2015-08-10 → 2016-02-22` abandoned |
-| #11 | Plainte Maltraitance | `2023-04-07 → NULL` closed | unchanged + note appended |
-| #14 | Révision Pensions Appel | `NULL → NULL` unknown | `2025-07-03 → NULL` active |
-| #15 | Procédure Lounys Dubai | `NULL → NULL` unknown | `2026-01-28 → NULL` active |
+### 3. Procedures page — cards sorted chronologically
 
-Key methodology for #7: date derived from `convention de divorce` attachment filenames in email trail (first `projet de convention de divorce.doc` 2015-08-10, last `160205 MULLER Convention de divorce corrigée MM.doc` 2016-02-22). #15 formal start = requête filed at Nanterre 2026-01-28 (prior emails since 2021 were pre-procedure discussions).
+Changed `ORDER BY p.date_start DESC` → `ORDER BY p.date_start ASC` in the list query.
+Cards now go: 2015 Première Instance → … → 2026 Procédure Lounys Dubai.
 
-### 5. Email→Procedure backfill — migration #18
+**Files changed**: `src/web/routes/procedures.py` `procedures_list()`
 
-- Added `procedure_id INTEGER REFERENCES procedures(id)` + index to `emails` table
-- Backfill: read `procedure_ref` from all `legal_analysis` result_json, wrote to `emails.procedure_id`
-- **Result**: 2,892 legal emails linked; 1 unlinked (no procedure_ref in result); personal corpus untouched
+### 4. Thematic Threads page — built from scratch
+
+The nav link at `Thematic Threads` was `href="#"` (dead). Now fully implemented.
+
+- `GET /themes?topic=<name>&offset=<n>` — left sidebar of topics, stats strip, paginated 50/page
+- Full `delta_text` displayed with `white-space:pre-wrap` (no truncation)
+- **"Full email ↗" button** on each card → right-side slide-in overlay panel (700px) loaded via HTMX `hx-get="/emails/{id}"` → `#theme-detail-content`; closes on backdrop click or Escape
+- Fix for query bug: `analysis_results` has no `analysis_type` column — it's on `analysis_runs`. Fixed the JOIN.
+- Fix for large topics (2,225 emails for `enfants`): separate stats query (no body text) + paginated content query
+
+**Files changed**:
+- `src/web/routes/book.py`: added `GET /themes` route
+- `src/web/templates/pages/themes.html`: new file (sidebar + stats strip + paginated thread + slide-in overlay)
+- `src/web/templates/base.html`: `href="#"` → `href="/themes"`
+
+### 5. Emails page — row-click bug (FIXED ✅)
+
+**Symptom**: After typing in the search box, clicking an email row didn't show the email in the detail panel.
+
+**Root cause**: CSS breakpoint at `max-width: 1200px` collapsed `.emails-layout` from two-column to one-column. With a 240px sidebar, the main content area on a typical 1440px laptop is only ~1200px — right at the collapse threshold. When collapsed, `#detail-panel` renders *below* the email list, outside the viewport. Content loaded correctly but wasn't visible.
+
+**Fix applied** (two-part):
+1. **Raised CSS breakpoint** from `1200px` → `1400px` for `emails-layout` / `detail-panel` collapse (keeps two-column layout on most laptops); split `dashboard-two-col` into its own `max-width: 1200px` rule so that breakpoint is unchanged.
+2. **Auto-scroll JS** in `emails.html` — `htmx:afterSwap` listener detects when `#detail-panel` is the swap target; if the panel is out of the viewport, scrolls to it smoothly. Belt-and-suspenders for narrow screens.
+
+**Files changed**:
+- `src/web/static/css/style.css`: breakpoint for emails-layout split from 1200px → 1400px (css version bumped to v=8)
+- `src/web/templates/pages/emails.html`: added auto-scroll `htmx:afterSwap` handler for `#detail-panel`
+- `src/web/templates/base.html`: stylesheet version bumped to `?v=8`
 
 ---
 
@@ -66,48 +85,33 @@ Key methodology for #7: date derived from `convention de divorce` attachment fil
 | Personal: classify/tone/manipulation | 100% ✅ |
 | Personal: timeline events | 902 events |
 | Legal: legal_analysis | 2,743/2,743 (100%) ✅ |
-| Legal: procedure_id set | 2,892/2,743 (all but 1) |
+| Legal: procedure_id set | 2,892/2,743 |
 | Procedures | 15 — all with date ranges |
-| Procedure events | 2,114 |
+| Procedure events | 2,147 (was 2,114; +33 conclusions_received) |
+| MULLER conclusions downloaded | 33/33 ✅ |
+| Lawyer invoices | 37 |
 | Contradictions | 45 pairs |
-| Lawyer invoices | 37 (€63,138.96 total) |
 
 ---
 
 ## Resume Point for Next Session
 
-**Branch**: `feature/corpus-filter-ui`
+### Priority 1 — Pre-conclusion behavior analysis
+Now that all 33 MULLER conclusions are downloaded and linked as `procedure_events`:
+- Build SQL query: for each `conclusions_received` event, get personal email aggression ±30 days
+- Chart: aggression/manipulation/frequency in the 30-day window before each conclusion filing
+- This surfaces the pattern of manufactured evidence / artificial polemic before her lawyer files
 
-### Next task: Phase 6h — Unified Timeline
+### Priority 2 — Upload user's own lawyer conclusions
+The user's conclusions (my_lawyer sent to adverse) are more complex (drafts vs. final versions).
+Strategy: identify emails where my_lawyer sent a PDF with "conclusions" in filename AND the email is addressed to MULLER's lawyer. Needs manual review to distinguish drafts from filed versions.
 
-**What to build**:
-1. **View A — Chronological stream**: all events from all sources, color-coded by type, filterable by procedure/date/topic
-2. **View B — Procedure dossier view**: select one procedure → its events as spine + related emails + cost markers
-3. **Cross-corpus correlation overlay**: personal email aggression scores ±14 days around procedure_events (hearing, judgment, filing)
-
-**Data sources for the timeline (all ready)**:
-- `timeline_events` JOIN `emails` WHERE `corpus='personal'` — narrative events from personal emails
-- `procedure_events` JOIN `procedures` — formal legal milestones
-- `emails` WHERE `corpus='legal'` AND `procedure_id IS NOT NULL` — lawyer correspondence grouped by procedure
-- `lawyer_invoices` JOIN `procedures` — cost markers
-- `analysis_results` (tone/manipulation) — aggression overlay on personal emails
-
-**Key queries needed**:
-```sql
--- Unified event stream
-SELECT 'timeline' as source, te.event_date as date, te.event_type, te.description, te.significance, NULL as procedure_id
-FROM timeline_events te JOIN emails e ON e.id = te.email_id
-UNION ALL
-SELECT 'procedure', pe.event_date, pe.event_type, pe.description, NULL, pe.procedure_id
-FROM procedure_events pe
-UNION ALL
-SELECT 'invoice', li.invoice_date, 'invoice', li.description, NULL, li.procedure_id
-FROM lawyer_invoices li WHERE li.invoice_date IS NOT NULL
-ORDER BY date ASC
-```
+### Priority 3 — Phase 6h Unified Timeline
+Merge both corpora + procedure events + cost events into a single chronological view.
+Color-coded by source type; cross-corpus correlation: personal email aggression ±14 days around procedure events.
 
 ### Quick Start
 ```bash
-git checkout feature/corpus-filter-ui
-.venv/bin/python cli.py web --reload    # http://127.0.0.1:8000
+git status   # verify on correct branch
+.venv/bin/python cli.py web   # http://127.0.0.1:8000
 ```

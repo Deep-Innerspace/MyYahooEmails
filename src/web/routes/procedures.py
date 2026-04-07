@@ -1,7 +1,7 @@
 """Procedures CRUD routes — Phase 6e.1 / 6e.2."""
 import re
 import sqlite3
-from typing import Optional
+from typing import Dict, List, Optional
 from fastapi import APIRouter, Depends, File, Form, Request, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
@@ -50,6 +50,62 @@ def _get_lawyer_contacts(conn):
     return [dict(r) for r in rows]
 
 
+def _compute_initiator_kpi(procedures: List[Dict]) -> Dict:
+    """Compute KPI: how many distinct cases were initiated by each party.
+
+    Appeals (procedure_type='appel') are attributed to the parent procedure's
+    initiator rather than counted separately.  The parent is identified by
+    name containment (e.g. 'Divorce pour Faute — Appel' → 'Divorce pour Faute').
+    """
+    # Build name → procedure map for non-appeal procedures
+    primary = {p["name"].lower(): p for p in procedures
+               if p.get("procedure_type") != "appel"}
+
+    # Map each appeal to its parent initiator (or keep its own if no match)
+    appeal_parent_initiators: Dict[int, Optional[str]] = {}
+    for p in procedures:
+        if p.get("procedure_type") != "appel":
+            continue
+        name_lower = p["name"].lower()
+        # Strip common appeal markers and try to find parent
+        base = re.sub(
+            r"(?:^appel\s+|[\s\u2014-]+appel$)", "", name_lower, flags=re.IGNORECASE
+        ).strip()
+        found = None
+        for pname, parent in primary.items():
+            if base and (base in pname or pname in base):
+                found = parent.get("initiated_by")
+                break
+        appeal_parent_initiators[p["id"]] = found
+
+    counts: Dict[str, int] = {"party_a": 0, "party_b": 0, "both": 0, "unknown": 0}
+    appeal_count = 0
+
+    for p in procedures:
+        if p.get("procedure_type") == "appel":
+            appeal_count += 1
+            # Don't count appeals as separate cases
+            continue
+        init = p.get("initiated_by") or "unknown"
+        key = init if init in counts else "unknown"
+        counts[key] += 1
+
+    # Appeals summary (which party filed the appeal, for informational display)
+    appeal_by: Dict[str, int] = {"party_a": 0, "party_b": 0, "unknown": 0}
+    for p in procedures:
+        if p.get("procedure_type") == "appel":
+            init = p.get("initiated_by") or "unknown"
+            k = init if init in appeal_by else "unknown"
+            appeal_by[k] += 1
+
+    return {
+        "primary_cases": counts,
+        "appeal_count": appeal_count,
+        "appeal_by": appeal_by,
+        "total_cases": sum(counts.values()),
+    }
+
+
 # ── List all procedures ──────────────────────────────────────────────────────
 
 @router.get("", response_class=HTMLResponse)
@@ -68,11 +124,12 @@ async def procedures_list(
         LEFT JOIN contacts cb ON p.party_b_lawyer_id = cb.id
         ORDER BY
             CASE WHEN p.date_start IS NULL THEN 1 ELSE 0 END,
-            p.date_start DESC, p.id DESC
+            p.date_start ASC, p.id ASC
     """).fetchall()
     procedures = [dict(r) for r in rows]
 
     lawyers = _get_lawyer_contacts(conn)
+    initiator_kpi = _compute_initiator_kpi(procedures)
 
     ctx = {
         "request": request,
@@ -83,6 +140,7 @@ async def procedures_list(
         "procedure_types": PROCEDURE_TYPES,
         "status_options": STATUS_OPTIONS,
         "lawyers": lawyers,
+        "initiator_kpi": initiator_kpi,
     }
     return templates.TemplateResponse("pages/procedures.html", ctx)
 
@@ -122,13 +180,52 @@ async def procedure_detail(
     """, (proc_id,)).fetchall()
     events = [dict(r) for r in event_rows]
 
-    # Fetch documents
+    # Fetch manually uploaded documents (procedure_documents table)
     doc_rows = conn.execute("""
         SELECT * FROM procedure_documents
         WHERE procedure_id = ?
         ORDER BY doc_date ASC, uploaded_at ASC
     """, (proc_id,)).fetchall()
-    documents = [dict(r) for r in doc_rows]
+    # Normalise to common shape for the template
+    documents = []
+    for r in doc_rows:
+        d = dict(r)
+        d["_source"] = "procedure_document"
+        d["_serve_url"] = f"/procedures/{proc_id}/documents/{d['id']}"
+        documents.append(d)
+
+    # Also include downloaded attachments linked to emails of this procedure
+    # (e.g. conclusion_adverse PDFs fetched via `fetch conclusions` CLI command)
+    att_rows = conn.execute("""
+        SELECT a.id, a.filename, a.category, a.size_bytes, a.download_path,
+               e.date AS email_date
+          FROM attachments a
+          JOIN emails e ON e.id = a.email_id
+         WHERE e.procedure_id = ?
+           AND a.downloaded = 1
+           AND a.download_path IS NOT NULL
+           AND (a.category IS NULL OR a.category != 'invoice')
+         ORDER BY e.date ASC, a.id ASC
+    """, (proc_id,)).fetchall()
+    for r in att_rows:
+        a = dict(r)
+        from pathlib import Path as _Path
+        if not _Path(a["download_path"]).exists():
+            continue
+        size = _Path(a["download_path"]).stat().st_size
+        documents.append({
+            "_source": "attachment",
+            "_serve_url": f"/attachments/{a['id']}",
+            "id": a["id"],
+            "doc_type": a["category"] or "other",
+            "original_name": a["filename"],
+            "doc_date": (a["email_date"] or "")[:10] or None,
+            "size_bytes": size,
+            "notes": "",
+        })
+
+    # Sort merged list by date
+    documents.sort(key=lambda d: (d.get("doc_date") or ""))
 
     lawyers = _get_lawyer_contacts(conn)
 
@@ -179,18 +276,18 @@ async def create_procedure(
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     """, (
         name.strip(),
-        procedure_type,
-        jurisdiction.strip() or None,
-        case_number.strip() or None,
-        status,
+        procedure_type or "autre",
+        jurisdiction.strip(),
+        case_number.strip(),
+        status or "unknown",
         date_start or None,
         date_end or None,
-        initiated_by.strip() or None,
+        initiated_by if initiated_by in ("party_a", "party_b", "both") else "",
         int(party_a_lawyer_id) if party_a_lawyer_id else None,
         int(party_b_lawyer_id) if party_b_lawyer_id else None,
-        description.strip() or None,
-        outcome_summary.strip() or None,
-        notes.strip() or None,
+        description.strip(),
+        outcome_summary.strip(),
+        notes.strip(),
     ))
     conn.commit()
     return RedirectResponse("/procedures/", status_code=303)
@@ -226,18 +323,18 @@ async def update_procedure(
         WHERE id = ?
     """, (
         name.strip(),
-        procedure_type,
-        jurisdiction.strip() or None,
-        case_number.strip() or None,
-        status,
+        procedure_type or "autre",
+        jurisdiction.strip(),
+        case_number.strip(),
+        status or "unknown",
         date_start or None,
         date_end or None,
-        initiated_by.strip() or None,
+        initiated_by if initiated_by in ("party_a", "party_b", "both") else "",
         int(party_a_lawyer_id) if party_a_lawyer_id else None,
         int(party_b_lawyer_id) if party_b_lawyer_id else None,
-        description.strip() or None,
-        outcome_summary.strip() or None,
-        notes.strip() or None,
+        description.strip(),
+        outcome_summary.strip(),
+        notes.strip(),
         proc_id,
     ))
     conn.commit()

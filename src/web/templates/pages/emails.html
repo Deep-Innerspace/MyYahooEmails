@@ -286,6 +286,18 @@ document.addEventListener('htmx:afterSwap', e => {
   if (e.detail.target && e.detail.target.id === 'email-results') {
     emailBulk.updateToolbar();
   }
+
+  // Auto-scroll to detail panel when an email is loaded into it (narrow viewports)
+  if (e.detail.target && e.detail.target.id === 'detail-panel') {
+    const panel = document.getElementById('detail-panel');
+    if (panel) {
+      const rect = panel.getBoundingClientRect();
+      const inView = rect.top >= 0 && rect.bottom <= window.innerHeight;
+      if (!inView) {
+        panel.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }
+    }
+  }
 });
 </script>
 {% endblock %}
