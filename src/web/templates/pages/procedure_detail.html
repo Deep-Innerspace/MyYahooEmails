@@ -192,6 +192,75 @@
     </div>
   </div>
 
+  <!-- ─── Rulings at a Glance ─────────────────────────────────────────── -->
+  {% set ruling_events = events | selectattr('ruling_for') | list %}
+  {% if ruling_events %}
+  <div class="card mb-6" style="border-left:4px solid var(--primary)">
+    <div class="card-body" style="padding:var(--space-4) var(--space-5)">
+      <div style="font-size:var(--font-size-sm);font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--text-secondary);margin-bottom:var(--space-3)">
+        ⚖️ Rulings at a Glance
+      </div>
+      {% for ev in ruling_events %}
+      <div style="display:flex;flex-wrap:wrap;align-items:flex-start;gap:var(--space-4);padding:var(--space-3) 0;{% if not loop.last %}border-bottom:1px solid var(--border);{% endif %}">
+        <!-- Date + type label -->
+        <div style="min-width:160px">
+          <div style="font-size:var(--font-size-sm);font-weight:600;color:var(--text-primary)">{{ ev.event_date }}</div>
+          <span class="badge badge-primary" style="margin-top:2px">{{ (ev.event_type or 'other') | replace('_',' ') | title }}</span>
+        </div>
+        <!-- Ruling verdict badge -->
+        {% if ev.ruling_for %}
+        <div>
+          <span style="font-size:.68rem;text-transform:uppercase;letter-spacing:.05em;color:var(--text-muted);font-weight:600">Ruling for</span>
+          <div style="margin-top:3px">
+            <span class="badge" style="font-size:var(--font-size-sm);padding:3px 10px;
+              {% if ev.ruling_for == 'party_a' %}background:rgba(16,185,129,.18);color:#065f46;border:1px solid rgba(16,185,129,.35)
+              {% elif ev.ruling_for == 'party_b' %}background:rgba(239,68,68,.14);color:#b91c1c;border:1px solid rgba(239,68,68,.3)
+              {% elif ev.ruling_for == 'both' %}background:rgba(59,130,246,.14);color:#1d4ed8;border:1px solid rgba(59,130,246,.3)
+              {% else %}background:var(--bg);color:var(--text-secondary);border:1px solid var(--border){% endif %}">
+              {% if ev.ruling_for == 'party_a' %}✓ Party A (me)
+              {% elif ev.ruling_for == 'party_b' %}✗ Party B (ex-wife)
+              {% elif ev.ruling_for == 'both' %}~ Both
+              {% else %}{{ ev.ruling_for | replace('_',' ') | title }}{% endif %}
+            </span>
+          </div>
+        </div>
+        {% endif %}
+        <!-- Judge -->
+        {% if ev.judge_name %}
+        <div>
+          <span style="font-size:.68rem;text-transform:uppercase;letter-spacing:.05em;color:var(--text-muted);font-weight:600">Judge</span>
+          <div style="font-size:var(--font-size-sm);color:var(--text-primary);margin-top:3px">{{ ev.judge_name }}</div>
+        </div>
+        {% endif %}
+        <!-- Pension -->
+        {% if ev.pension_amount is not none %}
+        <div>
+          <span style="font-size:.68rem;text-transform:uppercase;letter-spacing:.05em;color:var(--text-muted);font-weight:600">Pension</span>
+          <div style="font-size:var(--font-size-sm);font-weight:700;color:var(--text-primary);margin-top:3px">{{ "%.0f" | format(ev.pension_amount) }} €/mo</div>
+        </div>
+        {% endif %}
+        <!-- Custody -->
+        {% if ev.custody_arrangement %}
+        <div>
+          <span style="font-size:.68rem;text-transform:uppercase;letter-spacing:.05em;color:var(--text-muted);font-weight:600">Custody</span>
+          <div style="font-size:var(--font-size-sm);color:var(--text-primary);margin-top:3px">{{ ev.custody_arrangement | replace('_',' ') }}</div>
+        </div>
+        {% endif %}
+        <!-- Obligations count + anchor -->
+        {% if ev.obligations %}
+        <div>
+          <span style="font-size:.68rem;text-transform:uppercase;letter-spacing:.05em;color:var(--text-muted);font-weight:600">Obligations</span>
+          <div style="font-size:var(--font-size-sm);color:var(--text-primary);margin-top:3px">
+            {{ ev.obligations.split('\n') | select | list | length }} item(s)
+          </div>
+        </div>
+        {% endif %}
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+  {% endif %}
+
   <!-- ─── Documents section ──────────────────────────────────────────── -->
   <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:var(--space-4)">
     <h2 style="margin:0;font-size:var(--font-size-xl)">
