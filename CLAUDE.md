@@ -363,7 +363,7 @@ Two-layer protection:
 - Procedures: 15 total — all with date ranges set; 13 with uploaded documents
   - 33 MULLER adverse conclusions downloaded + linked as `procedure_events` (type=conclusions_received) across 11 procedures
 
-### 🔲 Phase 6 — Lawyer Correspondence Module (IN PROGRESS — branch: `feature/lawyer-corpus`)
+### ✅ Phase 6 — Lawyer Correspondence Module (COMPLETE — merged to `main` 2026-04-11)
 
 **Goal**: Extend the system to manage emails with lawyers (2-3 per party, 2014-present) for procedure tracking, document management, cost analysis, and cross-corpus timeline correlation.
 
@@ -500,12 +500,14 @@ Two-layer protection:
 - **"Full email ↗" button** on each card: opens right-side slide-in overlay panel (fixed position, 700px wide) via HTMX `hx-get="/emails/{id}"` → `#theme-detail-content`; backdrop click + Escape to close
 - Route in `src/web/routes/book.py` `GET /themes`; template `src/web/templates/pages/themes.html`
 
-#### 🔲 Phase 6i — Judgment PDF Analysis
+#### ✅ Phase 6i — Judgment PDF Analysis (COMPLETE)
 - PDF text extraction + LLM parsing (parties, judge, ruling, obligations)
-- New dependency: `pdfplumber`
+- Structured ruling fields on `procedure_events`
+- "Rulings at a Glance" summary card on procedure detail page
+- Dependency: `pdfplumber`
 
-#### 🔲 Phase 6h remainder — Cross-corpus correlation dashboard
-- Systematic aggression delta across all procedure events (not just on-demand)
+#### ✅ Phase 6h remainder — Cross-corpus correlation dashboard (COMPLETE)
+- Systematic aggression delta across all procedure events
 - Pre-conclusion behavior detector: frequency spikes + manipulation scores before `conclusions_received` events
 
 ### Web Dashboard Bug Fixes
