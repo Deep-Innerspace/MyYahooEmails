@@ -43,6 +43,7 @@ from src.reports.charts import (
     manipulation_score_dist_chart,
     manipulation_patterns_time_chart,
     procedure_gantt_chart,
+    aggression_events_chart,
 )
 
 router = APIRouter()
@@ -71,6 +72,30 @@ async def chart_procedure_gantt(
     procs = _get_procedures(conn)
     with tempfile.TemporaryDirectory() as tmp:
         path = procedure_gantt_chart(procs, Path(tmp))
+        return _png_response(path)
+
+
+@router.get("/aggression-timeline")
+async def chart_aggression_timeline(
+    date_from: Optional[str] = Query(None),
+    date_to:   Optional[str] = Query(None),
+    conn: sqlite3.Connection = Depends(get_conn),
+):
+    """Monthly aggression/manipulation lines with procedure event markers."""
+    tone_data = tone_trends(conn, by="month", corpus="personal")
+    proc_events = conn.execute(
+        """SELECT pe.event_date, pe.event_type, pe.description, p.name AS procedure_name
+             FROM procedure_events pe
+             JOIN procedures p ON p.id = pe.procedure_id
+            WHERE pe.event_date IS NOT NULL AND pe.event_date != ''
+            ORDER BY pe.event_date"""
+    ).fetchall()
+    proc_events = [dict(r) for r in proc_events]
+    with tempfile.TemporaryDirectory() as tmp:
+        path = aggression_events_chart(
+            tone_data, proc_events, Path(tmp),
+            date_from=date_from, date_to=date_to,
+        )
         return _png_response(path)
 
 

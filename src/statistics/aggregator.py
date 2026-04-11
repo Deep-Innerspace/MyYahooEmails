@@ -697,6 +697,260 @@ def court_event_window_aggression(conn: sqlite3.Connection,
     }
 
 
+# ──────────────────── SYSTEMATIC PROCEDURE CORRELATIONS ──────────────────
+
+
+def all_procedure_event_correlations(
+    conn: sqlite3.Connection,
+    window_days: int = 14,
+    since: Optional[str] = None,
+    until: Optional[str] = None,
+    event_type: Optional[str] = "conclusions_received",
+) -> Dict[str, Any]:
+    """Batch-compute before/after aggression + manipulation for procedure events.
+
+    event_type: filter to a specific event type (default: 'conclusions_received').
+                Pass None to include all event types.
+    since/until filter which *procedure events* are analyzed (not the email windows).
+
+    Returns a dict with:
+        correlations  — list of per-event rows, sorted by event_date asc
+        summary       — aggregate stats (total, spikes, drops, avg_delta)
+        baseline_agg / baseline_manip — corpus-wide averages
+        window_days / event_type      — params used
+    """
+    # Corpus-wide baselines
+    base = conn.execute(
+        """SELECT AVG(CAST(JSON_EXTRACT(ar.result_json, '$.aggression_level') AS REAL)),
+                  AVG(CAST(JSON_EXTRACT(ar.result_json, '$.manipulation_score') AS REAL))
+             FROM analysis_results ar
+             JOIN analysis_runs ru ON ru.id = ar.run_id
+             JOIN emails e ON e.id = ar.email_id
+            WHERE ru.analysis_type = 'tone' AND e.corpus = 'personal'"""
+    ).fetchone()
+    baseline_agg   = round(base[0], 3) if base[0] is not None else None
+    baseline_manip = round(base[1], 3) if base[1] is not None else None
+
+    wheres, params = [], []
+    wheres.append("pe.event_date IS NOT NULL AND pe.event_date != ''")
+    if event_type:
+        wheres.append("pe.event_type = ?")
+        params.append(event_type)
+    if since:
+        wheres.append("pe.event_date >= ?")
+        params.append(since)
+    if until:
+        wheres.append("pe.event_date <= ?")
+        params.append(until)
+    where_clause = "WHERE " + " AND ".join(wheres)
+
+    events = conn.execute(
+        f"""SELECT pe.id, pe.event_date, pe.event_type, pe.description,
+                  pe.procedure_id, p.name AS procedure_name
+             FROM procedure_events pe
+             JOIN procedures p ON p.id = pe.procedure_id
+            {where_clause}
+            ORDER BY pe.event_date""",
+        params,
+    ).fetchall()
+
+    correlations = []
+    for ev in events:
+        ev = dict(ev)
+        ed = ev["event_date"][:10]
+
+        b = conn.execute(
+            """SELECT COUNT(*),
+                      AVG(CAST(JSON_EXTRACT(ar.result_json, '$.aggression_level')  AS REAL)),
+                      AVG(CAST(JSON_EXTRACT(ar.result_json, '$.manipulation_score') AS REAL))
+                 FROM analysis_results ar
+                 JOIN analysis_runs ru ON ru.id = ar.run_id
+                 JOIN emails e ON e.id = ar.email_id
+                WHERE ru.analysis_type = 'tone' AND e.corpus = 'personal'
+                  AND e.date >= DATE(?, '-' || ? || ' days') AND e.date < ?""",
+            (ed, window_days, ed),
+        ).fetchone()
+
+        a = conn.execute(
+            """SELECT COUNT(*),
+                      AVG(CAST(JSON_EXTRACT(ar.result_json, '$.aggression_level')  AS REAL)),
+                      AVG(CAST(JSON_EXTRACT(ar.result_json, '$.manipulation_score') AS REAL))
+                 FROM analysis_results ar
+                 JOIN analysis_runs ru ON ru.id = ar.run_id
+                 JOIN emails e ON e.id = ar.email_id
+                WHERE ru.analysis_type = 'tone' AND e.corpus = 'personal'
+                  AND e.date > ? AND e.date <= DATE(?, '+' || ? || ' days')""",
+            (ed, ed, window_days),
+        ).fetchone()
+
+        b_cnt, b_agg, b_manip = b
+        a_cnt, a_agg, a_manip = a
+
+        if not b_cnt and not a_cnt:
+            continue  # no personal emails nearby — skip
+
+        def _r(v):
+            return round(v, 3) if v is not None else None
+
+        agg_delta = _r(a_agg - b_agg) if a_agg is not None and b_agg is not None else (
+            _r(a_agg - baseline_agg) if a_agg is not None and baseline_agg is not None else None
+        )
+        manip_delta = _r(a_manip - b_manip) if a_manip is not None and b_manip is not None else None
+
+        correlations.append({
+            "event_id":      ev["id"],
+            "procedure_id":  ev["procedure_id"],
+            "procedure_name": ev["procedure_name"],
+            "event_date":    ed,
+            "event_type":    ev["event_type"],
+            "description":   ev["description"],
+            "before_count":  b_cnt or 0,
+            "before_agg":    _r(b_agg),
+            "before_manip":  _r(b_manip),
+            "after_count":   a_cnt or 0,
+            "after_agg":     _r(a_agg),
+            "after_manip":   _r(a_manip),
+            "agg_delta":     agg_delta,
+            "manip_delta":   manip_delta,
+        })
+
+    deltas = [c["agg_delta"] for c in correlations if c["agg_delta"] is not None]
+    # Chronological order — for conclusions this is the natural reading order
+    correlations.sort(key=lambda c: c["event_date"])
+
+    return {
+        "correlations":    correlations,
+        "summary": {
+            "total":      len(correlations),
+            "with_spike": sum(1 for d in deltas if d > 0.05),
+            "with_drop":  sum(1 for d in deltas if d < -0.05),
+            "avg_delta":  round(sum(deltas) / len(deltas), 3) if deltas else None,
+        },
+        "baseline_agg":   baseline_agg,
+        "baseline_manip": baseline_manip,
+        "window_days":    window_days,
+        "event_type":     event_type,
+    }
+
+
+def pre_conclusion_behavior(
+    conn: sqlite3.Connection,
+    window_days: int = 30,
+    since: Optional[str] = None,
+    until: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Analyze personal email behavior in the window before adverse conclusions.
+
+    Targets procedure_events with event_type = 'conclusions_received'.
+    since/until filter which conclusion events are included.
+    Returns aggression + manipulation + frequency stats per conclusion,
+    plus aggregate summary.
+    """
+    date_wheres, date_params = [], []
+    if since:
+        date_wheres.append("pe.event_date >= ?")
+        date_params.append(since)
+    if until:
+        date_wheres.append("pe.event_date <= ?")
+        date_params.append(until)
+    date_clause = ("AND " + " AND ".join(date_wheres)) if date_wheres else ""
+
+    conclusions = conn.execute(
+        f"""SELECT pe.id, pe.event_date, pe.description,
+                  pe.procedure_id, p.name AS procedure_name
+             FROM procedure_events pe
+             JOIN procedures p ON p.id = pe.procedure_id
+            WHERE pe.event_type = 'conclusions_received'
+              AND pe.event_date IS NOT NULL AND pe.event_date != ''
+              {date_clause}
+            ORDER BY pe.event_date""",
+        date_params,
+    ).fetchall()
+
+    base = conn.execute(
+        """SELECT AVG(CAST(JSON_EXTRACT(ar.result_json, '$.aggression_level') AS REAL)),
+                  AVG(CAST(JSON_EXTRACT(ar.result_json, '$.manipulation_score') AS REAL))
+             FROM analysis_results ar
+             JOIN analysis_runs ru ON ru.id = ar.run_id
+             JOIN emails e ON e.id = ar.email_id
+            WHERE ru.analysis_type = 'tone' AND e.corpus = 'personal'"""
+    ).fetchone()
+    baseline_agg   = round(base[0], 3) if base[0] is not None else None
+    baseline_manip = round(base[1], 3) if base[1] is not None else None
+
+    results = []
+    for c in conclusions:
+        c = dict(c)
+        ed = c["event_date"][:10]
+
+        win = conn.execute(
+            """SELECT COUNT(*),
+                      AVG(CAST(JSON_EXTRACT(ar.result_json, '$.aggression_level')  AS REAL)),
+                      AVG(CAST(JSON_EXTRACT(ar.result_json, '$.manipulation_score') AS REAL)),
+                      MAX(CAST(JSON_EXTRACT(ar.result_json, '$.aggression_level')  AS REAL))
+                 FROM analysis_results ar
+                 JOIN analysis_runs ru ON ru.id = ar.run_id
+                 JOIN emails e ON e.id = ar.email_id
+                WHERE ru.analysis_type = 'tone' AND e.corpus = 'personal'
+                  AND e.date >= DATE(?, '-' || ? || ' days') AND e.date < ?""",
+            (ed, window_days, ed),
+        ).fetchone()
+
+        w7 = conn.execute(
+            """SELECT COUNT(*),
+                      AVG(CAST(JSON_EXTRACT(ar.result_json, '$.aggression_level') AS REAL))
+                 FROM analysis_results ar
+                 JOIN analysis_runs ru ON ru.id = ar.run_id
+                 JOIN emails e ON e.id = ar.email_id
+                WHERE ru.analysis_type = 'tone' AND e.corpus = 'personal'
+                  AND e.date >= DATE(?, '-7 days') AND e.date < ?""",
+            (ed, ed),
+        ).fetchone()
+
+        cnt, avg_agg, avg_manip, max_agg = win
+        w7_cnt, w7_agg = w7
+
+        def _r(v):
+            return round(v, 3) if v is not None else None
+
+        agg_vs_baseline = (
+            _r(avg_agg - baseline_agg)
+            if avg_agg is not None and baseline_agg is not None
+            else None
+        )
+
+        results.append({
+            "event_id":       c["id"],
+            "procedure_id":   c["procedure_id"],
+            "procedure_name": c["procedure_name"],
+            "event_date":     ed,
+            "description":    c["description"],
+            "window_count":   cnt or 0,
+            "window_agg":     _r(avg_agg),
+            "window_manip":   _r(avg_manip),
+            "max_agg":        _r(max_agg),
+            "week7_count":    w7_cnt or 0,
+            "week7_agg":      _r(w7_agg),
+            "agg_vs_baseline": agg_vs_baseline,
+        })
+
+    vals = [r["window_agg"] for r in results if r["window_agg"] is not None]
+    above_baseline = [r for r in results if (r["agg_vs_baseline"] or 0) > 0.02]
+
+    return {
+        "conclusions": results,
+        "summary": {
+            "total":          len(results),
+            "with_data":      sum(1 for r in results if r["window_count"] > 0),
+            "above_baseline": len(above_baseline),
+            "avg_window_agg": round(sum(vals) / len(vals), 3) if vals else None,
+        },
+        "baseline_agg":   baseline_agg,
+        "baseline_manip": baseline_manip,
+        "window_days":    window_days,
+    }
+
+
 # ─────────────────────────── CONTRADICTIONS ──────────────────────────────
 
 def contradiction_summary(conn: sqlite3.Connection,

@@ -718,3 +718,146 @@ def manipulation_patterns_time_chart(data: dict, output_dir: Path,
     fig.savefig(str(path))
     plt.close(fig)
     return path
+
+
+
+# ─── Event type colours for procedure event markers ────────────────────────
+_EVENT_MARKER_COLORS = {
+    "conclusions_received": "#ef4444",   # red   — adverse conclusions
+    "judgment":             "#7c3aed",   # purple
+    "ordonnance":           "#f59e0b",   # amber
+    "hearing":              "#3b82f6",   # blue
+    "depot_conclusions":    "#10b981",   # green — own conclusions filed
+    "assignation":          "#6366f1",   # indigo
+}
+
+
+def aggression_events_chart(
+    tone_rows: List[Dict],
+    procedure_events: List[Dict],
+    output_dir: Path,
+    date_from: Optional[str] = None,
+    date_to:   Optional[str] = None,
+) -> Path:
+    """Monthly aggression/manipulation lines with procedure event markers.
+
+    Args:
+        tone_rows: output of tone_trends(conn, by='month'), may contain multiple
+                   rows per period (one per direction). Aggregated here by period.
+        procedure_events: list of dicts with event_date, event_type, procedure_name.
+        date_from / date_to: if provided, zoom the x-axis to this range (YYYY-MM-DD).
+    """
+    _apply_style()
+
+    # Aggregate tone_rows by period (combine sent + received)
+    from collections import defaultdict
+    agg: Dict[str, Dict] = defaultdict(lambda: {"agg_sum": 0.0, "manip_sum": 0.0, "cnt": 0})
+    for r in tone_rows:
+        period = r.get("period", "")
+        if not period:
+            continue
+        cnt = r.get("count") or 0
+        agg_val = r.get("avg_aggression") or 0.0
+        manip_val = r.get("avg_manipulation") or 0.0
+        agg[period]["agg_sum"]   += agg_val * cnt
+        agg[period]["manip_sum"] += manip_val * cnt
+        agg[period]["cnt"]       += cnt
+
+    dates, agg_vals, manip_vals = [], [], []
+    for period in sorted(agg.keys()):
+        d = agg[period]
+        if d["cnt"] == 0:
+            continue
+        try:
+            dt = datetime.strptime(period + "-01", "%Y-%m-%d")
+        except Exception:
+            continue
+        dates.append(dt)
+        agg_vals.append(d["agg_sum"] / d["cnt"])
+        manip_vals.append(d["manip_sum"] / d["cnt"])
+
+    if not dates:
+        fig, ax = plt.subplots(figsize=(14, 5))
+        ax.text(0.5, 0.5, "No tone data available", ha="center", va="center",
+                transform=ax.transAxes, color="#999")
+        path = output_dir / "aggression_events.png"
+        fig.savefig(str(path))
+        plt.close(fig)
+        return path
+
+    fig, ax = plt.subplots(figsize=(14, 5))
+
+    ax.plot(dates, agg_vals,   color="#ef4444", linewidth=1.8, label="Aggression",   alpha=0.9)
+    ax.plot(dates, manip_vals, color="#f59e0b", linewidth=1.5, label="Manipulation", alpha=0.75,
+            linestyle="--")
+    ax.fill_between(dates, agg_vals, alpha=0.07, color="#ef4444")
+
+    # Draw notable procedure event markers
+    SHOW_TYPES = {"conclusions_received", "judgment", "ordonnance", "hearing"}
+    seen_types: set = set()
+    for ev in procedure_events:
+        etype = ev.get("event_type", "")
+        if etype not in SHOW_TYPES:
+            continue
+        try:
+            dt = datetime.strptime(ev["event_date"][:10], "%Y-%m-%d")
+        except Exception:
+            continue
+        color = _EVENT_MARKER_COLORS.get(etype, "#9ca3af")
+        ax.axvline(mdates.date2num(dt), color=color, linewidth=0.8, alpha=0.45, zorder=2)
+        seen_types.add(etype)
+
+    # Build legend
+    from matplotlib.lines import Line2D
+    handles = [
+        Line2D([0], [0], color="#ef4444", linewidth=1.8, label="Aggression"),
+        Line2D([0], [0], color="#f59e0b", linewidth=1.5, linestyle="--", label="Manipulation"),
+    ]
+    for etype in sorted(seen_types):
+        color = _EVENT_MARKER_COLORS.get(etype, "#9ca3af")
+        label = etype.replace("_", " ").title()
+        handles.append(Line2D([0], [0], color=color, linewidth=1.2, alpha=0.7, label=label))
+    ax.legend(handles=handles, loc="upper left", fontsize=7.5, ncol=2)
+
+    ymax = max(max(agg_vals), max(manip_vals)) if agg_vals else 1.0
+    ax.set_ylim(0, min(1.0, ymax * 1.3))
+    ax.xaxis_date()
+
+    # Zoom x-axis to requested date range
+    if date_from or date_to:
+        try:
+            x_min = datetime.strptime(date_from, "%Y-%m-%d") if date_from else dates[0]
+            x_max = datetime.strptime(date_to,   "%Y-%m-%d") if date_to   else dates[-1]
+            ax.set_xlim(mdates.date2num(x_min), mdates.date2num(x_max))
+            # Use monthly ticks when zoomed to ≤ 3 years
+            span_years = (x_max - x_min).days / 365
+            if span_years <= 3:
+                ax.xaxis.set_major_locator(mdates.MonthLocator(bymonth=[1, 4, 7, 10]))
+                ax.xaxis.set_major_formatter(mdates.DateFormatter("%Y-%m"))
+                ax.xaxis.set_minor_locator(mdates.MonthLocator())
+                plt.setp(ax.get_xticklabels(), rotation=45, ha="right")
+            else:
+                ax.xaxis.set_major_locator(mdates.YearLocator())
+                ax.xaxis.set_major_formatter(mdates.DateFormatter("%Y"))
+                ax.xaxis.set_minor_locator(mdates.MonthLocator(bymonth=[4, 7, 10]))
+        except Exception:
+            ax.xaxis.set_major_locator(mdates.YearLocator())
+            ax.xaxis.set_major_formatter(mdates.DateFormatter("%Y"))
+            ax.xaxis.set_minor_locator(mdates.MonthLocator(bymonth=[4, 7, 10]))
+    else:
+        ax.xaxis.set_major_locator(mdates.YearLocator())
+        ax.xaxis.set_major_formatter(mdates.DateFormatter("%Y"))
+        ax.xaxis.set_minor_locator(mdates.MonthLocator(bymonth=[4, 7, 10]))
+
+    ax.set_ylabel("Score (0–1)")
+    title = "Aggression & Manipulation Over Time — with Legal Event Markers"
+    if date_from or date_to:
+        title += f"\n{date_from or '…'} → {date_to or 'now'}"
+    ax.set_title(title, fontsize=11, fontweight="bold")
+    ax.grid(axis="y", alpha=0.25)
+
+    plt.tight_layout()
+    path = output_dir / "aggression_events.png"
+    fig.savefig(str(path), bbox_inches="tight")
+    plt.close(fig)
+    return path

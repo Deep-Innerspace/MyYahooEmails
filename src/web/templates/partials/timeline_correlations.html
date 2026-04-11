@@ -1,0 +1,336 @@
+{# ── Aggression correlation — defaults to adverse conclusions as reference events ── #}
+
+{% set is_conclusions = (corr_data.event_type == 'conclusions_received') %}
+
+{# ── Summary strip ──────────────────────────────────────────────────────── #}
+<div class="card mb-5">
+  <div class="card-body" style="padding:var(--space-4) var(--space-5)">
+    <div style="display:flex;gap:var(--space-6);flex-wrap:wrap;align-items:center">
+      <div>
+        <div class="text-xs text-muted" style="text-transform:uppercase;letter-spacing:.06em;font-weight:600;margin-bottom:4px">
+          {% if is_conclusions %}Adverse conclusions{% else %}Events analyzed{% endif %}
+        </div>
+        <div style="font-size:1.4rem;font-weight:800;color:var(--text-primary)">{{ corr_data.summary.total }}</div>
+      </div>
+      <div style="width:1px;height:40px;background:var(--border)"></div>
+      <div>
+        <div class="text-xs text-muted" style="margin-bottom:2px">
+          {% if is_conclusions %}Avg Δ agg after conclusion{% else %}Avg Δ aggression{% endif %}
+        </div>
+        <div style="font-size:1.2rem;font-weight:700;
+          color:{% if corr_data.summary.avg_delta is not none and corr_data.summary.avg_delta > 0 %}#ef4444
+                {% elif corr_data.summary.avg_delta is not none and corr_data.summary.avg_delta < 0 %}#10b981
+                {% else %}var(--text-secondary){% endif %}">
+          {% if corr_data.summary.avg_delta is not none %}{{ "%+.3f" | format(corr_data.summary.avg_delta) }}{% else %}—{% endif %}
+        </div>
+      </div>
+      <div>
+        <div class="text-xs text-muted" style="margin-bottom:2px">
+          {% if is_conclusions %}Escalation after <span style="font-size:0.7em">(Δ&gt;+0.05)</span>{% else %}Spikes <span style="font-size:0.7em">(Δ&gt;+0.05)</span>{% endif %}
+        </div>
+        <div style="font-size:1.2rem;font-weight:700;color:#ef4444">{{ corr_data.summary.with_spike }}</div>
+      </div>
+      <div>
+        <div class="text-xs text-muted" style="margin-bottom:2px">
+          {% if is_conclusions %}De-escalation after <span style="font-size:0.7em">(Δ&lt;−0.05)</span>{% else %}Drops <span style="font-size:0.7em">(Δ&lt;−0.05)</span>{% endif %}
+        </div>
+        <div style="font-size:1.2rem;font-weight:700;color:#10b981">{{ corr_data.summary.with_drop }}</div>
+      </div>
+      <div>
+        <div class="text-xs text-muted" style="margin-bottom:2px">Window</div>
+        <div style="font-size:1rem;font-weight:600;color:var(--text-secondary)">±{{ corr_data.window_days }} days</div>
+      </div>
+      {% if corr_data.baseline_agg is not none %}
+      <div style="margin-left:auto;text-align:right">
+        <div class="text-xs text-muted" style="margin-bottom:2px">Corpus baseline</div>
+        <div style="font-size:1rem;font-weight:600;color:var(--text-secondary)">{{ "%.3f" | format(corr_data.baseline_agg) }}</div>
+      </div>
+      {% endif %}
+    </div>
+
+    {% if is_conclusions %}
+    <p class="text-xs text-muted" style="margin:var(--space-3) 0 0;border-top:1px solid var(--border);padding-top:var(--space-3)">
+      For each MULLER adverse conclusion, the table below shows personal email aggression &amp; manipulation
+      in the <strong>±{{ corr_data.window_days }} days before and after</strong> the filing date.
+      A positive Δ means tone escalated <em>after</em> the conclusion was received;
+      a negative Δ means it de-escalated.
+    </p>
+    {% endif %}
+  </div>
+</div>
+
+{# ── Aggression over time chart ────────────────────────────────────────── #}
+<div class="card mb-5">
+  <div class="card-header" style="display:flex;justify-content:space-between;align-items:center">
+    <h3 style="margin:0;font-size:var(--font-size-base)">Aggression &amp; Manipulation Over Time</h3>
+    <span class="text-xs text-muted">
+      {% if is_conclusions %}adverse conclusion dates marked in red{% else %}with legal event markers{% endif %}
+    </span>
+  </div>
+  <div style="padding:var(--space-4)">
+    <img src="/charts/aggression-timeline{{ chart_params | default('') }}"
+         alt="Aggression timeline"
+         style="width:100%;border-radius:var(--radius)">
+  </div>
+  <div style="padding:0 var(--space-5) var(--space-3);display:flex;gap:var(--space-5);flex-wrap:wrap">
+    <span class="text-xs text-muted" style="display:flex;align-items:center;gap:4px">
+      <span style="display:inline-block;width:20px;height:2px;background:#ef4444;vertical-align:middle"></span> Aggression
+    </span>
+    <span class="text-xs text-muted" style="display:flex;align-items:center;gap:4px">
+      <span style="display:inline-block;width:20px;height:2px;background:#f59e0b;border-top:2px dashed #f59e0b;vertical-align:middle"></span> Manipulation
+    </span>
+    <span class="text-xs text-muted" style="display:flex;align-items:center;gap:4px">
+      <span style="display:inline-block;width:2px;height:12px;background:#ef4444;opacity:.6;vertical-align:middle"></span> Adverse conclusion
+    </span>
+    <span class="text-xs text-muted" style="display:flex;align-items:center;gap:4px">
+      <span style="display:inline-block;width:2px;height:12px;background:#7c3aed;opacity:.6;vertical-align:middle"></span> Judgment
+    </span>
+    <span class="text-xs text-muted" style="display:flex;align-items:center;gap:4px">
+      <span style="display:inline-block;width:2px;height:12px;background:#3b82f6;opacity:.6;vertical-align:middle"></span> Hearing
+    </span>
+  </div>
+</div>
+
+{# ── Per-event correlation table ───────────────────────────────────────── #}
+{% if corr_data.correlations %}
+<div class="card">
+  <div class="card-header">
+    <div>
+      <h3 style="margin:0;font-size:var(--font-size-base)">
+        {% if is_conclusions %}
+          ⚖️ Adverse Conclusions — Aggression Before vs After (±{{ corr_data.window_days }}d)
+        {% else %}
+          {{ corr_data.event_type | replace('_',' ') | title if corr_data.event_type else 'All events' }} — Aggression Before vs After (±{{ corr_data.window_days }}d)
+        {% endif %}
+      </h3>
+      <p class="text-xs text-muted" style="margin:4px 0 0">
+        Sorted chronologically.
+        {% if is_conclusions %}Only personal emails in the ±{{ corr_data.window_days }}-day window around each filing date are counted.{% endif %}
+      </p>
+    </div>
+  </div>
+  <div style="overflow-x:auto">
+    <table style="width:100%;border-collapse:collapse;font-size:var(--font-size-sm)">
+      <thead>
+        <tr style="background:var(--bg);border-bottom:2px solid var(--border)">
+          <th style="padding:var(--space-2) var(--space-3);text-align:left;font-weight:600;white-space:nowrap">Date</th>
+          <th style="padding:var(--space-2) var(--space-3);text-align:left;font-weight:600">Procedure</th>
+          {% if not is_conclusions %}
+          <th style="padding:var(--space-2) var(--space-3);text-align:left;font-weight:600;white-space:nowrap">Event type</th>
+          {% endif %}
+          <th colspan="2" style="padding:var(--space-2) var(--space-3);text-align:center;font-weight:600;border-left:2px solid var(--border);white-space:nowrap">Before ({{ corr_data.window_days }}d)</th>
+          <th colspan="2" style="padding:var(--space-2) var(--space-3);text-align:center;font-weight:600;border-left:1px solid var(--border);white-space:nowrap">After ({{ corr_data.window_days }}d)</th>
+          <th style="padding:var(--space-2) var(--space-3);text-align:center;font-weight:600;border-left:2px solid var(--border);white-space:nowrap">Δ Agg</th>
+          <th style="padding:var(--space-2) var(--space-3);text-align:center;font-weight:600;white-space:nowrap">Δ Manip</th>
+        </tr>
+        <tr style="background:var(--bg);border-bottom:1px solid var(--border)">
+          <th colspan="{% if is_conclusions %}2{% else %}3{% endif %}"></th>
+          <th style="padding:2px var(--space-3);text-align:center;font-size:.7rem;font-weight:500;color:var(--text-muted);border-left:2px solid var(--border)">emails</th>
+          <th style="padding:2px var(--space-3);text-align:center;font-size:.7rem;font-weight:500;color:var(--text-muted)">agg</th>
+          <th style="padding:2px var(--space-3);text-align:center;font-size:.7rem;font-weight:500;color:var(--text-muted);border-left:1px solid var(--border)">emails</th>
+          <th style="padding:2px var(--space-3);text-align:center;font-size:.7rem;font-weight:500;color:var(--text-muted)">agg</th>
+          <th colspan="2" style="border-left:2px solid var(--border)"></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for c in corr_data.correlations %}
+        <tr style="border-bottom:1px solid var(--border);{% if loop.index is odd %}background:rgba(0,0,0,.015){% endif %}">
+          <td style="padding:var(--space-2) var(--space-3);white-space:nowrap;font-family:monospace;font-size:.8rem">{{ c.event_date }}</td>
+          <td style="padding:var(--space-2) var(--space-3);color:var(--text-secondary);max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"
+              title="{{ c.procedure_name }}">{{ c.procedure_name | truncate(28, true, '…') }}</td>
+          {% if not is_conclusions %}
+          <td style="padding:var(--space-2) var(--space-3)">
+            <span class="badge" style="font-size:.7rem;background:
+              {% if c.event_type == 'conclusions_received' %}rgba(239,68,68,.12);color:#b91c1c;border:1px solid rgba(239,68,68,.25)
+              {% elif c.event_type == 'judgment' %}rgba(124,58,237,.12);color:#7c3aed;border:1px solid rgba(124,58,237,.25)
+              {% elif c.event_type == 'ordonnance' %}rgba(245,158,11,.12);color:#92400e;border:1px solid rgba(245,158,11,.25)
+              {% elif c.event_type == 'hearing' %}rgba(59,130,246,.12);color:#1d4ed8;border:1px solid rgba(59,130,246,.25)
+              {% else %}var(--bg);color:var(--text-secondary);border:1px solid var(--border){% endif %}">
+              {{ c.event_type | replace('_', ' ') }}
+            </span>
+          </td>
+          {% endif %}
+          {# Before window #}
+          <td style="padding:var(--space-2) var(--space-3);text-align:center;border-left:2px solid var(--border);
+              color:{% if c.before_count == 0 %}var(--text-muted){% else %}var(--text-primary){% endif %}">
+            {{ c.before_count }}
+          </td>
+          <td style="padding:var(--space-2) var(--space-3);text-align:center">
+            {% if c.before_agg is not none %}
+            <span style="color:{% if c.before_agg > 0.5 %}#ef4444{% elif c.before_agg > 0.3 %}#f59e0b{% else %}var(--text-secondary){% endif %}">
+              {{ "%.2f" | format(c.before_agg) }}
+            </span>
+            {% else %}<span class="text-muted">—</span>{% endif %}
+          </td>
+          {# After window #}
+          <td style="padding:var(--space-2) var(--space-3);text-align:center;border-left:1px solid var(--border);
+              color:{% if c.after_count == 0 %}var(--text-muted){% else %}var(--text-primary){% endif %}">
+            {{ c.after_count }}
+          </td>
+          <td style="padding:var(--space-2) var(--space-3);text-align:center">
+            {% if c.after_agg is not none %}
+            <span style="color:{% if c.after_agg > 0.5 %}#ef4444{% elif c.after_agg > 0.3 %}#f59e0b{% else %}var(--text-secondary){% endif %}">
+              {{ "%.2f" | format(c.after_agg) }}
+            </span>
+            {% else %}<span class="text-muted">—</span>{% endif %}
+          </td>
+          {# Deltas #}
+          <td style="padding:var(--space-2) var(--space-3);text-align:center;border-left:2px solid var(--border)">
+            {% if c.agg_delta is not none %}
+            <span style="font-weight:700;font-size:.85rem;
+              color:{% if c.agg_delta > 0.1 %}#b91c1c{% elif c.agg_delta > 0.05 %}#ef4444{% elif c.agg_delta < -0.1 %}#059669{% elif c.agg_delta < -0.05 %}#10b981{% else %}var(--text-muted){% endif %}">
+              {{ "%+.3f" | format(c.agg_delta) }}
+            </span>
+            {% else %}<span class="text-muted">—</span>{% endif %}
+          </td>
+          <td style="padding:var(--space-2) var(--space-3);text-align:center">
+            {% if c.manip_delta is not none %}
+            <span style="font-size:.8rem;
+              color:{% if c.manip_delta > 0.05 %}#ef4444{% elif c.manip_delta < -0.05 %}#10b981{% else %}var(--text-muted){% endif %}">
+              {{ "%+.3f" | format(c.manip_delta) }}
+            </span>
+            {% else %}<span class="text-muted">—</span>{% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% else %}
+<div class="empty-state">
+  <div class="empty-state-icon">📊</div>
+  <div class="empty-state-title">No correlation data</div>
+  <p class="empty-state-text">No matching events with personal emails found in the ±{{ corr_data.window_days }}-day window.</p>
+</div>
+{% endif %}
+
+{# ── Pre-conclusion behavior ───────────────────────────────────────────── #}
+{% if pre_conclusion and pre_conclusion.conclusions %}
+<div style="margin-top:var(--space-8)">
+  <h2 style="font-size:1rem;font-weight:700;color:var(--text-primary);margin:0 0 var(--space-4)">
+    📈 Pre-Conclusion Behavior
+    <span class="text-xs text-muted" style="font-weight:400;margin-left:8px">
+      aggression &amp; manipulation in the {{ pre_conclusion.window_days }} days <em>before</em> each adverse conclusion
+    </span>
+  </h2>
+
+  {# Summary strip #}
+  <div class="card mb-5">
+    <div class="card-body" style="padding:var(--space-4) var(--space-5)">
+      <div style="display:flex;gap:var(--space-6);flex-wrap:wrap;align-items:center">
+        <div>
+          <div class="text-xs text-muted" style="text-transform:uppercase;letter-spacing:.06em;font-weight:600;margin-bottom:4px">Conclusions</div>
+          <div style="font-size:1.4rem;font-weight:800;color:var(--text-primary)">{{ pre_conclusion.summary.total }}</div>
+        </div>
+        <div style="width:1px;height:40px;background:var(--border)"></div>
+        <div>
+          <div class="text-xs text-muted" style="margin-bottom:2px">With email data</div>
+          <div style="font-size:1.2rem;font-weight:700;color:var(--text-primary)">{{ pre_conclusion.summary.with_data }}</div>
+        </div>
+        <div>
+          <div class="text-xs text-muted" style="margin-bottom:2px">
+            Above baseline <span style="font-size:.7em">(Δ&gt;+0.02)</span>
+          </div>
+          <div style="font-size:1.2rem;font-weight:700;
+            color:{% if pre_conclusion.summary.above_baseline > 0 %}#ef4444{% else %}var(--text-secondary){% endif %}">
+            {{ pre_conclusion.summary.above_baseline }}
+          </div>
+        </div>
+        <div>
+          <div class="text-xs text-muted" style="margin-bottom:2px">Avg agg before</div>
+          <div style="font-size:1.2rem;font-weight:700;
+            color:{% if pre_conclusion.summary.avg_window_agg is not none and pre_conclusion.summary.avg_window_agg > 0.4 %}#ef4444
+                  {% elif pre_conclusion.summary.avg_window_agg is not none and pre_conclusion.summary.avg_window_agg > 0.25 %}#f59e0b
+                  {% else %}var(--text-secondary){% endif %}">
+            {% if pre_conclusion.summary.avg_window_agg is not none %}{{ "%.3f" | format(pre_conclusion.summary.avg_window_agg) }}{% else %}—{% endif %}
+          </div>
+        </div>
+        {% if pre_conclusion.baseline_agg is not none %}
+        <div style="margin-left:auto;text-align:right">
+          <div class="text-xs text-muted" style="margin-bottom:2px">Corpus baseline</div>
+          <div style="font-size:1rem;font-weight:600;color:var(--text-secondary)">{{ "%.3f" | format(pre_conclusion.baseline_agg) }}</div>
+        </div>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+
+  {# Per-conclusion table #}
+  <div class="card">
+    <div class="card-header">
+      <div>
+        <h3 style="margin:0;font-size:var(--font-size-base)">📋 Aggression Before Each Adverse Conclusion</h3>
+        <p class="text-xs text-muted" style="margin:4px 0 0">
+          Window = {{ pre_conclusion.window_days }} days before filing date. "Last 7d" = final week before conclusion. Δ = window avg − corpus baseline.
+        </p>
+      </div>
+    </div>
+    <div style="overflow-x:auto">
+      <table style="width:100%;border-collapse:collapse;font-size:var(--font-size-sm)">
+        <thead>
+          <tr style="background:var(--bg);border-bottom:2px solid var(--border)">
+            <th style="padding:var(--space-2) var(--space-3);text-align:left;font-weight:600;white-space:nowrap">Date</th>
+            <th style="padding:var(--space-2) var(--space-3);text-align:left;font-weight:600">Procedure</th>
+            <th style="padding:var(--space-2) var(--space-3);text-align:center;font-weight:600;border-left:2px solid var(--border);white-space:nowrap">Emails<br><span style="font-weight:400;font-size:.7rem">({{ pre_conclusion.window_days }}d)</span></th>
+            <th style="padding:var(--space-2) var(--space-3);text-align:center;font-weight:600;white-space:nowrap">Avg agg</th>
+            <th style="padding:var(--space-2) var(--space-3);text-align:center;font-weight:600;white-space:nowrap">Max agg</th>
+            <th style="padding:var(--space-2) var(--space-3);text-align:center;font-weight:600;border-left:1px solid var(--border);white-space:nowrap">Last 7d<br><span style="font-weight:400;font-size:.7rem">emails</span></th>
+            <th style="padding:var(--space-2) var(--space-3);text-align:center;font-weight:600;white-space:nowrap">Last 7d<br><span style="font-weight:400;font-size:.7rem">agg</span></th>
+            <th style="padding:var(--space-2) var(--space-3);text-align:center;font-weight:600;border-left:2px solid var(--border);white-space:nowrap">Δ vs baseline</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for c in pre_conclusion.conclusions %}
+          <tr style="border-bottom:1px solid var(--border);{% if loop.index is odd %}background:rgba(0,0,0,.015){% endif %}">
+            <td style="padding:var(--space-2) var(--space-3);white-space:nowrap;font-family:monospace;font-size:.8rem">{{ c.event_date }}</td>
+            <td style="padding:var(--space-2) var(--space-3);color:var(--text-secondary);max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"
+                title="{{ c.procedure_name }}">{{ c.procedure_name | truncate(28, true, '…') }}</td>
+            {# Window emails + avg agg #}
+            <td style="padding:var(--space-2) var(--space-3);text-align:center;border-left:2px solid var(--border);
+                color:{% if c.window_count == 0 %}var(--text-muted){% else %}var(--text-primary){% endif %}">
+              {{ c.window_count }}
+            </td>
+            <td style="padding:var(--space-2) var(--space-3);text-align:center">
+              {% if c.window_agg is not none %}
+              <span style="color:{% if c.window_agg > 0.5 %}#ef4444{% elif c.window_agg > 0.3 %}#f59e0b{% else %}var(--text-secondary){% endif %}">
+                {{ "%.2f" | format(c.window_agg) }}
+              </span>
+              {% else %}<span class="text-muted">—</span>{% endif %}
+            </td>
+            <td style="padding:var(--space-2) var(--space-3);text-align:center">
+              {% if c.max_agg is not none %}
+              <span style="color:{% if c.max_agg > 0.7 %}#b91c1c{% elif c.max_agg > 0.5 %}#ef4444{% else %}var(--text-secondary){% endif %};font-size:.8rem">
+                {{ "%.2f" | format(c.max_agg) }}
+              </span>
+              {% else %}<span class="text-muted">—</span>{% endif %}
+            </td>
+            {# Last-7d #}
+            <td style="padding:var(--space-2) var(--space-3);text-align:center;border-left:1px solid var(--border);
+                color:{% if c.week7_count == 0 %}var(--text-muted){% else %}var(--text-primary){% endif %}">
+              {{ c.week7_count }}
+            </td>
+            <td style="padding:var(--space-2) var(--space-3);text-align:center">
+              {% if c.week7_agg is not none %}
+              <span style="color:{% if c.week7_agg > 0.5 %}#ef4444{% elif c.week7_agg > 0.3 %}#f59e0b{% else %}var(--text-secondary){% endif %};font-size:.85rem">
+                {{ "%.2f" | format(c.week7_agg) }}
+              </span>
+              {% else %}<span class="text-muted">—</span>{% endif %}
+            </td>
+            {# Δ vs baseline #}
+            <td style="padding:var(--space-2) var(--space-3);text-align:center;border-left:2px solid var(--border)">
+              {% if c.agg_vs_baseline is not none %}
+              <span style="font-weight:700;font-size:.85rem;
+                color:{% if c.agg_vs_baseline > 0.1 %}#b91c1c{% elif c.agg_vs_baseline > 0.02 %}#ef4444{% elif c.agg_vs_baseline < -0.1 %}#059669{% elif c.agg_vs_baseline < -0.02 %}#10b981{% else %}var(--text-muted){% endif %}">
+                {{ "%+.3f" | format(c.agg_vs_baseline) }}
+              </span>
+              {% else %}<span class="text-muted">—</span>{% endif %}
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+{% endif %}

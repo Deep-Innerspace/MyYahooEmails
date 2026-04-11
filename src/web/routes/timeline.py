@@ -11,6 +11,8 @@ from src.statistics.aggregator import (
     merged_timeline,
     dossier_timeline,
     court_event_window_aggression,
+    all_procedure_event_correlations,
+    pre_conclusion_behavior,
 )
 
 BASE_DIR = Path(__file__).parent.parent
@@ -152,6 +154,58 @@ async def court_event_correlation(
         "window_days": _WINDOW_DAYS,
         **data,
     })
+
+
+@router.get("/correlations", response_class=HTMLResponse)
+async def timeline_correlations(
+    request: Request,
+    date_from:   Optional[str] = Query(None),
+    date_to:     Optional[str] = Query(None),
+    window_days: int           = Query(_WINDOW_DAYS),
+    event_type:  Optional[str] = Query("conclusions_received"),
+    conn: sqlite3.Connection = Depends(get_conn),
+    perspective: str = Depends(get_perspective),
+):
+    """Systematic aggression correlation — defaults to adverse conclusions as reference events."""
+    window_days = max(1, min(window_days, 90))  # clamp 1–90
+    # None sentinel: empty string from form means "all event types"
+    etype_filter = event_type if event_type else None
+
+    corr_data = all_procedure_event_correlations(
+        conn, window_days=window_days,
+        since=date_from or None, until=date_to or None,
+        event_type=etype_filter,
+    )
+    pre_conc = pre_conclusion_behavior(
+        conn, window_days=window_days,
+        since=date_from or None, until=date_to or None,
+    )
+
+    # Build chart URL with date range so it zooms correctly
+    chart_params = f"?window_days={window_days}"
+    if date_from:
+        chart_params += f"&date_from={date_from}"
+    if date_to:
+        chart_params += f"&date_to={date_to}"
+
+    ctx = {
+        "request":        request,
+        "perspective":    perspective,
+        "page":           "timeline",
+        "view":           "correlations",
+        "total_events":   corr_data["summary"]["total"],
+        "date_from":      date_from or "",
+        "date_to":        date_to or "",
+        "window_days":    window_days,
+        "event_type":     event_type or "",
+        "chart_params":   chart_params,
+        "corr_data":      corr_data,
+        "pre_conclusion": pre_conc,
+    }
+
+    if request.headers.get("HX-Request"):
+        return templates.TemplateResponse("partials/timeline_correlations.html", ctx)
+    return templates.TemplateResponse("pages/timeline.html", ctx)
 
 
 def _get_filtered_events(conn, date_from, date_to, significance, source, topics, corpus=None):
