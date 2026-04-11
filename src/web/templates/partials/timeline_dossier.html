@@ -1,0 +1,108 @@
+{% if procedures %}
+<div class="timeline-summary text-sm text-muted mb-4">
+  {{ procedures | length }} procedure{{ 's' if procedures | length != 1 else '' }}
+  &nbsp;·&nbsp; {{ total_events }} court events
+</div>
+
+{% for proc in procedures %}
+<div class="dossier-procedure mb-6">
+
+  <!-- Procedure header -->
+  <div class="dossier-header">
+    <div class="dossier-header-main">
+      <div style="display:flex;align-items:center;gap:var(--space-3);flex-wrap:wrap">
+        <a href="/procedures/{{ proc.id }}" class="dossier-title">{{ proc.name }}</a>
+        {% if proc.status %}
+        <span class="badge {% if proc.status == 'active' %}badge-high{% elif proc.status == 'closed' %}badge-secondary{% else %}badge-primary{% endif %}">
+          {{ proc.status }}
+        </span>
+        {% endif %}
+        {% if proc.procedure_type %}
+        <span class="badge badge-secondary" style="text-transform:capitalize">{{ proc.procedure_type | replace('_', ' ') }}</span>
+        {% endif %}
+      </div>
+      <div class="dossier-meta">
+        {% if proc.case_number %}<span>📋 {{ proc.case_number }}</span>{% endif %}
+        {% if proc.jurisdiction %}<span>🏛 {{ proc.jurisdiction }}</span>{% endif %}
+        {% if proc.date_start %}
+        <span>📅 {{ proc.date_start[:10] }} → {{ proc.date_end[:10] if proc.date_end else 'ongoing' }}</span>
+        {% endif %}
+      </div>
+    </div>
+
+    <!-- KPI strip -->
+    <div class="dossier-kpis">
+      <div class="dossier-kpi">
+        <div class="dossier-kpi-value">{{ proc.events | length }}</div>
+        <div class="dossier-kpi-label">events</div>
+      </div>
+      <div class="dossier-kpi">
+        <div class="dossier-kpi-value">{{ proc.email_count }}</div>
+        <div class="dossier-kpi-label">emails</div>
+      </div>
+      {% if proc.invoice_total %}
+      <div class="dossier-kpi" style="color:var(--invoice-color)">
+        <div class="dossier-kpi-value">{{ "%.0f €" | format(proc.invoice_total) }}</div>
+        <div class="dossier-kpi-label">cost</div>
+      </div>
+      {% endif %}
+      {% if proc.aggression_during is not none %}
+      <div class="dossier-kpi" style="color:var(--aggression)">
+        <div class="dossier-kpi-value">{{ "%.2f" | format(proc.aggression_during) }}</div>
+        <div class="dossier-kpi-label">aggression</div>
+      </div>
+      {% endif %}
+    </div>
+  </div>
+
+  {% if proc.outcome_summary %}
+  <div class="dossier-outcome text-sm mb-3">
+    <strong>Outcome:</strong> {{ proc.outcome_summary }}
+  </div>
+  {% endif %}
+
+  <!-- Events list inside procedure -->
+  {% if proc.events %}
+  <div class="dossier-events">
+    {% for ev in proc.events %}
+    <div class="dossier-event">
+      <div class="dossier-event-date">{{ ev.event_date[:10] if ev.event_date else '—' }}{% if ev.date_precision and ev.date_precision != 'exact' %}<span class="text-muted" style="font-size:0.65rem;margin-left:2px">~</span>{% endif %}</div>
+      <div class="dossier-event-content">
+        <div style="display:flex;align-items:center;gap:var(--space-2);flex-wrap:wrap;margin-bottom:2px">
+          <span class="dossier-event-type">{{ ev.event_type | replace('_', ' ') if ev.event_type else '' }}</span>
+          {% if ev.jurisdiction %}
+          <span class="text-muted text-xs">{{ ev.jurisdiction }}</span>
+          {% endif %}
+        </div>
+        <div class="text-sm">{{ ev.description }}</div>
+        {% if ev.outcome %}
+        <div class="text-xs text-muted mt-1"><strong>Outcome:</strong> {{ ev.outcome }}</div>
+        {% endif %}
+        {% if ev.notes %}
+        <div class="text-xs text-muted mt-1">{{ ev.notes }}</div>
+        {% endif %}
+        {% if ev.source_email_id %}
+        <a href="#"
+           onclick="openTimelineEmailModal({{ ev.source_email_id }}); return false;"
+           class="text-xs mt-1 d-inline-block">
+          View source email &rarr;
+        </a>
+        {% endif %}
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+  {% else %}
+  <div class="text-sm text-muted" style="padding:var(--space-3) 0 var(--space-2)">No events recorded for this procedure.</div>
+  {% endif %}
+
+</div>
+{% endfor %}
+
+{% else %}
+<div class="empty-state">
+  <div class="empty-state-icon">🏛️</div>
+  <div class="empty-state-title">No procedures found</div>
+  <p class="empty-state-text">Add procedures via the <a href="/procedures/">Procedures</a> page.</p>
+</div>
+{% endif %}

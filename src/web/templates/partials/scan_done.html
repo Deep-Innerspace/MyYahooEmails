@@ -1,0 +1,39 @@
+{# partials/scan_done.html — shown in the detail panel when the active tab is empty #}
+<div id="scan-detail" class="scan-detail">
+  <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;
+              height:100%;padding:var(--space-6);text-align:center;color:var(--text-muted)">
+    <div style="font-size:48px;margin-bottom:var(--space-3)">
+      {% if active_tab == 'pending' %}✅
+      {% elif active_tab == 'dismissed' %}🚫
+      {% elif active_tab == 'invoice' %}💶
+      {% elif active_tab == 'payment' %}💳
+      {% else %}📭{% endif %}
+    </div>
+    <div style="font-size:18px;font-weight:600;color:var(--text);margin-bottom:var(--space-2)">
+      {% if active_tab == 'pending' %}All pending emails handled
+      {% elif active_tab == 'dismissed' %}No assessed emails
+      {% elif active_tab == 'invoice' %}No invoice records yet
+      {% elif active_tab == 'payment' %}No payment confirmations yet
+      {% else %}Nothing found{% endif %}
+    </div>
+    <p style="max-width:320px;font-size:13px;margin-bottom:var(--space-4)">
+      {% if active_tab == 'pending' %}
+        Every matching email has been invoiced, confirmed, or assessed.
+        Check the other tabs to review what was recorded.
+      {% else %}
+        Switch to another tab or adjust your keywords above.
+      {% endif %}
+    </p>
+    <div style="display:flex;gap:var(--space-2)">
+      {% if tab_counts.pending > 0 and active_tab != 'pending' %}
+      <a href="/invoices/scan?{{ scan_qs | replace('tab=' + active_tab, 'tab=pending') }}"
+         class="btn btn-primary" style="text-decoration:none"
+         hx-get="/invoices/scan/detail?{{ scan_qs | replace('tab=' + active_tab, 'tab=pending') }}"
+         hx-target="#scan-detail" hx-swap="outerHTML">
+        ⏳ {{ tab_counts.pending }} pending
+      </a>
+      {% endif %}
+      <a href="/invoices/" class="btn btn-secondary" style="text-decoration:none">← Legal Costs</a>
+    </div>
+  </div>
+</div>

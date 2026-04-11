@@ -343,3 +343,106 @@ async def delete_pivotal_moment(
         return HTMLResponse("")
     except Exception as e:
         return HTMLResponse(f'<span class="text-error">Error: {e}</span>', status_code=500)
+
+
+# ─────────────────────────── THEMATIC THREADS ────────────────────────────────
+
+@router.get("/themes", response_class=HTMLResponse)
+async def themes_page(
+    request: Request,
+    topic: Optional[str] = Query(None),
+    offset: int = Query(0),
+    conn: sqlite3.Connection = Depends(get_conn),
+    perspective: str = Depends(get_perspective),
+):
+    """Thematic Threads — browse personal emails grouped by topic."""
+
+    # All topics that have at least one classified email (excluding meta-topics)
+    EXCLUDED = {"trop_court", "non_classifiable"}
+    topic_rows = conn.execute("""
+        SELECT t.name, t.description, COUNT(DISTINCT et.email_id) AS email_count
+          FROM topics t
+          JOIN email_topics et ON et.topic_id = t.id
+          JOIN emails e ON e.id = et.email_id
+         WHERE e.corpus = 'personal'
+           AND t.name NOT IN ('trop_court', 'non_classifiable')
+         GROUP BY t.id
+         ORDER BY email_count DESC
+    """).fetchall()
+    topics = [dict(r) for r in topic_rows]
+
+    # Selected topic emails (with tone data)
+    selected_topic = topic
+    thread_emails = []
+    topic_stats = {}
+    PAGE_SIZE = 50
+
+    if selected_topic:
+        # Full stats (count, aggression) without fetching all body text
+        stats_rows = conn.execute("""
+            SELECT e.direction,
+                   JSON_EXTRACT(ar.result_json, '$.aggression_level') AS aggression,
+                   e.date
+              FROM emails e
+              JOIN email_topics et ON et.email_id = e.id
+              JOIN topics t ON t.id = et.topic_id
+              LEFT JOIN analysis_results ar ON ar.email_id = e.id
+              LEFT JOIN analysis_runs run ON run.id = ar.run_id
+                AND run.analysis_type = 'tone'
+             WHERE e.corpus = 'personal'
+               AND t.name = ?
+             GROUP BY e.id
+             ORDER BY e.date ASC
+        """, (selected_topic,)).fetchall()
+
+        if stats_rows:
+            agg_values = [float(r[1]) for r in stats_rows if r[1] is not None]
+            sent_count = sum(1 for r in stats_rows if r[0] == "sent")
+            topic_stats = {
+                "total": len(stats_rows),
+                "sent": sent_count,
+                "received": len(stats_rows) - sent_count,
+                "avg_aggression": round(sum(agg_values) / len(agg_values), 2) if agg_values else None,
+                "date_from": stats_rows[0][2][:10],
+                "date_to": stats_rows[-1][2][:10],
+            }
+
+        # Paginated email fetch (with full delta_text)
+        email_rows = conn.execute("""
+            SELECT e.id, e.date, e.subject, e.direction, e.from_address,
+                   e.delta_text,
+                   JSON_EXTRACT(ar.result_json, '$.aggression_level') AS aggression,
+                   JSON_EXTRACT(ar.result_json, '$.tone')             AS tone
+              FROM emails e
+              JOIN email_topics et ON et.email_id = e.id
+              JOIN topics t ON t.id = et.topic_id
+              LEFT JOIN analysis_results ar ON ar.email_id = e.id
+              LEFT JOIN analysis_runs run ON run.id = ar.run_id
+                AND run.analysis_type = 'tone'
+             WHERE e.corpus = 'personal'
+               AND t.name = ?
+             GROUP BY e.id
+             ORDER BY e.date ASC
+             LIMIT ? OFFSET ?
+        """, (selected_topic, PAGE_SIZE, offset)).fetchall()
+        thread_emails = [dict(r) for r in email_rows]
+
+    total = topic_stats.get("total", 0)
+    ctx = {
+        "request": request,
+        "perspective": perspective,
+        "page": "themes",
+        "topics": topics,
+        "selected_topic": selected_topic,
+        "thread_emails": thread_emails,
+        "topic_stats": topic_stats,
+        "offset": offset,
+        "page_size": PAGE_SIZE,
+        "has_prev": offset > 0,
+        "has_next": offset + PAGE_SIZE < total,
+        "prev_offset": max(0, offset - PAGE_SIZE),
+        "next_offset": offset + PAGE_SIZE,
+        "page_num": offset // PAGE_SIZE + 1,
+        "total_pages": max(1, (total + PAGE_SIZE - 1) // PAGE_SIZE),
+    }
+    return templates.TemplateResponse("pages/themes.html", ctx)

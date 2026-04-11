@@ -1,0 +1,206 @@
+{% extends "base.html" %}
+{% block title %}Thematic Threads{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <div>
+    <h1 class="page-title">🧵 Thematic Threads</h1>
+    <p class="page-subtitle">Browse the narrative arc of each recurring theme</p>
+  </div>
+</div>
+
+<div class="page-body">
+
+  <!-- ── Full-email detail overlay ──────────────────────────────────────── -->
+  <div id="theme-detail-overlay"
+       style="display:none;position:fixed;inset:0;z-index:1000;background:rgba(0,0,0,.45)"
+       onclick="if(event.target===this)closeThemeDetail()">
+    <div id="theme-detail-panel"
+         style="position:absolute;top:0;right:0;width:min(700px,100vw);height:100%;
+                background:var(--surface);overflow-y:auto;box-shadow:-4px 0 24px rgba(0,0,0,.2)">
+      <div style="padding:var(--space-4);border-bottom:1px solid var(--border);
+                  display:flex;justify-content:space-between;align-items:center;
+                  position:sticky;top:0;background:var(--surface);z-index:1">
+        <span style="font-weight:600;color:var(--text-muted);font-size:var(--font-size-sm)">Full email</span>
+        <button onclick="closeThemeDetail()"
+                style="background:none;border:none;cursor:pointer;font-size:1.2rem;
+                       color:var(--text-muted);padding:4px 8px;line-height:1">&times;</button>
+      </div>
+      <div id="theme-detail-content" style="padding:var(--space-5)">
+        <div style="color:var(--text-muted);text-align:center;padding:var(--space-8)">Loading…</div>
+      </div>
+    </div>
+  </div>
+
+  <div style="display:flex;gap:var(--space-6);align-items:flex-start">
+
+    <!-- ── Topic sidebar ─────────────────────────────────────────────── -->
+    <div style="flex:0 0 220px;position:sticky;top:var(--space-6)">
+      <div class="card">
+        <div class="card-header">
+          <h3 style="margin:0;font-size:var(--font-size-base)">Topics</h3>
+        </div>
+        <div style="padding:var(--space-2) 0">
+          {% for t in topics %}
+          <a href="/themes?topic={{ t.name | urlencode }}"
+             style="display:flex;justify-content:space-between;align-items:center;
+                    padding:var(--space-2) var(--space-4);text-decoration:none;
+                    {% if selected_topic == t.name %}background:var(--accent);color:#fff;{% else %}color:var(--text-primary);{% endif %}
+                    font-size:var(--font-size-sm)">
+            <span>{{ t.name | replace('_', ' ') | title }}</span>
+            <span style="font-size:var(--font-size-xs);
+                         {% if selected_topic == t.name %}opacity:.75{% else %}color:var(--text-muted){% endif %}">
+              {{ t.email_count }}
+            </span>
+          </a>
+          {% endfor %}
+        </div>
+      </div>
+    </div>
+
+    <!-- ── Thread content ────────────────────────────────────────────── -->
+    <div style="flex:1;min-width:0">
+
+      {% if not selected_topic %}
+      <div class="card" style="padding:var(--space-8);text-align:center;color:var(--text-muted)">
+        <div style="font-size:2rem;margin-bottom:var(--space-3)">🧵</div>
+        <p style="font-size:var(--font-size-lg);margin-bottom:var(--space-2)">Select a topic to explore its thread</p>
+        <p style="font-size:var(--font-size-sm)">Each thread shows every email on that theme in chronological order,<br>
+        with tone and aggression data to trace how the narrative evolved.</p>
+      </div>
+
+      {% else %}
+
+      <!-- Stats strip -->
+      {% if topic_stats %}
+      <div class="card mb-5">
+        <div class="card-body" style="padding:var(--space-4) var(--space-5)">
+          <div style="display:flex;gap:var(--space-6);flex-wrap:wrap;align-items:center">
+            <div>
+              <div class="text-xs text-muted" style="text-transform:uppercase;letter-spacing:.06em;font-weight:600;margin-bottom:4px">Thread</div>
+              <div style="font-size:1.4rem;font-weight:800;color:var(--text-primary)">{{ selected_topic | replace('_', ' ') | title }}</div>
+            </div>
+            <div style="width:1px;height:40px;background:var(--border)"></div>
+            <div>
+              <div class="text-xs text-muted" style="margin-bottom:2px">Total emails</div>
+              <div style="font-size:1.2rem;font-weight:700">{{ topic_stats.total }}</div>
+            </div>
+            <div>
+              <div class="text-xs text-muted" style="margin-bottom:2px">Sent by you</div>
+              <div style="font-size:1.2rem;font-weight:700;color:#3b82f6">{{ topic_stats.sent }}</div>
+            </div>
+            <div>
+              <div class="text-xs text-muted" style="margin-bottom:2px">Received</div>
+              <div style="font-size:1.2rem;font-weight:700;color:#ef4444">{{ topic_stats.received }}</div>
+            </div>
+            {% if topic_stats.avg_aggression is not none %}
+            <div>
+              <div class="text-xs text-muted" style="margin-bottom:2px">Avg aggression</div>
+              <div style="font-size:1.2rem;font-weight:700;color:{% if topic_stats.avg_aggression > 0.6 %}#ef4444{% elif topic_stats.avg_aggression > 0.3 %}#f59e0b{% else %}#10b981{% endif %}">
+                {{ "%.2f"|format(topic_stats.avg_aggression) }}
+              </div>
+            </div>
+            {% endif %}
+            <div style="margin-left:auto;text-align:right">
+              <div class="text-xs text-muted">{{ topic_stats.date_from }} → {{ topic_stats.date_to }}</div>
+            </div>
+          </div>
+        </div>
+      </div>
+      {% endif %}
+
+      <!-- Pagination controls (top) -->
+      {% if total_pages > 1 %}
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:var(--space-4)">
+        <div class="text-xs text-muted">Page {{ page_num }} of {{ total_pages }} · showing {{ thread_emails|length }} of {{ topic_stats.total }} emails</div>
+        <div style="display:flex;gap:var(--space-2)">
+          {% if has_prev %}<a href="/themes?topic={{ selected_topic | urlencode }}&offset={{ prev_offset }}" class="btn btn-secondary btn-sm">← Prev</a>{% endif %}
+          {% if has_next %}<a href="/themes?topic={{ selected_topic | urlencode }}&offset={{ next_offset }}" class="btn btn-secondary btn-sm">Next →</a>{% endif %}
+        </div>
+      </div>
+      {% endif %}
+
+      <!-- Email thread -->
+      {% if thread_emails %}
+      <div style="display:flex;flex-direction:column;gap:var(--space-3)">
+        {% for email in thread_emails %}
+        <div class="card" style="border-left:3px solid {% if email.direction == 'sent' %}#3b82f6{% else %}#ef4444{% endif %}">
+          <div class="card-body" style="padding:var(--space-3) var(--space-4)">
+
+            <!-- Header row -->
+            <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:var(--space-3)">
+              <div style="flex:1;min-width:0">
+                <div style="font-weight:600;color:var(--text-primary);font-size:var(--font-size-sm)">
+                  {{ email.subject or '(no subject)' }}
+                </div>
+                <div class="text-xs text-muted" style="margin-top:2px">
+                  {{ email.from_address }} · {{ (email.date or '')[:10] }}
+                </div>
+              </div>
+              <div style="display:flex;gap:var(--space-2);align-items:center;flex-shrink:0">
+                <span class="badge" style="{% if email.direction == 'sent' %}background:#eff6ff;color:#3b82f6;border:1px solid #bfdbfe{% else %}background:#fef2f2;color:#ef4444;border:1px solid #fecaca{% endif %}">
+                  {{ email.direction }}
+                </span>
+                {% if email.aggression is not none %}
+                <span class="badge" style="background:{% if email.aggression|float > 0.6 %}#fee2e2;color:#b91c1c{% elif email.aggression|float > 0.3 %}#fef3c7;color:#92400e{% else %}#f0fdf4;color:#166534{% endif %};border:0;font-variant-numeric:tabular-nums">
+                  agg {{ "%.2f"|format(email.aggression|float) }}
+                </span>
+                {% endif %}
+                <!-- View full email button -->
+                <button class="btn btn-secondary btn-sm"
+                        hx-get="/emails/{{ email.id }}"
+                        hx-target="#theme-detail-content"
+                        hx-swap="innerHTML"
+                        onclick="openThemeDetail()"
+                        style="font-size:var(--font-size-xs);padding:2px 8px">
+                  Full email ↗
+                </button>
+              </div>
+            </div>
+
+            <!-- Delta text (full, pre-wrapped) -->
+            {% if email.delta_text %}
+            <div style="font-size:var(--font-size-sm);color:var(--text-secondary);line-height:1.6;
+                        white-space:pre-wrap;word-break:break-word;margin-top:var(--space-3);
+                        border-top:1px solid var(--border);padding-top:var(--space-2)">{{ email.delta_text }}</div>
+            {% endif %}
+
+          </div>
+        </div>
+        {% endfor %}
+      </div>
+
+      <!-- Pagination controls (bottom) -->
+      {% if total_pages > 1 %}
+      <div style="display:flex;justify-content:center;gap:var(--space-2);margin-top:var(--space-5)">
+        {% if has_prev %}<a href="/themes?topic={{ selected_topic | urlencode }}&offset={{ prev_offset }}" class="btn btn-secondary btn-sm">← Prev</a>{% endif %}
+        <span style="line-height:2rem;color:var(--text-muted);font-size:var(--font-size-sm)">{{ page_num }} / {{ total_pages }}</span>
+        {% if has_next %}<a href="/themes?topic={{ selected_topic | urlencode }}&offset={{ next_offset }}" class="btn btn-secondary btn-sm">Next →</a>{% endif %}
+      </div>
+      {% endif %}
+
+      {% else %}
+      <div class="card" style="padding:var(--space-6);text-align:center;color:var(--text-muted)">
+        No emails found for topic "{{ selected_topic }}".
+      </div>
+      {% endif %}
+
+      {% endif %}
+    </div>
+  </div>
+</div>
+
+<script>
+function openThemeDetail() {
+  document.getElementById('theme-detail-overlay').style.display = 'block';
+  document.body.style.overflow = 'hidden';
+}
+function closeThemeDetail() {
+  document.getElementById('theme-detail-overlay').style.display = 'none';
+  document.body.style.overflow = '';
+}
+document.addEventListener('keydown', function(e) {
+  if (e.key === 'Escape') closeThemeDetail();
+});
+</script>
+{% endblock %}

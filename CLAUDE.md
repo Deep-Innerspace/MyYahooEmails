@@ -43,6 +43,9 @@ python cli.py fetch emails --all-folders --dry-run  # Count only, no download
 python cli.py fetch emails --folder Divorce --folder Avocat  # Specific folders only
 python cli.py fetch emails --since 2014-01-01   # Date-filtered fetch
 python cli.py fetch status                      # DB stats + resume state per folder
+python cli.py fetch conclusions                 # Auto-download MULLER adverse conclusions, create procedure_events
+python cli.py fetch conclusions --dry-run       # Preview candidates without downloading
+python cli.py fetch conclusions --force         # Re-process already-downloaded attachments
 
 python cli.py contacts list                     # Show contacts with primary email + aliases
 python cli.py contacts add --name "..." --email "..." --role ex-wife
@@ -218,6 +221,16 @@ The ex-wife used 4 email addresses. Contacts have a `primary email` + `aliases (
 - All LLM prompts (Phase 2+) must instruct the model to process French legal terminology
 - Default language when ambiguous: `fr`
 
+### Analysis Corpus Constraint
+classify, tone, and manipulation analysis are **personal corpus only**. These prompts are calibrated for intimate partner conflict and are meaningless on legal correspondence.
+- `get_emails_for_analysis()` in `runner.py` hardcodes `e.corpus = 'personal'`
+- `export_for_analysis()` in `excel_export.py` hardcodes `e.corpus = 'personal'`
+- `mark-uncovered` in `cli.py` filters `corpus = 'personal'`
+- Legal corpus uses `legal_analysis` only; `procedure_events` is its authoritative event source
+- `timeline_events` table contains personal corpus events only (legal events are in `procedure_events`)
+- `email_topics` table contains personal corpus emails only
+- `emails.procedure_id` FK is set for legal corpus emails, NULL for personal corpus
+
 ### Delta Text & Deduplication
 - `delta_text` = email body with all quoted reply sections stripped
 - All LLM analysis runs on `delta_text` only (not full body)
@@ -332,17 +345,25 @@ Two-layer protection:
 - Creates both topics if they don't exist; creates a run with provider="manual", model="rule-based"
 - These count toward classification coverage % but are excluded from topic distribution charts in the web dashboard
 
-### Current Analysis Coverage (as of 2026-03-27)
-- Total emails: 3,922 (3,791 personal + 131 legal corpus)
-- Classification: 3,922/3,922 (100%) ✅ COMPLETE
-- Tone analysis: 3,922/3,922 (100%) ✅ COMPLETE
-- Manipulation: 3,922/3,922 (100%) ✅ COMPLETE — runs #62–78 + all 17 batches via ChatGPT gpt-5.4-thinking
-- Timeline extraction: 3,922/3,922 (100%) ✅ COMPLETE — 915 events found — 21 runs total (runs #4, #14, #109, #112, #113, #118–#133)
+### Current Analysis Coverage (as of 2026-04-06)
+- Personal emails: 3,791 (authoritative live count — 131 emails reclassified to legal corpus)
+- Legal emails: 2,743
+- Classification: 3,791/3,791 (100%) ✅ COMPLETE — personal corpus only
+- Tone analysis: 3,791/3,791 (100%) ✅ COMPLETE — personal corpus only
+- Manipulation: 3,791/3,791 (100%) ✅ COMPLETE — personal corpus only
+- Timeline extraction: 902 events from personal corpus ✅ COMPLETE
 - Contradictions: 45 pairs total across 9 topics ✅ COMPLETE — (enfants 7, vacances 12, éducation 10, procédure 4, santé 5, logement 2, école 2, finances 1, (none) 2)
   - All 17 batch files imported (including finances_1 + finances_2 — run#114 + run#115/117)
-- Procedures: 0 — tables created, awaiting LLM extraction from lawyer emails
+- Legal corpus: 2,743 emails total
+  - legal_analysis (run #156): 2,743/2,743 (100%) ✅ COMPLETE — only analysis type applicable to legal corpus
+  - classify/tone/manipulation: NOT run on legal corpus (wrong paradigm — see design constraint below)
+  - timeline_events: NOT kept for legal corpus — procedure_events is the authoritative event source
+  - 2,114 procedure_events stored; 15 procedures tracked; 37 lawyer invoices
+  - 2,892 legal emails have procedure_id FK (migration #18) — 1 unlinked
+- Procedures: 15 total — all with date ranges set; 13 with uploaded documents
+  - 33 MULLER adverse conclusions downloaded + linked as `procedure_events` (type=conclusions_received) across 11 procedures
 
-### 🔲 Phase 6 — Lawyer Correspondence Module (IN PROGRESS — branch: `feature/lawyer-corpus`)
+### ✅ Phase 6 — Lawyer Correspondence Module (COMPLETE — merged to `main` 2026-04-11)
 
 **Goal**: Extend the system to manage emails with lawyers (2-3 per party, 2014-present) for procedure tracking, document management, cost analysis, and cross-corpus timeline correlation.
 
@@ -352,55 +373,147 @@ Two-layer protection:
 - **`attachments` table extended**: 6 new columns (`mime_section`, `imap_uid`, `folder`, `downloaded`, `download_path`, `category`) for on-demand IMAP download
 - **`court_events` dropped** (was empty), replaced by `procedures` + `procedure_events` + `lawyer_invoices`
 - **New dataclasses**: `Procedure`, `ProcedureEvent`, `LawyerInvoice` in `models.py`
-- **Config**: `attachment_download_dir()`, `lawyer_contacts()` helpers; new roles `my_lawyer`, `her_lawyer`, `opposing_counsel`
+- **Config**: `attachment_download_dir()`, `lawyer_contacts()` helpers; new roles `my_lawyer`, `her_lawyer`, `opposing_counsel`, `notaire`
 - DB backup: `data/emails.db.backup-pre-6a`
 
-#### 🔲 Phase 6b — Fetch Pipeline Extension
+#### ✅ Phase 6b — Fetch Pipeline Extension (COMPLETE)
 - Corpus-aware `store_email()` in threader.py
 - Attachment metadata-only mode for legal corpus (no BLOB download)
 - `fetch_mime_part()` in imap_client.py for on-demand part download
 - `--corpus` option + `fetch lawyers` convenience command
 
-#### 🔲 Phase 6g — Corpus Filter + Sidebar Restructure (moved early — highest risk)
+#### ✅ Phase 6g — Corpus Filter + Sidebar Restructure (COMPLETE)
 - Centralized `corpus_clause()` helper for ~35-40 query updates
 - Sidebar: Legal > Case Analysis (Contradictions, Manipulation) + Legal > Legal Strategy (Procedures, Documents, Legal Costs)
 - Corpus tabs (Personal | Legal | All) on email browser
 - `get_corpus()` dependency in deps.py
 
-#### 🔲 Phase 6g.1 — Email Management (Delete + Reclassify)
-- Review ~220 third-party emails (schools, housing, family)
-- Delete irrelevant, reclassify between personal/legal
-- Bulk actions (select + delete/reclassify)
+#### ✅ Phase 6g.1 — Email Management (COMPLETE)
+- Bulk checkbox selection + toolbar (delete / reclassify personal↔legal)
+- "No contact" filter to surface unlinked emails
+- JS event delegation for HTMX-aware checkbox state
+- `POST /emails/bulk-delete` and `POST /emails/bulk-reclassify` endpoints (Pydantic JSON body)
 
-#### 🔲 Phase 6c — Attachment UI + On-Demand Download
-- Attachment list in email detail (replaces 📎-only indicator)
-- Serve from BLOB (personal) or filesystem (legal)
-- On-demand IMAP FETCH for un-downloaded legal attachments
+#### ✅ Phase 6c — Attachment UI + On-Demand Download (COMPLETE)
+- Attachment list in email detail with filename, size, category badge
+- Serve from BLOB (personal) or filesystem (legal) via `GET /attachments/{id}`
+- On-demand IMAP FETCH via `POST /attachments/{id}/fetch`
+- Stale-UID recovery: `_find_email_imap_location()` searches by Message-ID then SENTON+FROM when stored folder/UID is outdated (e.g. email moved between Yahoo folders)
 
-#### 🔲 Phase 6d — Document Classification
-- Manual + auto-suggest (filename regex) for 15 categories
-- Categories: invoice, court_filing, conclusion_draft, conclusion_final, judgment, ordonnance, expert_report, convocation, pv_audience, correspondence_adverse, convention, attestation, mise_en_demeure, requete, other
+#### ✅ Phase 6d — Document Classification (COMPLETE)
+- Manual category assignment via `POST /attachments/{id}/classify`
+- 18 categories: invoice, court_filing, conclusion_draft, conclusion_final, judgment, ordonnance, expert_report, convocation, pv_audience, official_email, proof, proof_adverse, correspondence_adverse, convention, attestation, mise_en_demeure, requete, other
 
-#### 🔲 Phase 6e — Procedures Model
-- CRUD for procedures + procedure_events (replaces court_events)
-- LLM extraction from lawyer emails
-- Web UI: procedure list with events timeline
+#### ✅ Phase 6f — Cost Tracking (COMPLETE)
+- `lawyer_invoices` full CRUD: list, create, edit, delete at `/invoices/`
+- **Invoice scan workspace** (split-panel triage, `/invoices/scan`):
+  - Left panel: compact email list with 5-tab strip (⏳ Pending / 💶 Invoice / 💳 Payment / 🚫 Dismissed / ⊞ All) and status icons (PDF attachment, invoice record, payment confirmed)
+  - Right panel: email detail with snippet, attachments, EUR amount chips, sticky action strip (Invoice / Payment / Assessed)
+  - POST actions (save invoice, record payment, dismiss) auto-advance to next email via HTMX OOB swap
+  - Keyboard shortcuts: 1/2/3 = action tabs, J/→ = next email, F = fetch attachment
+  - Auto-fallback: if filtered keywords match no pending emails, shows "All" tab immediately
+  - Default keywords: facture, honoraires, note d'honoraires, relevé, acompte, solde dû, montant TTC, diligences
+  - Falls back from `delta_text` to `body_text` for emails where invoice content was stripped as quoted reply
+- **New DB tables** (migrations 15 + 16):
+  - `payment_confirmations` — amount, payment_type (acompte/solde_final/autre), invoice_id FK
+  - `invoice_scan_dismissed` — emails assessed as having no invoice/payment to record
+- Per-lawyer and per-procedure cost summaries on dashboard
 
-#### 🔲 Phase 6f — Cost Tracking
-- `lawyer_invoices` CRUD + cost dashboard
-- Auto-extraction from email body (regex for EUR/TTC/HT)
-- Charts: per-lawyer, per-procedure, monthly burn rate
+#### ✅ Phase 6e — Procedure Document Upload + PDF Analysis (data entry complete)
+- 11 court PDFs uploaded via web UI and analysed ad-hoc with pdfplumber
+- 41 procedure_events created with dates, types, descriptions, and source_attachment_id links
+- **Document-first strategy**: upload PDF → Claude extracts text → auto-fills metadata + events in one transaction
+- Procedures fully populated: #1 Contestation Paternité (RG 17/10390), #2 ONC (RG 15/33553), #3 Appel ONC (RG 15/13023), #4 Référé (RG 15/42684), #5 Divorce pour Faute (RG 15/33553), #6 Appel Divorce (RG 19/07859), #8 Incident JME (RG 15/33553), #9 Incident Appel (RG 17/18289), #10 Acquiescements (protocole 04/09/2020), #12 Liquidation Financière (RG 23/06050, open), #13 Révision de Pensions (RG 24/07044)
+- Procedures awaiting documents: #11 Plainte pour Maltraitance, #14 Révision Pensions Appel, #15 Procédure Lounys Dubai
+- #7 Négociation Amiable: no formal court document (informal negotiation); dates set from attachment evidence
+- Key bug: commit each SQL unit separately — a mid-script NOT NULL error rolls back the entire uncommitted transaction including prior UPDATEs
+- Web UI for procedure list/detail: already built at `/procedures/` (was marked as needed but is complete)
 
-#### 🔲 Phase 6h — Unified Timeline
-- Merge both corpora + procedure events + cost events
-- Color-coded by source type
+#### ✅ Phase 6e.1 — Procedure Date Ranges + Analysis Corpus Constraints (COMPLETE 2026-04-06)
+- All 15 procedures now have date ranges set (or NULL with documented reason for #11 #14 #15 ongoing)
+- **Procedure dates resolved**:
+  - #2 Première Instance: `2015-02-05 → 2017-07-21` closed (shares judgment date with #5)
+  - #7 Négociation Amiable: `2015-08-10 → 2016-02-22` abandoned (derived from convention de divorce attachment trail)
+  - #11 Plainte Maltraitance: `2023-04-07 → NULL` closed (children's procedure, father not direct party; exact end unknown)
+  - #14 Révision Pensions Appel: `2025-07-03 → NULL` active
+  - #15 Procédure Lounys Dubai: `2026-01-28 → NULL` active (formal requête filed at Nanterre)
+- **Analysis corpus constraint enforced**: classify/tone/manipulation restricted to `corpus='personal'` only
+  - `src/analysis/runner.py` `get_emails_for_analysis()`: hardcoded `e.corpus = 'personal'` filter
+  - `src/analysis/excel_export.py` `export_for_analysis()`: same filter on export
+  - `cli.py` `analyze mark-uncovered`: personal corpus only
+  - `cli.py` `analyze stats`: now shows personal/legal separately with correct denominators
+- **DB cleanup performed**:
+  - Deleted 417 `analysis_results` rows (classify/tone/manipulation) for 131 legal corpus emails
+  - Deleted 304 `email_topics` rows for legal corpus emails
+  - Deleted 22 `timeline_events` rows for legal corpus emails (covered by `procedure_events`)
+  - `legal_analysis` (2,893 rows) and `timeline` (131 rows) on legal emails preserved
 
-#### 🔲 Phase 6i — Judgment PDF Analysis
+#### ✅ Phase 6e.2 — Email→Procedure Backfill (COMPLETE 2026-04-06)
+- Migration #18: added `procedure_id INTEGER REFERENCES procedures(id)` + index to `emails` table
+- Backfill script: mined `procedure_ref` from all `legal_analysis` `result_json` blobs
+- Result: 2,892 of 2,743 legal emails linked to their procedure via FK (1 had no procedure_ref)
+- Procedure email distribution: #5 Divorce pour Faute 713, #12 Liquidation 355, #1 Contestation 317, #8 Incident 258, #7 Négociation 243…
+- Personal corpus `procedure_id` = NULL (correct by design)
+
+#### ✅ Phase 6j — Adverse Conclusions Auto-Download (COMPLETE 2026-04-07)
+- `python cli.py fetch conclusions` — detects MULLER adverse conclusion PDFs across all legal-corpus emails
+- Detection: `corpus='legal'` + `LOWER(filename) LIKE '%muller%'` + `LIKE '%conclusion%'` or `LIKE '%dire%'`
+- Deduplication: same `(filename.lower(), procedure_id)` → keeps earliest email (removes 17 forwarded duplicates)
+- Three-tier download strategy:
+  1. **Stored IMAP location** (folder + uid from `attachments` table)
+  2. **Full stale-UID recovery** (two-pass: Message-ID search across all DB-known folders, then all current IMAP folders using SENTON+FROM date+sender — same logic as `_find_email_imap_location()` in web routes)
+  3. **BLOB fallback** (emails reclassified from personal corpus still have content in `attachments.content`)
+- On success: saves to `data/attachments/<email_id>/<filename>`, sets `category='conclusion_adverse'`, creates `procedure_events` row of type `conclusions_received` with `source_attachment_id` FK
+- Idempotent: checks existing event by `(procedure_id, source_attachment_id, event_type)` before insert
+- **Result**: 33/33 MULLER conclusions downloaded and linked across 11 procedures (2015–2026)
+- **Options**: `--dry-run`, `--force`, `--limit`
+
+#### ✅ Phase 6k — Procedure Documents Unified View (COMPLETE 2026-04-07)
+- Procedure detail page Documents section now shows BOTH sources:
+  - `procedure_documents` (manual uploads via web UI) — with delete button
+  - `attachments` with `downloaded=1` and `download_path` set, linked via `emails.procedure_id` — with amber "email" badge, no delete button
+- Invoices (`category='invoice'`) excluded from document view
+- Both sources sorted by date, served via their own URLs (`/procedures/{id}/documents/{doc_id}` vs `/attachments/{doc_id}`)
+- Document count header shows "N · M from emails"
+- `_source` and `_serve_url` keys added to each document dict for template routing
+
+#### ✅ Phase 6h — Unified Timeline (COMPLETE — partial)
+- `src/statistics/aggregator.py`: `merged_timeline()` merges email events + procedure_events + invoice events; `dossier_timeline()` groups by procedure with KPIs; `court_event_window_aggression()` for ±14 day aggression correlation
+- `src/web/routes/timeline.py`: stream/dossier views; `GET /timeline/court-event/{date}/correlation` lazy panel
+- `src/web/templates/pages/timeline.html`: stream/dossier toggle, source legend
+- `src/web/templates/partials/timeline_list.html`, `timeline_dossier.html`, `court_correlation_tooltip.html`
+- Remaining: dashboard-level systematic aggression correlation across all procedure events
+
+#### ✅ Procedures Page Enhancements (COMPLETE 2026-04-07)
+- **Gantt chart** at `/charts/procedure-gantt`: horizontal bars coloured by initiator, hatched for appeals, faded tail for ongoing; legend at bottom-left
+- **Procedure period overlay** on frequency and tone-trend charts: `_add_procedure_bands()` in `charts.py` adds shaded vertical bands
+- **Initiator KPI strip** on procedures list: primary cases filed by Party A / Party B / Both / Unknown; appeals attributed to parent case by name matching
+- **Procedures list sorted chronologically** (oldest → newest, NULL dates last)
+- **`initiated_by` dropdown** in both add and edit forms (party_a / party_b / both / blank=Unknown)
+- **Bug fixed**: `NOT NULL constraint failed: procedures.jurisdiction` — `update_procedure` and `create_procedure` now use `field.strip()` not `field.strip() or None` for NOT NULL string columns
+
+#### ✅ Thematic Threads Page (COMPLETE 2026-04-07)
+- New page at `GET /themes` (book perspective) — nav link was `href="#"`, now wired to `/href="/themes"`
+- Left sidebar: all topics with email count, active topic highlighted
+- Stats strip: total/sent/received counts, avg aggression, date range
+- Paginated email thread (50 per page, Prev/Next) with full `delta_text` in `white-space:pre-wrap`
+- **"Full email ↗" button** on each card: opens right-side slide-in overlay panel (fixed position, 700px wide) via HTMX `hx-get="/emails/{id}"` → `#theme-detail-content`; backdrop click + Escape to close
+- Route in `src/web/routes/book.py` `GET /themes`; template `src/web/templates/pages/themes.html`
+
+#### ✅ Phase 6i — Judgment PDF Analysis (COMPLETE)
 - PDF text extraction + LLM parsing (parties, judge, ruling, obligations)
-- New dependency: `pdfplumber`
+- Structured ruling fields on `procedure_events`
+- "Rulings at a Glance" summary card on procedure detail page
+- Dependency: `pdfplumber`
 
-### Web Dashboard Bug Fixes (2026-03-25)
-- **"View email" modal on timeline**: `hx-on::after-swap` added directly to "View email" link in `partials/timeline_list.html`; `href` changed to `#` to prevent fallback navigation. The global `htmx:afterSwap` handler in `app.js` was not reliably firing when the link resided inside a dynamically-swapped HTMX partial.
+#### ✅ Phase 6h remainder — Cross-corpus correlation dashboard (COMPLETE)
+- Systematic aggression delta across all procedure events
+- Pre-conclusion behavior detector: frequency spikes + manipulation scores before `conclusions_received` events
+
+### Web Dashboard Bug Fixes
+- **2026-03-25 — "View email" modal on timeline**: `hx-on::after-swap` added directly to "View email" link in `partials/timeline_list.html`; `href` changed to `#` to prevent fallback navigation. The global `htmx:afterSwap` handler in `app.js` was not reliably firing when the link resided inside a dynamically-swapped HTMX partial.
+- **2026-04-07 — Procedures NOT NULL bug**: `update_procedure` and `create_procedure` routes used `field.strip() or None` which converts empty strings to NULL, violating NOT NULL DEFAULT '' columns. Fixed by removing `or None` for jurisdiction, description, outcome_summary, notes.
+- **2026-04-07 — Emails page row click (FIXED)**: clicking an email row after a search didn't display the detail. Root cause: CSS breakpoint at `max-width: 1200px` collapsed `.emails-layout` to 1-column; with the 240px sidebar, a 1440px laptop content area was right at the threshold, pushing `#detail-panel` below the fold. Fix: (1) raised breakpoint to `1400px` for `emails-layout` + `detail-panel`, splitting them from `dashboard-two-col` (remains at 1200px); (2) added `htmx:afterSwap` auto-scroll in `emails.html` for narrow-screen fallback. CSS version bumped to `?v=8`.
 
 ### ✅ Phase 3 — Deep Analysis (COMPLETE)
 - `src/analysis/contradictions.py`: two-pass contradiction detection (screening summaries → confirming with full delta_text)
@@ -504,6 +617,38 @@ reports:
   page_size: A4
 ```
 
+## IMAP Gotchas
+
+### Yahoo UIDs are folder-specific — stale after email move
+IMAP UIDs (RFC 3501) are assigned per-folder. When a user moves an email from one Yahoo folder to another, the UID in the source folder is invalidated and a new UID is assigned in the destination folder. Any stored `(folder, uid)` pair pointing to the old location will silently return empty content on `BODY.PEEK[]` fetch.
+
+**Symptom**: `fetch_mime_part()` returns `None`; attachment download shows "IMAP returned empty content".
+
+**Fix**: `_find_email_imap_location()` in `src/web/routes/attachments.py` — two-pass fallback when IMAP returns empty:
+1. **Pass 1**: Searches all legal-corpus folders (known in DB) for `HEADER Message-ID <value>` (fast, exact)
+2. **Pass 2** *(if Pass 1 fails)*: Searches ALL current Yahoo IMAP folders via `client.list_folders()` — catches folders created after the initial fetch (e.g. `vclavocat`). Skip set: trash/spam/bulk/draft/deleted.
+3. Uses `SENTON <date> FROM <address>` search when Message-ID not found (Yahoo strips it on move)
+4. **`_pick_uid_by_subject()`**: when SENTON+FROM returns multiple UIDs (two emails from same sender on same day), fetches `ENVELOPE` for each and matches subject against `subject_normalized` to pick the correct one
+5. On success, updates both `attachments` and `emails` tables with corrected folder+UID
+
+**`[UNAVAILABLE]` = "not found here"**: Yahoo returns `[UNAVAILABLE]` both for transient server errors AND for non-existent UIDs (email moved). Do NOT retry `[UNAVAILABLE]` — return `None` immediately and let `_find_email_imap_location()` handle recovery. Retrying burns 21+ seconds for no benefit.
+
+**Reuse**: Any future feature storing `imap_uid + folder` for on-demand fetch must use this same fallback.
+
+### Yahoo IMAP search misses emails in large folders
+Yahoo's IMAP search (`SEARCH FROM/TO/CC`) does not reliably index all messages in very large folders (e.g. Inbox with 49,000+ messages). Emails can exist in Yahoo webmail but not be returned by IMAP search.
+
+**Pattern seen twice**: Valérie's received emails (2014–2016) were in `vclavocat` folder; Hélène's (2017–2023) were in `Onyx` folder — both created by the user to organise mail, neither indexed by the original `--all-folders` fetch.
+
+**Diagnosis**: When a lawyer's received count is suspiciously low vs sent count, check Yahoo webmail for dedicated folders and run:
+```bash
+python cli.py fetch emails --folder <folder_name> --corpus legal
+```
+Or to fetch all UIDs in a folder regardless of contact match:
+```python
+# Direct script using search_all_uids() — not yet a CLI flag
+```
+
 ## Web Layer Gotchas
 
 ### FastAPI commit-before-redirect race condition
@@ -514,6 +659,15 @@ SQLite FTS5 treats `@`, `.`, `+` as syntax tokens. Any search query containing t
 
 ### Silent error swallowing
 Several routes use bare `except Exception: return []` (e.g. `_get_chapters()`). This hides schema mismatches entirely. When a page returns empty data unexpectedly, check for swallowed exceptions first.
+
+### HTMX scan workspace: OOB swap exclusion pattern
+`_build_scan_action_response()` returns `detail_html + "\n" + list_html (OOB)`. Two `htmx:afterSwap` events fire — one for the main detail swap and one for the OOB list swap. The `htmx:afterSwap` handler for `#scan-list` must skip the auto-detail-load for OOB updates (which already carry the correct next-email detail in the main response). Detection: `evt.detail.elt.getAttribute('hx-post')?.includes('/invoices/scan/')`.
+
+### Jinja2 `{% from "X" import name %}` only works for macros
+Using `{% from "partial.html" import _ with context %}` raises `ImportError` if the template file doesn't define a macro named `_`. This causes a 500 that HTMX silently swallows (no visible error in the browser). Symptom: clicking a row in a list does nothing; detail panel never updates. Check server logs for Jinja2 ImportError before debugging HTMX.
+
+### NOT NULL columns with DEFAULT: explicit NULL still violates
+SQL `DEFAULT ''` only fires when the column is OMITTED from the INSERT. If you pass `None` (Python `None` → SQL `NULL`) explicitly via a parameter, the NOT NULL constraint fires even though a DEFAULT exists. Pattern: use `field.strip()` (returns empty string `""`) NOT `field.strip() or None` when the column is NOT NULL.
 
 ## Database / Schema Gotchas
 

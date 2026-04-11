@@ -1,0 +1,293 @@
+{% extends "base.html" %}
+{% block title %}Scan Emails — Legal Costs{% endblock %}
+
+{% block content %}
+<style>
+/* ── Scan workspace layout ───────────────────────────────────────────────── */
+.scan-workspace {
+  display: flex;
+  flex-direction: column;
+  height: calc(100vh - 120px); /* full viewport minus topbar + page-header */
+  min-height: 500px;
+}
+
+/* Filter bar */
+.scan-filter-bar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-4);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  margin-bottom: var(--space-3);
+  flex-wrap: wrap;
+  flex-shrink: 0;
+}
+.scan-filter-bar .filter-toggle {
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-muted);
+  user-select: none;
+  white-space: nowrap;
+}
+.scan-filter-bar .filter-toggle:hover { color: var(--text); }
+.scan-filter-expanded {
+  display: flex;
+  align-items: flex-end;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+  width: 100%;
+  padding-top: var(--space-2);
+  border-top: 1px solid var(--border);
+  margin-top: var(--space-2);
+}
+
+/* Split panels — height is set dynamically by syncScanHeight() so both panels
+   are always exactly as tall as the right-panel content (capped at viewport). */
+.scan-panels {
+  display: flex;
+  flex-shrink: 0;           /* JS controls exact height; don't stretch */
+  min-height: 200px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg);
+}
+
+.scan-panel-list {
+  width: 280px;
+  min-width: 220px;
+  flex-shrink: 0;
+  border-right: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--bg);
+}
+
+.scan-panel-detail {
+  flex: 1;
+  overflow-y: auto;         /* scrolls when email is taller than the panel */
+  display: flex;
+  flex-direction: column;
+  position: relative;
+}
+
+/* Keyboard hint bar */
+.scan-kbd-hints {
+  display: flex;
+  gap: var(--space-3);
+  align-items: center;
+  padding: 4px var(--space-4);
+  background: var(--surface);
+  border-top: 1px solid var(--border);
+  font-size: 10px;
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+.scan-kbd-hints kbd {
+  display: inline-block;
+  padding: 1px 4px;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  background: var(--bg);
+  font-family: monospace;
+  font-size: 10px;
+}
+
+/* Loading state for detail panel */
+.scan-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
+/* htmx indicator */
+.htmx-indicator { opacity: 0; transition: opacity 200ms ease-in; }
+.htmx-request .htmx-indicator { opacity: 1; }
+.htmx-request.htmx-indicator { opacity: 1; }
+</style>
+
+<div class="page-header" style="margin-bottom:var(--space-3)">
+  <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:var(--space-2)">
+    <div>
+      <a href="/invoices/" class="text-muted text-sm" style="text-decoration:none">← Legal Costs</a>
+      <h1 class="page-title" style="margin-top:2px">🔍 Invoice Scan</h1>
+    </div>
+    <div style="font-size:12px;color:var(--text-muted)">
+      Use <kbd style="border:1px solid var(--border);border-radius:3px;padding:1px 4px;background:var(--surface);font-family:monospace">1</kbd>
+      <kbd style="border:1px solid var(--border);border-radius:3px;padding:1px 4px;background:var(--surface);font-family:monospace">2</kbd>
+      <kbd style="border:1px solid var(--border);border-radius:3px;padding:1px 4px;background:var(--surface);font-family:monospace">3</kbd> for tabs ·
+      <kbd style="border:1px solid var(--border);border-radius:3px;padding:1px 4px;background:var(--surface);font-family:monospace">J</kbd> next ·
+      <kbd style="border:1px solid var(--border);border-radius:3px;padding:1px 4px;background:var(--surface);font-family:monospace">F</kbd> fetch attachment
+    </div>
+  </div>
+</div>
+
+<div class="page-body" style="padding:0;display:flex;flex-direction:column">
+
+  <!-- ── Filter bar ─────────────────────────────────────────────────────── -->
+  <div class="scan-filter-bar">
+    <span class="filter-toggle" onclick="toggleFilters(this)">
+      ⚙ Filters <span id="filter-summary" style="font-weight:400;margin-left:4px">
+        ({{ keywords_str[:40] }}{% if keywords_str|length > 40 %}…{% endif %}{% if require_amount %} · €{% endif %})
+      </span>
+      <span id="filter-chevron">▾</span>
+    </span>
+
+    <div id="scan-filters" style="display:none;width:100%">
+      <form id="scan-filter-form"
+            hx-get="/invoices/scan/list?tab={{ active_tab }}"
+            hx-target="#scan-list"
+            hx-swap="outerHTML"
+            hx-push-url="false"
+            class="scan-filter-expanded">
+
+        <div class="filter-group" style="flex:1;min-width:260px">
+          <label class="form-label">Keywords <span class="text-muted" style="font-weight:400">— comma-separated</span></label>
+          <input type="text" name="keywords" value="{{ keywords_str }}"
+                 placeholder="{{ default_keywords }}" style="width:100%">
+        </div>
+
+        <div class="filter-group" style="flex-shrink:0">
+          <label class="form-label" style="display:flex;align-items:center;gap:6px;cursor:pointer">
+            <input type="checkbox" name="require_amount" value="true"
+                   {% if require_amount %}checked{% endif %} style="width:auto">
+            Require € amount
+          </label>
+        </div>
+
+        <div style="display:flex;gap:var(--space-2);flex-shrink:0;align-items:flex-end">
+          <button type="submit" class="btn btn-primary" style="font-size:12px">
+            <span>Search</span>
+            <span class="htmx-indicator" style="margin-left:4px">…</span>
+          </button>
+          <a href="/invoices/scan" class="btn btn-secondary" style="font-size:12px;text-decoration:none">↺ Reset</a>
+        </div>
+
+      </form>
+    </div>
+  </div>
+
+  <!-- ── Split panels ───────────────────────────────────────────────────── -->
+  <div class="scan-panels">
+
+    <!-- Left: email list (loaded via HTMX on mount) -->
+    <div class="scan-panel-list">
+      <div id="scan-list"
+           hx-get="/invoices/scan/list?{{ scan_qs }}"
+           hx-trigger="load"
+           hx-swap="outerHTML">
+        <div class="scan-loading">Loading…</div>
+      </div>
+    </div>
+
+    <!-- Right: email detail (loaded via HTMX on mount) -->
+    <div class="scan-panel-detail">
+      <div id="scan-detail"
+           hx-get="/invoices/scan/detail?{{ scan_qs }}"
+           hx-trigger="load"
+           hx-swap="outerHTML">
+        <div class="scan-loading">Loading…</div>
+      </div>
+    </div>
+
+  </div>
+
+</div>
+
+<script>
+function toggleFilters(btn) {
+  var panel = document.getElementById('scan-filters');
+  var chevron = document.getElementById('filter-chevron');
+  var visible = panel.style.display !== 'none';
+  panel.style.display = visible ? 'none' : 'block';
+  chevron.textContent = visible ? '▾' : '▴';
+}
+
+/* ── syncScanHeight ──────────────────────────────────────────────────────────
+   Sets .scan-panels height = detail content height, capped at the available
+   viewport space below the panels top edge.  Both panels stretch to this
+   height (align-items: stretch, the flex default), so the list panel is never
+   taller than the right-side content — no need to scroll the list to find
+   context. Called after every detail swap and on window resize.
+*/
+function syncScanHeight() {
+  var detail = document.getElementById('scan-detail');
+  var panels = document.querySelector('.scan-panels');
+  if (!detail || !panels) return;
+
+  /* Viewport space available from the top of the panels container */
+  var panelsTop = panels.getBoundingClientRect().top;
+  var viewportCap = Math.max(200, window.innerHeight - panelsTop - 16);
+
+  /* Natural content height of the detail (includes action strip) */
+  var detailNatural = detail.scrollHeight;
+
+  panels.style.height = Math.min(detailNatural, viewportCap) + 'px';
+}
+
+window.addEventListener('resize', syncScanHeight);
+
+/* Unified htmx:afterSwap handler for the scan workspace.
+   Two responsibilities:
+   1. When the list panel is updated by user interaction (tab switch or filter change),
+      auto-load the first visible email into the detail panel.
+   2. When the detail panel changes, sync the active-row highlight in the list.
+
+   OOB swaps from action routes (invoice / payment / dismiss) are excluded from #1
+   because those routes already return the correct next-email detail in the main response.
+   We identify them by checking whether the triggering element has hx-post="/invoices/scan/…".
+*/
+document.body.addEventListener('htmx:afterSwap', function(evt) {
+  var target = evt.detail.target;
+  if (!target) return;
+
+  /* ── List panel was updated ────────────────────────────────────────────── */
+  if (target.id === 'scan-list') {
+    var elt = evt.detail.elt;
+    /* Skip if this was an OOB update triggered by an action POST route */
+    if (elt) {
+      var hxPost = elt.getAttribute ? elt.getAttribute('hx-post') : null;
+      if (hxPost && hxPost.indexOf('/invoices/scan/') !== -1) return;
+    }
+    /* Auto-load detail for the first visible email row */
+    var firstRow = document.querySelector('#scan-list .sl-row');
+    if (firstRow) {
+      htmx.ajax('GET', firstRow.getAttribute('hx-get'), {
+        target: '#scan-detail',
+        swap:   'outerHTML',
+      });
+    } else {
+      /* No emails — size the empty panel to a sensible default */
+      syncScanHeight();
+    }
+    return;
+  }
+
+  /* ── Detail panel was updated → sync height + active-row highlight ────── */
+  if (target.id === 'scan-detail') {
+    var detail = document.getElementById('scan-detail');
+    if (!detail) return;
+    /* Read email_id from the hidden scan_email_id field */
+    var hidden = detail.querySelector('input[name="scan_email_id"]');
+    if (!hidden) return;
+    var eid = parseInt(hidden.value, 10);
+    document.querySelectorAll('.sl-row').forEach(function(r) {
+      r.classList.toggle('active', parseInt(r.dataset.emailId, 10) === eid);
+    });
+    /* Scroll the active row into view */
+    var active = document.querySelector('.sl-row.active');
+    if (active) active.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    /* Resize both panels to match the new detail content height */
+    syncScanHeight();
+  }
+});
+</script>
+
+{% endblock %}

@@ -14,7 +14,7 @@
       <span class="badge badge-primary">{{ email.language|upper }}</span>
       {% endif %}
       {% if email.has_attachments %}
-      <span class="text-xs text-muted">📎</span>
+      <span class="text-xs text-muted">📎 {{ email.attachments | length if email.attachments else '' }}</span>
       {% endif %}
     </div>
 
@@ -40,7 +40,11 @@
 
     <!-- Actions -->
     <div style="margin-top:var(--space-3);display:flex;gap:var(--space-2);flex-wrap:wrap">
-      <a href="/emails/{{ email.id }}" class="btn btn-secondary btn-sm">Open full page</a>
+      <a href="/emails/{{ email.id }}"
+         class="btn btn-secondary btn-sm"
+         onclick="this.href='/emails/{{ email.id }}?back='+encodeURIComponent(window.location.href)">
+        Open full page
+      </a>
 
       <button class="btn btn-secondary btn-sm"
               hx-get="/emails/{{ email.id }}/thread"
@@ -100,6 +104,12 @@
     </div>
     {% endif %}
   </div>
+  {% endif %}
+
+  <!-- Attachments -->
+  {% if email.attachments %}
+  {% set attachments = email.attachments %}
+  {% include "partials/attachment_list.html" %}
   {% endif %}
 
   <!-- Notes panel -->

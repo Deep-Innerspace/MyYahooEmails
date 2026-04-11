@@ -1,0 +1,36 @@
+{% if before.count or after.count %}
+<div class="corr-panel">
+  <div class="corr-row">
+    <div class="corr-cell">
+      <div class="corr-label">{{ window_days }}d before</div>
+      <div class="corr-stat">{{ before.count }} emails</div>
+      {% if before.avg is not none %}
+      <div class="corr-bar-wrap" title="Aggression {{ before.avg }}">
+        <div class="corr-bar" style="width:{{ (before.avg * 100) | int }}%;background:var(--aggression)"></div>
+      </div>
+      <div class="corr-score" style="color:var(--aggression)">{{ "%.2f" | format(before.avg) }}</div>
+      {% else %}
+      <div class="corr-score text-muted">—</div>
+      {% endif %}
+    </div>
+    <div class="corr-divider">⚖</div>
+    <div class="corr-cell">
+      <div class="corr-label">{{ window_days }}d after</div>
+      <div class="corr-stat">{{ after.count }} emails</div>
+      {% if after.avg is not none %}
+      <div class="corr-bar-wrap" title="Aggression {{ after.avg }}">
+        <div class="corr-bar" style="width:{{ (after.avg * 100) | int }}%;background:var(--aggression)"></div>
+      </div>
+      <div class="corr-score" style="color:var(--aggression)">{{ "%.2f" | format(after.avg) }}</div>
+      {% else %}
+      <div class="corr-score text-muted">—</div>
+      {% endif %}
+    </div>
+  </div>
+  {% if baseline is not none %}
+  <div class="corr-baseline text-xs text-muted">Baseline aggression: {{ "%.2f" | format(baseline) }}</div>
+  {% endif %}
+</div>
+{% else %}
+<div class="text-xs text-muted">No personal emails in ±{{ window_days }} day window.</div>
+{% endif %}

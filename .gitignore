@@ -25,6 +25,12 @@ env/
 .idea/
 *.swp
 
+# Claude Code local settings
+.claude/
+
+# Local working files
+*.rtf
+
 # Pytest
 .pytest_cache/
 .coverage

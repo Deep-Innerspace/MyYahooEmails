@@ -42,6 +42,8 @@ from src.reports.charts import (
     manipulation_pattern_freq_chart,
     manipulation_score_dist_chart,
     manipulation_patterns_time_chart,
+    procedure_gantt_chart,
+    aggression_events_chart,
 )
 
 router = APIRouter()
@@ -53,16 +55,64 @@ def _png_response(chart_path: Path) -> StreamingResponse:
     return StreamingResponse(io.BytesIO(data), media_type="image/png")
 
 
+def _get_procedures(conn: sqlite3.Connection):
+    """Fetch all procedures for overlay bands."""
+    rows = conn.execute(
+        "SELECT id, name, procedure_type, initiated_by, date_start, date_end "
+        "FROM procedures ORDER BY date_start"
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+
+@router.get("/procedure-gantt")
+async def chart_procedure_gantt(
+    conn: sqlite3.Connection = Depends(get_conn),
+):
+    """Horizontal Gantt chart of all procedures coloured by initiator."""
+    procs = _get_procedures(conn)
+    with tempfile.TemporaryDirectory() as tmp:
+        path = procedure_gantt_chart(procs, Path(tmp))
+        return _png_response(path)
+
+
+@router.get("/aggression-timeline")
+async def chart_aggression_timeline(
+    date_from: Optional[str] = Query(None),
+    date_to:   Optional[str] = Query(None),
+    conn: sqlite3.Connection = Depends(get_conn),
+):
+    """Monthly aggression/manipulation lines with procedure event markers."""
+    tone_data = tone_trends(conn, by="month", corpus="personal")
+    proc_events = conn.execute(
+        """SELECT pe.event_date, pe.event_type, pe.description, p.name AS procedure_name
+             FROM procedure_events pe
+             JOIN procedures p ON p.id = pe.procedure_id
+            WHERE pe.event_date IS NOT NULL AND pe.event_date != ''
+            ORDER BY pe.event_date"""
+    ).fetchall()
+    proc_events = [dict(r) for r in proc_events]
+    with tempfile.TemporaryDirectory() as tmp:
+        path = aggression_events_chart(
+            tone_data, proc_events, Path(tmp),
+            date_from=date_from, date_to=date_to,
+        )
+        return _png_response(path)
+
+
 @router.get("/frequency")
 async def chart_frequency(
     by: str = Query("quarter"),
     contact: Optional[str] = Query(None),
     corpus: str = Query("personal"),
+    overlay_procedures: bool = Query(True),
     conn: sqlite3.Connection = Depends(get_conn),
 ):
     data = frequency_data(conn, by=by, contact_email=contact, corpus=corpus)
+    procs = _get_procedures(conn) if overlay_procedures else None
     with tempfile.TemporaryDirectory() as tmp:
-        path = frequency_chart(data, Path(tmp), title="Email Volume by Quarter")
+        path = frequency_chart(data, Path(tmp),
+                               title="Email Volume by Quarter",
+                               procedures=procs)
         return _png_response(path)
 
 
@@ -83,11 +133,13 @@ async def chart_tone_trends(
     by: str = Query("month"),
     direction: Optional[str] = Query(None),
     corpus: str = Query("personal"),
+    overlay_procedures: bool = Query(True),
     conn: sqlite3.Connection = Depends(get_conn),
 ):
     data = tone_trends(conn, by=by, direction=direction, corpus=corpus)
+    procs = _get_procedures(conn) if overlay_procedures else None
     with tempfile.TemporaryDirectory() as tmp:
-        path = tone_trend_chart(data, Path(tmp))
+        path = tone_trend_chart(data, Path(tmp), procedures=procs)
         return _png_response(path)
 
 

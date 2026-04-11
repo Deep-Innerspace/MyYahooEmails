@@ -1,11 +1,12 @@
 """Email browser and detail routes."""
 import json
 import sqlite3
-from typing import Optional
-from fastapi import APIRouter, Depends, Query, Request
+from typing import List, Optional
+from fastapi import APIRouter, Depends, Form, Query, Request
 from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
 from pathlib import Path
+from pydantic import BaseModel
 
 from src.web.deps import get_conn, get_perspective
 
@@ -77,6 +78,16 @@ def _get_all_topics(conn):
     return [dict(r) for r in rows]
 
 
+def _get_attachments(conn, email_id: int):
+    rows = conn.execute("""
+        SELECT id, email_id, filename, content_type, size_bytes,
+               mime_section, imap_uid, folder, downloaded, download_path, category,
+               CASE WHEN content IS NOT NULL THEN 1 ELSE 0 END AS has_content
+        FROM attachments WHERE email_id = ? ORDER BY id
+    """, (email_id,)).fetchall()
+    return [dict(r) for r in rows]
+
+
 @router.get("/", response_class=HTMLResponse)
 async def email_list(
     request: Request,
@@ -88,6 +99,7 @@ async def email_list(
     date_from: Optional[str] = Query(None),
     date_to: Optional[str] = Query(None),
     bookmarked: bool = Query(False),
+    unlinked: bool = Query(False),          # only emails with no matched contact
     corpus: str = Query("all"),             # 'all', 'personal', 'legal'
     page: int = Query(1, ge=1),
     conn: sqlite3.Connection = Depends(get_conn),
@@ -99,7 +111,7 @@ async def email_list(
         conn, q=q, topics=topic_list, topic_mode=topic_mode,
         direction=direction, contact=contact,
         date_from=date_from, date_to=date_to,
-        bookmarked=bookmarked, page=page, corpus=corpus,
+        bookmarked=bookmarked, unlinked=unlinked, page=page, corpus=corpus,
     )
 
     all_topics = _get_all_topics(conn)
@@ -121,6 +133,7 @@ async def email_list(
         "date_from": date_from or "",
         "date_to": date_to or "",
         "bookmarked": bookmarked,
+        "unlinked": unlinked,
         "corpus": corpus,
         "all_topics": all_topics,
     }
@@ -143,6 +156,7 @@ async def email_search_partial(
     date_from: Optional[str] = Query(None),
     date_to: Optional[str] = Query(None),
     bookmarked: bool = Query(False),
+    unlinked: bool = Query(False),
     corpus: str = Query("all"),
     page: int = Query(1, ge=1),
     conn: sqlite3.Connection = Depends(get_conn),
@@ -154,7 +168,7 @@ async def email_search_partial(
         conn, q=q, topics=topic_list, topic_mode=topic_mode,
         direction=direction, contact=contact,
         date_from=date_from, date_to=date_to,
-        bookmarked=bookmarked, page=page, corpus=corpus,
+        bookmarked=bookmarked, unlinked=unlinked, page=page, corpus=corpus,
     )
     all_topics = _get_all_topics(conn)
     total_pages = max(1, (total + PAGE_SIZE - 1) // PAGE_SIZE)
@@ -173,6 +187,7 @@ async def email_search_partial(
         "date_from": date_from or "",
         "date_to": date_to or "",
         "bookmarked": bookmarked,
+        "unlinked": unlinked,
         "corpus": corpus,
         "all_topics": all_topics,
     })
@@ -183,6 +198,7 @@ async def email_detail(
     request: Request,
     email_id: int,
     highlight: Optional[str] = Query(None),
+    back: Optional[str] = Query(None),
     conn: sqlite3.Connection = Depends(get_conn),
     perspective: str = Depends(get_perspective),
 ):
@@ -200,6 +216,7 @@ async def email_detail(
     email["analysis"] = _get_email_analysis(conn, email_id)
     email["notes"] = _get_email_notes(conn, email_id)
     email["thread_emails"] = _get_thread_emails(conn, email["thread_id"], email_id)
+    email["attachments"] = _get_attachments(conn, email_id)
 
     # Check bookmark
     bm = conn.execute("SELECT 1 FROM bookmarks WHERE email_id=?", (email_id,)).fetchone()
@@ -215,6 +232,7 @@ async def email_detail(
         "page": "emails",
         "email": email,
         "highlight_terms": highlight.split() if highlight else [],
+        "back_url": back or "/emails/",
     }
 
     if request.headers.get("HX-Request"):
@@ -263,8 +281,49 @@ async def toggle_bookmark(
     })
 
 
+def _build_fts_prefix_query(q: str) -> str:
+    """Convert plain search terms to FTS5 prefix queries.
+
+    Each unquoted word gets a * suffix so 'diligence' matches 'diligences',
+    'garde' matches 'gardes', etc.  Quoted phrases and boolean operators
+    (AND, OR, NOT) are left untouched.
+
+    Examples:
+        'diligence'          → 'diligence*'
+        'diligences'         → 'diligences*'   (same results as above)
+        'garde enfants'      → 'garde* enfants*'
+        '"pension alimentaire"' → '"pension alimentaire"'   (exact phrase)
+        'garde AND pension'  → 'garde* AND pension*'
+    """
+    _BOOL_OPS = {'AND', 'OR', 'NOT'}
+    tokens = q.split()
+    result = []
+    i = 0
+    while i < len(tokens):
+        token = tokens[i]
+        # Preserve boolean operators
+        if token.upper() in _BOOL_OPS:
+            result.append(token.upper())
+        # Preserve quoted phrases — accumulate until closing quote
+        elif token.startswith('"'):
+            phrase = [token]
+            while not token.endswith('"') or token == '"':
+                i += 1
+                if i >= len(tokens):
+                    break
+                token = tokens[i]
+                phrase.append(token)
+            result.append(' '.join(phrase))
+        else:
+            # Plain word — add prefix wildcard (strip any trailing * first)
+            result.append(token.rstrip('*') + '*')
+        i += 1
+    return ' '.join(result)
+
+
 def _search_with_filters(conn, q, topics, topic_mode, direction, contact,
-                          date_from, date_to, bookmarked, page, corpus=None):
+                          date_from, date_to, bookmarked, page, corpus=None,
+                          unlinked=False):
     """Build and execute a filtered email search query."""
     conditions = []
     params = []
@@ -272,6 +331,9 @@ def _search_with_filters(conn, q, topics, topic_mode, direction, contact,
     if corpus and corpus != "all":
         conditions.append("e.corpus = ?")
         params.append(corpus)
+
+    if unlinked:
+        conditions.append("e.contact_id IS NULL")
 
     if bookmarked:
         conditions.append("e.id IN (SELECT email_id FROM bookmarks)")
@@ -320,9 +382,13 @@ def _search_with_filters(conn, q, topics, topic_mode, direction, contact,
             params.extend([like_q, like_q, like_q, like_q])
         else:
             try:
+                # Auto-prefix each word so "diligence" matches "diligences" etc.
+                # Quoted phrases (e.g. "exact phrase") are left intact.
+                # Boolean operators (AND OR NOT) are preserved.
+                fts_q = _build_fts_prefix_query(q)
                 fts_ids = conn.execute(
                     "SELECT rowid FROM emails_fts WHERE emails_fts MATCH ? LIMIT 2000",
-                    (q,)
+                    (fts_q,)
                 ).fetchall()
                 if not fts_ids:
                     return [], 0
@@ -344,7 +410,7 @@ def _search_with_filters(conn, q, topics, topic_mode, direction, contact,
     rows = conn.execute(f"""
         SELECT e.id, e.date, e.from_address, e.from_name, e.subject,
                e.direction, e.language, e.has_attachments, e.delta_text,
-               c.name as contact_name
+               e.corpus, c.name as contact_name
         FROM emails e
         LEFT JOIN contacts c ON e.contact_id = c.id
         {where}
@@ -359,3 +425,111 @@ def _search_with_filters(conn, q, topics, topic_mode, direction, contact,
         emails.append(e)
 
     return emails, count
+
+
+# ── Bulk action models ───────────────────────────────────────────────────────
+
+class BulkIdsRequest(BaseModel):
+    ids: List[int]
+
+
+class BulkReclassifyRequest(BaseModel):
+    ids: List[int]
+    corpus: str
+
+
+# ── Bulk endpoints ────────────────────────────────────────────────────────────
+
+@router.post("/bulk-delete", response_class=HTMLResponse)
+async def bulk_delete_emails(
+    body: BulkIdsRequest,
+    conn: sqlite3.Connection = Depends(get_conn),
+):
+    """Delete multiple emails and all their related data from the local DB."""
+    for email_id in body.ids:
+        conn.execute("DELETE FROM timeline_events WHERE email_id = ?", (email_id,))
+        conn.execute("DELETE FROM email_topics WHERE email_id = ?", (email_id,))
+        conn.execute("DELETE FROM attachments WHERE email_id = ?", (email_id,))
+        conn.execute("DELETE FROM notes WHERE entity_type='email' AND entity_id = ?", (email_id,))
+        conn.execute("DELETE FROM bookmarks WHERE email_id = ?", (email_id,))
+        conn.execute("DELETE FROM analysis_results WHERE email_id = ?", (email_id,))
+        conn.execute("DELETE FROM emails WHERE id = ?", (email_id,))
+    conn.commit()
+    return HTMLResponse("")
+
+
+@router.post("/bulk-reclassify", response_class=HTMLResponse)
+async def bulk_reclassify_emails(
+    body: BulkReclassifyRequest,
+    conn: sqlite3.Connection = Depends(get_conn),
+):
+    """Set corpus on multiple emails at once."""
+    valid = body.corpus if body.corpus in ("personal", "legal") else "personal"
+    for email_id in body.ids:
+        conn.execute("UPDATE emails SET corpus = ? WHERE id = ?", (valid, email_id))
+    conn.commit()
+    return HTMLResponse("")
+
+
+# ── Per-email management (6g.1) ───────────────────────────────────────────────
+
+@router.post("/{email_id}/reclassify", response_class=HTMLResponse)
+async def reclassify_email(
+    request: Request,
+    email_id: int,
+    corpus: str = Form(...),
+    conn: sqlite3.Connection = Depends(get_conn),
+    perspective: str = Depends(get_perspective),
+):
+    """Toggle an email's corpus tag (personal ↔ legal).
+    Returns an updated email row partial for HTMX swap.
+    """
+    valid = corpus if corpus in ("personal", "legal") else "personal"
+    conn.execute("UPDATE emails SET corpus = ? WHERE id = ?", (valid, email_id))
+    conn.commit()
+
+    row = conn.execute("""
+        SELECT e.id, e.date, e.from_address, e.from_name, e.subject,
+               e.direction, e.language, e.has_attachments, e.delta_text,
+               e.corpus, c.name as contact_name
+        FROM emails e LEFT JOIN contacts c ON e.contact_id = c.id
+        WHERE e.id = ?
+    """, (email_id,)).fetchone()
+
+    if not row:
+        return HTMLResponse("")
+
+    e = dict(row)
+    e["topics"] = _get_email_topics(conn, email_id)
+
+    return templates.TemplateResponse("partials/email_row.html", {
+        "request": request,
+        "perspective": perspective,
+        "e": e,
+        "query": "",
+    })
+
+
+@router.post("/{email_id}/delete", response_class=HTMLResponse)
+async def delete_email(
+    request: Request,
+    email_id: int,
+    conn: sqlite3.Connection = Depends(get_conn),
+):
+    """Delete an email and all its related data from the local DB.
+
+    This removes data from the local SQLite database only — it never touches
+    the original email on Yahoo IMAP (which is always read-only).
+    """
+    # Cascade: remove analysis results, topics, timeline events, attachments, notes
+    conn.execute("DELETE FROM timeline_events WHERE email_id = ?", (email_id,))
+    conn.execute("DELETE FROM email_topics WHERE email_id = ?", (email_id,))
+    conn.execute("DELETE FROM attachments WHERE email_id = ?", (email_id,))
+    conn.execute("DELETE FROM notes WHERE entity_type='email' AND entity_id = ?", (email_id,))
+    conn.execute("DELETE FROM bookmarks WHERE email_id = ?", (email_id,))
+    conn.execute("DELETE FROM analysis_results WHERE email_id = ?", (email_id,))
+    conn.execute("DELETE FROM emails WHERE id = ?", (email_id,))
+    conn.commit()
+
+    # Return empty string — HTMX will swap the row out
+    return HTMLResponse("")

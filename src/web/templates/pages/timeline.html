@@ -4,8 +4,8 @@
 {% block content %}
 <div class="page-header">
   <div>
-    <h1 class="page-title">Timeline</h1>
-    <p class="page-subtitle">Chronological view of email events and court proceedings</p>
+    <h1 class="page-title">Unified Timeline</h1>
+    <p class="page-subtitle">Email events · Court proceedings · Legal costs</p>
   </div>
   <div class="flex gap-3 items-center">
     {% if date_from or date_to %}
@@ -24,77 +24,142 @@
     <div class="card-body">
       <form id="timeline-form" style="display:flex;flex-wrap:wrap;gap:var(--space-4);align-items:flex-end">
 
+        <!-- View toggle -->
+        <div class="form-group" style="flex:0 0 auto">
+          <label class="form-label">View</label>
+          <div class="btn-group">
+            <button type="button"
+                    class="btn btn-sm {% if (view | default('stream')) == 'stream' %}btn-primary{% else %}btn-secondary{% endif %}"
+                    onclick="setView('stream')">
+              Stream
+            </button>
+            <button type="button"
+                    class="btn btn-sm {% if (view | default('stream')) == 'dossier' %}btn-primary{% else %}btn-secondary{% endif %}"
+                    onclick="setView('dossier')">
+              Dossier
+            </button>
+            <button type="button"
+                    class="btn btn-sm {% if (view | default('stream')) == 'correlations' %}btn-primary{% else %}btn-secondary{% endif %}"
+                    onclick="setView('correlations')">
+              📊 Correlations
+            </button>
+          </div>
+          <input type="hidden" name="view" id="view-input" value="{{ view | default('stream') }}">
+        </div>
+
         <div class="form-group" style="flex:1;min-width:140px">
           <label class="form-label">From date</label>
           <input type="date" name="date_from" class="form-input" value="{{ date_from }}"
-                 hx-get="/timeline/events"
-                 hx-target="#timeline-list"
-                 hx-trigger="change"
-                 hx-include="#timeline-form">
+                 onchange="reloadCurrentView()">
         </div>
 
         <div class="form-group" style="flex:1;min-width:140px">
           <label class="form-label">To date</label>
           <input type="date" name="date_to" class="form-input" value="{{ date_to }}"
-                 hx-get="/timeline/events"
-                 hx-target="#timeline-list"
-                 hx-trigger="change"
-                 hx-include="#timeline-form">
+                 onchange="reloadCurrentView()">
         </div>
 
-        <div class="form-group" style="flex:1;min-width:120px">
-          <label class="form-label">Significance</label>
-          <select name="significance" class="form-input"
-                  hx-get="/timeline/events"
-                  hx-target="#timeline-list"
-                  hx-trigger="change"
-                  hx-include="#timeline-form">
-            <option value="all" {% if significance == 'all' %}selected{% endif %}>All</option>
-            <option value="high" {% if significance == 'high' %}selected{% endif %}>High</option>
-            <option value="medium" {% if significance == 'medium' %}selected{% endif %}>Medium+</option>
-            <option value="low" {% if significance == 'low' %}selected{% endif %}>Low+</option>
-          </select>
-        </div>
+        <!-- Stream-only filters (hidden in dossier mode) -->
+        <div id="stream-filters" style="display:contents;{% if (view | default('stream')) == 'dossier' %}display:none{% endif %}">
 
-        <div class="form-group" style="flex:1;min-width:140px">
-          <label class="form-label">Source</label>
-          <select name="source" class="form-input"
-                  hx-get="/timeline/events"
-                  hx-target="#timeline-list"
-                  hx-trigger="change"
-                  hx-include="#timeline-form">
-            <option value="all" {% if source == 'all' %}selected{% endif %}>All events</option>
-            <option value="email" {% if source == 'email' %}selected{% endif %}>Email events</option>
-            <option value="court" {% if source == 'court' %}selected{% endif %}>Court events</option>
-          </select>
-        </div>
+          <div class="form-group" style="flex:1;min-width:120px">
+            <label class="form-label">Corpus</label>
+            <select name="corpus" class="form-input" onchange="reloadCurrentView()">
+              <option value="personal" {% if (corpus | default('personal')) == 'personal' %}selected{% endif %}>👤 Personal</option>
+              <option value="legal" {% if (corpus | default('personal')) == 'legal' %}selected{% endif %}>⚖️ Legal</option>
+              <option value="all" {% if (corpus | default('personal')) == 'all' %}selected{% endif %}>All</option>
+            </select>
+          </div>
 
-        {% if all_topics %}
-        <div class="form-group" style="flex:2;min-width:200px">
-          <label class="form-label">Topic filter</label>
-          <select name="topics" class="form-input"
-                  hx-get="/timeline/events"
-                  hx-target="#timeline-list"
-                  hx-trigger="change"
-                  hx-include="#timeline-form">
-            <option value="">All topics</option>
-            {% for t in all_topics %}
-            <option value="{{ t.name }}"
-                    {% if t.name in selected_topics %}selected{% endif %}>
-              {{ t.name }}
-            </option>
-            {% endfor %}
-          </select>
+          <div class="form-group" style="flex:1;min-width:120px">
+            <label class="form-label">Significance</label>
+            <select name="significance" class="form-input" onchange="reloadCurrentView()">
+              <option value="all" {% if significance == 'all' %}selected{% endif %}>All</option>
+              <option value="high" {% if significance == 'high' %}selected{% endif %}>High</option>
+              <option value="medium" {% if significance == 'medium' %}selected{% endif %}>Medium+</option>
+              <option value="low" {% if significance == 'low' %}selected{% endif %}>Low+</option>
+            </select>
+          </div>
+
+          <div class="form-group" style="flex:1;min-width:140px">
+            <label class="form-label">Source</label>
+            <select name="source" class="form-input" onchange="reloadCurrentView()">
+              <option value="all" {% if source == 'all' %}selected{% endif %}>All events</option>
+              <option value="email" {% if source == 'email' %}selected{% endif %}>📧 Email events</option>
+              <option value="court" {% if source == 'court' %}selected{% endif %}>⚖️ Court events</option>
+              <option value="invoice" {% if source == 'invoice' %}selected{% endif %}>💶 Invoices</option>
+            </select>
+          </div>
+
+          {% if all_topics %}
+          <div class="form-group" style="flex:2;min-width:200px">
+            <label class="form-label">Topic filter</label>
+            <select name="topics" class="form-input" onchange="reloadCurrentView()">
+              <option value="">All topics</option>
+              {% for t in all_topics %}
+              <option value="{{ t.name }}"
+                      {% if t.name in selected_topics %}selected{% endif %}>
+                {{ t.name }}
+              </option>
+              {% endfor %}
+            </select>
+          </div>
+          {% endif %}
+
+        </div><!-- /stream-filters -->
+
+        <!-- Correlations-only controls -->
+        <div id="corr-filters"
+             style="display:{% if (view | default('stream')) == 'correlations' %}contents{% else %}none{% endif %}">
+          <div class="form-group" style="flex:0 0 auto">
+            <label class="form-label">Event type</label>
+            <select name="event_type" class="form-input" onchange="reloadCurrentView()"
+                    style="width:auto">
+              {% set et = event_type | default('conclusions_received') %}
+              <option value="conclusions_received" {% if et == 'conclusions_received' %}selected{% endif %}>⚖️ Adverse conclusions</option>
+              <option value="hearing"              {% if et == 'hearing'              %}selected{% endif %}>🏛 Hearings</option>
+              <option value="judgment"             {% if et == 'judgment'             %}selected{% endif %}>📋 Judgments</option>
+              <option value="ordonnance"           {% if et == 'ordonnance'           %}selected{% endif %}>📜 Ordonnances</option>
+              <option value="depot_conclusions"    {% if et == 'depot_conclusions'    %}selected{% endif %}>📤 Own conclusions filed</option>
+              <option value=""                     {% if et == ''                     %}selected{% endif %}>All event types</option>
+            </select>
+          </div>
+          <div class="form-group" style="flex:0 0 auto">
+            <label class="form-label">Window</label>
+            <select name="window_days" class="form-input" onchange="reloadCurrentView()"
+                    style="width:auto">
+              {% set wd = window_days | default(14) | int %}
+              <option value="7"  {% if wd == 7  %}selected{% endif %}>±7 days</option>
+              <option value="14" {% if wd == 14 %}selected{% endif %}>±14 days</option>
+              <option value="21" {% if wd == 21 %}selected{% endif %}>±21 days</option>
+              <option value="30" {% if wd == 30 %}selected{% endif %}>±30 days</option>
+              <option value="60" {% if wd == 60 %}selected{% endif %}>±60 days</option>
+            </select>
+          </div>
         </div>
-        {% endif %}
 
       </form>
     </div>
   </div>
 
+  <!-- Source legend (stream view) -->
+  {% if (view | default('stream')) == 'stream' %}
+  <div class="timeline-legend mb-4">
+    <span class="legend-item"><span class="legend-dot legend-court"></span> Court event</span>
+    <span class="legend-item"><span class="legend-dot legend-email"></span> Email event</span>
+    <span class="legend-item"><span class="legend-dot legend-invoice"></span> Invoice</span>
+  </div>
+  {% endif %}
+
   <!-- Timeline list -->
   <div id="timeline-list" hx-indicator="#loading-bar">
-    {% include "partials/timeline_list.html" %}
+    {% if (view | default('stream')) == 'correlations' %}
+      {% include "partials/timeline_correlations.html" %}
+    {% elif (view | default('stream')) == 'dossier' %}
+      {% include "partials/timeline_dossier.html" %}
+    {% else %}
+      {% include "partials/timeline_list.html" %}
+    {% endif %}
   </div>
 
 </div>
@@ -106,5 +171,36 @@
     <div id="email-modal"></div>
   </div>
 </div>
+
+<script>
+function _currentView() {
+  return document.getElementById('view-input').value || 'stream';
+}
+function reloadCurrentView() {
+  const v = _currentView();
+  const url = (v === 'correlations') ? '/timeline/correlations' : '/timeline/events';
+  const form = document.getElementById('timeline-form');
+  htmx.ajax('GET', url, {
+    target: '#timeline-list',
+    values: Object.fromEntries(new FormData(form))
+  });
+}
+function setView(v) {
+  document.getElementById('view-input').value = v;
+  reloadCurrentView();
+  // Show/hide view-specific filter groups
+  const sf = document.getElementById('stream-filters');
+  if (sf) sf.style.display = (v === 'stream') ? 'contents' : 'none';
+  const cf = document.getElementById('corr-filters');
+  if (cf) cf.style.display = (v === 'correlations') ? 'contents' : 'none';
+  // Update button styles
+  document.querySelectorAll('.btn-group .btn').forEach(btn => {
+    btn.classList.remove('btn-primary');
+    btn.classList.add('btn-secondary');
+  });
+  event.target.classList.remove('btn-secondary');
+  event.target.classList.add('btn-primary');
+}
+</script>
 
 {% endblock %}

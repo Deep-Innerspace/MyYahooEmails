@@ -8,9 +8,11 @@ import matplotlib
 matplotlib.use("Agg")
 
 import matplotlib.pyplot as plt
+import matplotlib.dates as mdates
 from collections import OrderedDict
+from datetime import datetime
 from pathlib import Path
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 # Consistent style
 _STYLE = {
@@ -29,8 +31,194 @@ def _apply_style():
     plt.rcParams.update(_STYLE)
 
 
+# ─── Procedure overlay helpers ────────────────────────────────────────────
+
+_INITIATOR_COLORS = {
+    "party_a": "#3b82f6",   # blue  (you)
+    "party_b": "#ef4444",   # red   (ex-wife)
+    "both":    "#10b981",   # green (mutual)
+}
+_INITIATOR_DEFAULT = "#9ca3af"   # gray (unknown)
+
+
+def _period_start_date(period: str) -> Optional[datetime]:
+    """Convert a period string to its start datetime."""
+    try:
+        if "-Q" in period:
+            year, q = period.split("-Q")
+            return datetime(int(year), (int(q) - 1) * 3 + 1, 1)
+        elif "-W" in period:
+            return datetime.strptime(period + "-1", "%Y-W%W-%w")
+        else:
+            return datetime.strptime(period[:7], "%Y-%m")
+    except Exception:
+        return None
+
+
+def _find_band_range(periods: List[str], date_start: Optional[str],
+                     date_end: Optional[str]):
+    """Return (x_start, x_end) floats for axvspan, given procedure date strings."""
+    if not date_start:
+        return None, None
+    dated = [(i, _period_start_date(p)) for i, p in enumerate(periods)]
+    dated = [(i, d) for i, d in dated if d is not None]
+    if not dated:
+        return None, None
+    try:
+        proc_start = datetime.strptime(date_start[:10], "%Y-%m-%d")
+        proc_end = (datetime.strptime(date_end[:10], "%Y-%m-%d")
+                    if date_end else datetime(2027, 12, 31))
+    except Exception:
+        return None, None
+
+    # leftmost index whose period date >= proc_start
+    x_start = dated[0][0] - 0.5
+    for i, d in dated:
+        if d >= proc_start:
+            x_start = i - 0.5
+            break
+
+    # rightmost index whose period date <= proc_end
+    x_end = dated[-1][0] + 0.5
+    for i, d in reversed(dated):
+        if d <= proc_end:
+            x_end = i + 0.5
+            break
+
+    return x_start, x_end
+
+
+def _add_procedure_bands(ax, procedures: List[Dict], periods: List[str]) -> None:
+    """Overlay shaded vertical bands for each procedure's active period.
+
+    Bands are drawn with alpha=0.07 so overlapping periods appear darker,
+    visually showing "high legal activity" zones.  A rotated micro-label
+    is placed at the left edge of each band.
+    """
+    if not procedures or not periods:
+        return
+
+    ylim = ax.get_ylim()
+    label_y = ylim[0] + (ylim[1] - ylim[0]) * 0.04
+
+    for proc in procedures:
+        x0, x1 = _find_band_range(periods, proc.get("date_start"), proc.get("date_end"))
+        if x0 is None or x0 >= x1:
+            continue
+        color = _INITIATOR_COLORS.get(proc.get("initiated_by"), _INITIATOR_DEFAULT)
+        is_appeal = proc.get("procedure_type") == "appel"
+        hatch = "///" if is_appeal else None
+        ax.axvspan(x0, x1, alpha=0.07, color=color, hatch=hatch,
+                   linewidth=0, zorder=0)
+        short = proc.get("name", "")[:18]
+        ax.text(x0 + 0.15, label_y, short,
+                fontsize=5, color=color, alpha=0.85,
+                rotation=90, va="bottom", ha="left", zorder=2)
+
+
+# ─── Procedure Gantt chart ────────────────────────────────────────────────
+
+_TODAY = "2026-04-06"
+
+
+def procedure_gantt_chart(procedures: List[Dict], output_dir: Path) -> Path:
+    """Horizontal Gantt chart of all procedures coloured by initiator.
+
+    Appeals are shown with hatching.  Ongoing procedures extend to TODAY
+    with a semi-transparent tail.  Overlapping procedures are simply
+    separate rows — overlap is immediately visible.
+    """
+    _apply_style()
+
+    procs = [p for p in procedures if p.get("date_start")]
+    procs.sort(key=lambda p: p["date_start"])
+
+    if not procs:
+        fig, ax = plt.subplots(figsize=(12, 4))
+        ax.text(0.5, 0.5, "No procedures with start dates", ha="center",
+                va="center", transform=ax.transAxes, color="#999")
+        path = output_dir / "procedure_gantt.png"
+        fig.savefig(str(path))
+        plt.close(fig)
+        return path
+
+    today = datetime.strptime(_TODAY, "%Y-%m-%d")
+    fig_h = max(4, len(procs) * 0.7 + 2)
+    fig, ax = plt.subplots(figsize=(14, fig_h))
+
+    for idx, proc in enumerate(procs):
+        try:
+            start = datetime.strptime(proc["date_start"][:10], "%Y-%m-%d")
+        except Exception:
+            continue
+        end_raw = proc.get("date_end")
+        ongoing = end_raw is None
+        try:
+            end = (datetime.strptime(end_raw[:10], "%Y-%m-%d")
+                   if end_raw else today)
+        except Exception:
+            end = today
+
+        color = _INITIATOR_COLORS.get(proc.get("initiated_by"), _INITIATOR_DEFAULT)
+        is_appeal = proc.get("procedure_type") == "appel"
+        hatch = "///" if is_appeal else None
+
+        # Main bar
+        ax.barh(idx, (end - start).days, left=mdates.date2num(start),
+                height=0.55, color=color, alpha=0.80,
+                hatch=hatch, edgecolor="white", linewidth=0.5)
+
+        # Ongoing ghost extension
+        if ongoing:
+            ghost_end = datetime(today.year + 1, today.month, 1)
+            ax.barh(idx, (ghost_end - today).days,
+                    left=mdates.date2num(today),
+                    height=0.55, color=color, alpha=0.18,
+                    edgecolor=color, linewidth=0.8, linestyle="dotted",
+                    fill=True)
+
+    # Today line
+    ax.axvline(mdates.date2num(today), color="#374151", linewidth=1.2,
+               linestyle="--", alpha=0.6, zorder=5)
+    ax.text(mdates.date2num(today), len(procs) - 0.2, " Today",
+            fontsize=7, color="#374151", va="top")
+
+    ax.set_yticks(range(len(procs)))
+    ax.set_yticklabels(
+        [f"#{p['id']} {p['name']}" for p in procs],
+        fontsize=8.5,
+    )
+    ax.xaxis_date()
+    ax.xaxis.set_major_locator(mdates.YearLocator())
+    ax.xaxis.set_major_formatter(mdates.DateFormatter("%Y"))
+    ax.xaxis.set_minor_locator(mdates.MonthLocator(bymonth=[4, 7, 10]))
+    ax.grid(axis="x", alpha=0.3)
+    ax.invert_yaxis()
+    ax.set_title("Legal Procedures — Timeline & Overlap", fontsize=13,
+                 fontweight="bold")
+
+    # Legend
+    from matplotlib.patches import Patch
+    legend_handles = [
+        Patch(color=_INITIATOR_COLORS["party_a"], alpha=0.8, label="Initiated by you (party A)"),
+        Patch(color=_INITIATOR_COLORS["party_b"], alpha=0.8, label="Initiated by ex-wife (party B)"),
+        Patch(color=_INITIATOR_COLORS["both"],    alpha=0.8, label="Mutual"),
+        Patch(color=_INITIATOR_DEFAULT,            alpha=0.8, label="Unknown initiator"),
+        Patch(color="#aaaaaa", hatch="///",        alpha=0.7, label="Appeal"),
+    ]
+    ax.legend(handles=legend_handles, loc="lower left", fontsize=8,
+              framealpha=0.9)
+
+    fig.tight_layout()
+    path = output_dir / "procedure_gantt.png"
+    fig.savefig(str(path), dpi=150)
+    plt.close(fig)
+    return path
+
+
 def frequency_chart(data: List[Dict], output_dir: Path,
-                    title: str = "Email Volume by Quarter") -> Path:
+                    title: str = "Email Volume by Quarter",
+                    procedures: Optional[List[Dict]] = None) -> Path:
     """Stacked bar chart: sent vs received by quarter, with year separators."""
     _apply_style()
     periods = [d["period"] for d in data]
@@ -60,7 +248,20 @@ def frequency_chart(data: List[Dict], output_dir: Path,
     )
     ax.set_ylabel("Emails")
     ax.set_title(title)
-    ax.legend(loc="upper right")
+
+    # Procedure period overlay (drawn before legend so bands are behind bars)
+    if procedures:
+        _add_procedure_bands(ax, procedures, periods)
+        from matplotlib.patches import Patch
+        proc_handles = [
+            Patch(color=_INITIATOR_COLORS["party_a"], alpha=0.5, label="Proc. party A"),
+            Patch(color=_INITIATOR_COLORS["party_b"], alpha=0.5, label="Proc. party B"),
+        ]
+        handles, labels = ax.get_legend_handles_labels()
+        ax.legend(handles=handles + proc_handles, loc="upper right", fontsize=8)
+    else:
+        ax.legend(loc="upper right")
+
     fig.tight_layout()
 
     path = output_dir / "frequency_chart.png"
@@ -126,7 +327,8 @@ def daily_avg_chart(data: List[Dict], output_dir: Path,
 
 
 def tone_trend_chart(data: List[Dict], output_dir: Path,
-                     title: str = "Tone Evolution") -> Path:
+                     title: str = "Tone Evolution",
+                     procedures: Optional[List[Dict]] = None) -> Path:
     """Line chart: aggression + manipulation over time, split by direction."""
     _apply_style()
 
@@ -177,8 +379,21 @@ def tone_trend_chart(data: List[Dict], output_dir: Path,
     ax.set_ylim(0, 1.0)
     ax.set_ylabel("Score (0–1)", fontsize=10)
     ax.set_title(title, fontsize=12, fontweight="bold")
-    ax.legend(fontsize=9, loc="upper left")
     ax.grid(axis="y", alpha=0.3)
+
+    # Procedure period overlay
+    if procedures:
+        _add_procedure_bands(ax, procedures, all_periods)
+        from matplotlib.patches import Patch
+        proc_handles = [
+            Patch(color=_INITIATOR_COLORS["party_a"], alpha=0.5, label="Proc. party A"),
+            Patch(color=_INITIATOR_COLORS["party_b"], alpha=0.5, label="Proc. party B"),
+        ]
+        handles, labels = ax.get_legend_handles_labels()
+        ax.legend(handles=handles + proc_handles, fontsize=8, loc="upper left")
+    else:
+        ax.legend(fontsize=9, loc="upper left")
+
     fig.tight_layout()
 
     path = output_dir / "tone_trend_chart.png"
@@ -501,5 +716,148 @@ def manipulation_patterns_time_chart(data: dict, output_dir: Path,
     fig.tight_layout()
     path = output_dir / fname
     fig.savefig(str(path))
+    plt.close(fig)
+    return path
+
+
+
+# ─── Event type colours for procedure event markers ────────────────────────
+_EVENT_MARKER_COLORS = {
+    "conclusions_received": "#ef4444",   # red   — adverse conclusions
+    "judgment":             "#7c3aed",   # purple
+    "ordonnance":           "#f59e0b",   # amber
+    "hearing":              "#3b82f6",   # blue
+    "depot_conclusions":    "#10b981",   # green — own conclusions filed
+    "assignation":          "#6366f1",   # indigo
+}
+
+
+def aggression_events_chart(
+    tone_rows: List[Dict],
+    procedure_events: List[Dict],
+    output_dir: Path,
+    date_from: Optional[str] = None,
+    date_to:   Optional[str] = None,
+) -> Path:
+    """Monthly aggression/manipulation lines with procedure event markers.
+
+    Args:
+        tone_rows: output of tone_trends(conn, by='month'), may contain multiple
+                   rows per period (one per direction). Aggregated here by period.
+        procedure_events: list of dicts with event_date, event_type, procedure_name.
+        date_from / date_to: if provided, zoom the x-axis to this range (YYYY-MM-DD).
+    """
+    _apply_style()
+
+    # Aggregate tone_rows by period (combine sent + received)
+    from collections import defaultdict
+    agg: Dict[str, Dict] = defaultdict(lambda: {"agg_sum": 0.0, "manip_sum": 0.0, "cnt": 0})
+    for r in tone_rows:
+        period = r.get("period", "")
+        if not period:
+            continue
+        cnt = r.get("count") or 0
+        agg_val = r.get("avg_aggression") or 0.0
+        manip_val = r.get("avg_manipulation") or 0.0
+        agg[period]["agg_sum"]   += agg_val * cnt
+        agg[period]["manip_sum"] += manip_val * cnt
+        agg[period]["cnt"]       += cnt
+
+    dates, agg_vals, manip_vals = [], [], []
+    for period in sorted(agg.keys()):
+        d = agg[period]
+        if d["cnt"] == 0:
+            continue
+        try:
+            dt = datetime.strptime(period + "-01", "%Y-%m-%d")
+        except Exception:
+            continue
+        dates.append(dt)
+        agg_vals.append(d["agg_sum"] / d["cnt"])
+        manip_vals.append(d["manip_sum"] / d["cnt"])
+
+    if not dates:
+        fig, ax = plt.subplots(figsize=(14, 5))
+        ax.text(0.5, 0.5, "No tone data available", ha="center", va="center",
+                transform=ax.transAxes, color="#999")
+        path = output_dir / "aggression_events.png"
+        fig.savefig(str(path))
+        plt.close(fig)
+        return path
+
+    fig, ax = plt.subplots(figsize=(14, 5))
+
+    ax.plot(dates, agg_vals,   color="#ef4444", linewidth=1.8, label="Aggression",   alpha=0.9)
+    ax.plot(dates, manip_vals, color="#f59e0b", linewidth=1.5, label="Manipulation", alpha=0.75,
+            linestyle="--")
+    ax.fill_between(dates, agg_vals, alpha=0.07, color="#ef4444")
+
+    # Draw notable procedure event markers
+    SHOW_TYPES = {"conclusions_received", "judgment", "ordonnance", "hearing"}
+    seen_types: set = set()
+    for ev in procedure_events:
+        etype = ev.get("event_type", "")
+        if etype not in SHOW_TYPES:
+            continue
+        try:
+            dt = datetime.strptime(ev["event_date"][:10], "%Y-%m-%d")
+        except Exception:
+            continue
+        color = _EVENT_MARKER_COLORS.get(etype, "#9ca3af")
+        ax.axvline(mdates.date2num(dt), color=color, linewidth=0.8, alpha=0.45, zorder=2)
+        seen_types.add(etype)
+
+    # Build legend
+    from matplotlib.lines import Line2D
+    handles = [
+        Line2D([0], [0], color="#ef4444", linewidth=1.8, label="Aggression"),
+        Line2D([0], [0], color="#f59e0b", linewidth=1.5, linestyle="--", label="Manipulation"),
+    ]
+    for etype in sorted(seen_types):
+        color = _EVENT_MARKER_COLORS.get(etype, "#9ca3af")
+        label = etype.replace("_", " ").title()
+        handles.append(Line2D([0], [0], color=color, linewidth=1.2, alpha=0.7, label=label))
+    ax.legend(handles=handles, loc="upper left", fontsize=7.5, ncol=2)
+
+    ymax = max(max(agg_vals), max(manip_vals)) if agg_vals else 1.0
+    ax.set_ylim(0, min(1.0, ymax * 1.3))
+    ax.xaxis_date()
+
+    # Zoom x-axis to requested date range
+    if date_from or date_to:
+        try:
+            x_min = datetime.strptime(date_from, "%Y-%m-%d") if date_from else dates[0]
+            x_max = datetime.strptime(date_to,   "%Y-%m-%d") if date_to   else dates[-1]
+            ax.set_xlim(mdates.date2num(x_min), mdates.date2num(x_max))
+            # Use monthly ticks when zoomed to ≤ 3 years
+            span_years = (x_max - x_min).days / 365
+            if span_years <= 3:
+                ax.xaxis.set_major_locator(mdates.MonthLocator(bymonth=[1, 4, 7, 10]))
+                ax.xaxis.set_major_formatter(mdates.DateFormatter("%Y-%m"))
+                ax.xaxis.set_minor_locator(mdates.MonthLocator())
+                plt.setp(ax.get_xticklabels(), rotation=45, ha="right")
+            else:
+                ax.xaxis.set_major_locator(mdates.YearLocator())
+                ax.xaxis.set_major_formatter(mdates.DateFormatter("%Y"))
+                ax.xaxis.set_minor_locator(mdates.MonthLocator(bymonth=[4, 7, 10]))
+        except Exception:
+            ax.xaxis.set_major_locator(mdates.YearLocator())
+            ax.xaxis.set_major_formatter(mdates.DateFormatter("%Y"))
+            ax.xaxis.set_minor_locator(mdates.MonthLocator(bymonth=[4, 7, 10]))
+    else:
+        ax.xaxis.set_major_locator(mdates.YearLocator())
+        ax.xaxis.set_major_formatter(mdates.DateFormatter("%Y"))
+        ax.xaxis.set_minor_locator(mdates.MonthLocator(bymonth=[4, 7, 10]))
+
+    ax.set_ylabel("Score (0–1)")
+    title = "Aggression & Manipulation Over Time — with Legal Event Markers"
+    if date_from or date_to:
+        title += f"\n{date_from or '…'} → {date_to or 'now'}"
+    ax.set_title(title, fontsize=11, fontweight="bold")
+    ax.grid(axis="y", alpha=0.25)
+
+    plt.tight_layout()
+    path = output_dir / "aggression_events.png"
+    fig.savefig(str(path), bbox_inches="tight")
     plt.close(fig)
     return path

@@ -438,3 +438,211 @@ parsed = raw.parse()  # get the actual response content
 **Rationale**: The existing attachments table has 1,464 rows with actual BLOB content — can't simply replace it. Extending it keeps one codebase for attachment handling across both corpora. Personal corpus: content in BLOB column (already downloaded). Legal corpus: `downloaded=0`, `mime_section`+`imap_uid`+`folder` stored for on-demand IMAP re-fetch. Both served through the same web endpoint.
 
 **Impact**: New columns: `mime_section` (IMAP part ID), `imap_uid`, `folder`, `downloaded` (bool), `download_path` (filesystem), `category` (document classification). Existing rows: `downloaded=1`, other new columns NULL.
+
+---
+
+## 2026-04-02 — Invoice scan workspace: split-panel triage design
+
+**Decision**: Redesign the invoice scan page as a persistent two-panel workspace (email-client style) instead of a list-navigate-back-list workflow.
+
+**Rationale**: The original scan page required navigating away from the list for every email, then back, losing scroll position and filter context each time. With 100+ invoice emails to triage, this was too slow. The new design keeps both panels visible simultaneously, auto-advances to the next email after each action, and retains filter state across actions.
+
+**Key design choices**:
+- Left panel (280px fixed): compact rows with status icons, 5-tab strip, HTMX row click → detail
+- Right panel: full email context + sticky action strip (Invoice / Payment / Assessed tabs)
+- Amount detection via EUR regex auto-fills form fields; clicking chips also pre-fills HT via ÷1.20
+- All POST actions return combined HTML: main body = next-email detail, OOB = updated list
+- `_build_scan_action_response()` central helper handles all 4 action routes identically
+- Two new tables: `payment_confirmations` (migration 15) and `invoice_scan_dismissed` (migration 16)
+
+**Impact**: `src/web/routes/invoices.py` +7 scan routes +7 helper functions. Three new template partials (scan_list, scan_detail, scan_done). `invoice_scan.html` full rewrite.
+
+---
+
+## 2026-04-02 — IMAP stale UID: two-pass recovery + subject disambiguation
+
+**Decision**: Extend `_find_email_imap_location()` in `attachments.py` with Pass 2 (all IMAP folders) and `_pick_uid_by_subject()` for disambiguation.
+
+**Rationale**: Yahoo invalidates UIDs when emails are moved between folders. The original Pass 1 only searched folders already in the DB. A folder created by the user after the initial fetch (e.g. `vclavocat`) would never be searched, leaving the attachment permanently unfetchable. Additionally, SENTON+FROM searches can return multiple UIDs when two emails from the same sender arrive on the same day — without disambiguation, the wrong UID would be used.
+
+**Pass 2 implementation**: `client.list_folders()` returns ALL current Yahoo IMAP folders; Skip set: `{"trash", "spam", "bulk", "draft", "deleted messages"}` (case-insensitive). A single IMAP connection is reused across both passes for efficiency.
+
+**Subject disambiguation**: `_pick_uid_by_subject()` fetches `ENVELOPE` for all candidate UIDs, normalizes the subject string, and matches against `subject_normalized` from the emails table. Falls back to `uids[0]` if envelope fetch fails.
+
+**`[UNAVAILABLE]` as "not found here"**: Yahoo returns `[UNAVAILABLE]` both for transient server errors AND for non-existent UIDs after an email is moved. Retrying with delays (original fix) wasted 21+ seconds and still failed. Correct fix: return `None` immediately on `[UNAVAILABLE]` to trigger stale-UID recovery path without delay.
+
+**Impact**: `src/web/routes/attachments.py` (Pass 2 + disambiguation), `src/extraction/imap_client.py` (`fetch_mime_part` catches `[UNAVAILABLE]`). Any future feature storing `imap_uid + folder` for on-demand fetch must apply the same fallback.
+
+---
+
+## 2026-04-02 — HTMX two-panel sync: unified afterSwap handler + OOB exclusion
+
+**Decision**: Replace the `htmx:afterRequest` filter-form handler with a single `htmx:afterSwap` handler that manages list→detail auto-load and active-row sync, using `hx-post` attribute presence to exclude OOB updates from action routes.
+
+**Rationale**: `htmx:afterRequest` fires before the DOM swap, so querying `.sl-row` returns stale list content. `htmx:afterSwap` fires after — rows are in the DOM and first-row auto-load works reliably. Using `htmx:afterSwap` for both responsibilities (list update → load detail; detail update → sync highlight) avoids double-registration and makes the logic easier to reason about.
+
+**OOB exclusion**: when a POST action route returns `detail_html + list_html (OOB)`, two `htmx:afterSwap` events fire (one per swap). For the list OOB, `evt.detail.elt` is the action form, which has `hx-post="/invoices/scan/…"`. The check `hxPost?.includes('/invoices/scan/')` correctly skips the auto-detail-load for these (the main response already contains the correct next-email detail).
+
+**Auto-fallback in routes**: Both `scan_list` and `scan_detail` routes auto-switch `active_tab` to `"all"` when the requested tab has no matches, so the user always sees content after a filter change rather than an empty-tab + scan_done flash.
+
+**Impact**: `invoice_scan.html` JS section rewritten (~40 lines). `invoices.py` scan_list + scan_detail routes updated with fallback logic.
+
+---
+
+## 2026-04-04 — Document-first strategy for procedure metadata
+
+**Decision**: Populate procedure metadata by uploading court PDFs and having Claude extract+insert all fields via pdfplumber, rather than an Excel round-trip or manual entry.
+
+**Rationale**: LLMs cannot infer RG numbers, jurisdictions, dates, lawyers, or financial outcomes from email context alone — they need the actual documents. The upload infrastructure (procedure_documents table + file storage) was already in place from last session. pdfplumber extracts text reliably from French court PDFs. Claude can then parse all relevant fields and generate SQL in a single step.
+
+**Workflow**: User uploads PDF via web UI → user asks Claude to "analyse the judgment of [procedure name]" → Claude reads via pdfplumber → generates UPDATE + INSERT procedure_events SQL → commits in a single transaction.
+
+**Bug discovered**: When an INSERT fails mid-script before `conn.commit()`, any previously executed UPDATEs in the same transaction are also rolled back. Fix: always commit each logical unit separately, or use explicit `notes=''` (empty string, not `None`) for NOT NULL columns with DEFAULT ''.
+
+**Impact**: Procedures #1, #8, #9, #10, #12, #13 fully populated this session. 41 procedure_events total. pdfplumber now a de-facto dependency (already installed).
+
+---
+
+## 2026-04-04 — Procedure #8 vs #9 disambiguation
+
+**Decision**: The ordonnance du JME du 20/02/2017 (TGI Paris, RG 15/33553) belongs to procedure #8 "Incident", not procedure #9 "Incident — Appel".
+
+**Rationale**: Procedure #9 is the art. 526 CPC radiation incident at the Cour d'Appel (RG 17/18289, 02/10/2018). Procedure #8 is an earlier incident during the first-instance divorce instruction, decided by the JME Sophie LECARME at the TGI Paris. Both share the same underlying RG 15/33553 but are distinct proceedings at different court levels and dates.
+
+**Impact**: `data/documents/procedures/8/9_ordonnance_JME_20022017.pdf` — copied from Downloads and linked to procedure #8.
+
+---
+
+## 2026-04-04 — Acquiescements procedure type = private protocol, not court judgment
+
+**Decision**: Procedure #10 "Acquiescements" is a private settlement protocol (not a court judgment). The document type is `convention`, not `judgment`.
+
+**Rationale**: The "Protocole d'accord" signed 04/09/2020 is a private contract between the parties and their lawyers that formalises acquiescements to two recent judgments and settles the financial accounts between them. It has no RG number from a court. The case_number field was set to "Protocole du 04/09/2020" to distinguish it from court proceedings.
+
+**Impact**: `procedure_documents.doc_type` updated to `'convention'` for doc #11. Highlights that not all procedures in the system map to court cases — some are private agreements.
+
+---
+
+## 2026-04-05 — Direct in-session LLM analysis for oversized legal emails
+
+**Decision**: Analyze the 150 legal corpus emails that exceeded the Excel cell limit (30,000 chars) directly in-session as Claude, reading from DB and writing results back without an external API call.
+
+**Rationale**: These emails (May–July 2015 forwarded evidence chains) were excluded from the Excel export pipeline by `_LEGAL_CELL_LIMIT = 30000`. Options considered:
+1. Raise the limit — rejected: Excel crashes on 30k+ cells; ChatGPT context would be overwhelmed by a single email
+2. Call Claude API externally — rejected by user: preferred in-session approach for traceability and cost
+3. Direct in-session analysis — chosen: read emails from DB in batches of 10–25, analyze as Claude, write JSON results back to `analysis_results` and events to `procedure_events`/`timeline_events`
+
+**Storage pattern**: identical to `_import_legal_analysis()` in `excel_import.py` — ensures consistency with Excel-imported results.
+
+**IDs tracking**: `/tmp/legal_remaining_ids.json` stores `{run_id, ids}` for session-resumable batch processing.
+
+**Impact**: `run_id=156` completed with 150/150 emails, 131 procedure_events. This approach is reusable for any future oversized batch.
+
+---
+
+## 2026-04-05 — Legal corpus KPIs added to dashboard
+
+**Decision**: Add a dedicated "Legal Corpus Analysis" card to the dashboard (legal-only perspective) showing completion percentage, procedures count, procedure events count, and invoice count.
+
+**Rationale**: The legal analysis is now 100% complete. The dashboard previously showed only personal corpus analysis coverage. Legal corpus data (2,743 emails, 15 procedures, 2,114 events) is a significant body of work that deserves visibility in the top-level overview.
+
+**Implementation**: New full-width card in the `legal-only` section, spanning all grid columns. Three new fields added to `overview_stats()`: `legal_analysis_count`, `procedures_count`, `invoices_count`.
+
+**Impact**: `src/statistics/aggregator.py` + `src/web/templates/pages/dashboard.html`.
+
+---
+
+## 2026-04-06 — Classify/Tone/Manipulation restricted to personal corpus only
+
+**Decision**: These three analysis types are permanently restricted to `corpus='personal'` emails. Legal corpus emails will never be classified, tone-analysed, or manipulation-scored.
+
+**Rationale**: The prompts are calibrated for intimate partner conflict dynamics (gaslighting, emotional weaponization, children instrumentalization, aggression scoring). Legal correspondence is formal by construction — the same language that scores "high aggression" in personal emails is standard register in lawyer letters. Running these analyses on legal emails produces noise, not signal. The `legal_analysis` type already captures the relevant legal dimensions (`lawyer_stance`, `risk_signal`, `strategy_signal`, `action_required`).
+
+**Implementation**:
+- `src/analysis/runner.py` `get_emails_for_analysis()`: hardcoded `e.corpus = 'personal'`
+- `src/analysis/excel_export.py` `export_for_analysis()`: hardcoded `e.corpus = 'personal'`
+- `cli.py` `analyze_mark_uncovered`: added `corpus = 'personal'` filter
+- `cli.py` `analyze_stats`: refactored to show both corpora separately with correct denominators
+- DB cleanup: 417 analysis_results rows + 304 email_topics rows deleted for 131 legal emails that were originally personal
+
+---
+
+## 2026-04-06 — procedure_events is the authoritative event source for legal corpus; timeline_events is personal only
+
+**Decision**: `timeline_events` table contains only personal corpus events. `procedure_events` is the sole event source for the legal corpus.
+
+**Rationale**: Inspection of the 18 legal emails that had both `timeline_events` and `procedure_events` showed pure duplication — same event, different framing — with `procedure_events` being richer (structured `event_type`, `date_precision`, `outcome`). The 2,114 `procedure_events` from `legal_analysis` already cover the legal event space comprehensively. Adding `timeline_events` on top would create maintenance burden with no analytical gain.
+
+**Implementation**: Deleted 22 `timeline_events` rows for legal corpus emails.
+
+**Impact on Phase 6h**: Unified timeline queries `timeline_events` for personal events and `procedure_events` for legal events — two clean, non-overlapping tables.
+
+---
+
+## 2026-04-06 — Email→Procedure FK via migration #18
+
+**Decision**: Add `procedure_id INTEGER REFERENCES procedures(id)` directly to the `emails` table and backfill from `legal_analysis` result_json.
+
+**Rationale**: The `procedure_ref` field was already extracted by the LLM for every legal email and stored in `analysis_results.result_json`. It was trapped inside a JSON blob. Surfacing it as a proper FK enables: procedure-filtered email browsing, email counts per procedure, procedure dossier export, and efficient unified timeline queries without JSON extraction at query time.
+
+**Implementation**: Migration #18 in `database.py`. Backfill script read `procedure_ref` from 2,743 `legal_analysis` results and wrote `procedure_id` to 2,892 `emails` rows (2,743 legal emails; some had multiple analysis results). 1 email had no `procedure_ref` and remains unlinked.
+
+**Impact**: Personal corpus `procedure_id` = NULL by design. Legal corpus `procedure_id` = the procedure they belong to. This is the foundation for Phase 6h procedure dossier view.
+
+---
+
+## 2026-04-06 — Procedure #7 date range derived from attachment trail
+
+**Decision**: Use attachment filenames and email dates to establish the date range for Négociation Amiable (#7), rather than leaving it NULL.
+
+**Rationale**: #7 has no formal court filing — it was an informal exchange of divorce convention drafts between lawyers. The attachment trail is unambiguous: `projet de convention de divorce.doc` first appeared 2015-08-10; the last document (`160205 MULLER Convention de divorce corrigée MM.doc`) was exchanged 2016-02-22, one week before Divorce pour Faute was filed (2016-02-29), confirming negotiation collapsed at that point.
+
+**Result**: `date_start=2015-08-10`, `date_end=2016-02-22`, `status=abandoned`.
+
+---
+
+## 2026-04-07 — MULLER conclusions: three-tier CLI download strategy
+
+**Decision**: `fetch conclusions` CLI command uses a three-tier fallback: stored IMAP location → full stale-UID recovery (two-pass, identical to web route logic) → BLOB content from DB.
+
+**Rationale**: Legal corpus attachments were imported as metadata-only (no BLOB). When Yahoo moves emails between folders, stored UIDs are invalidated. The web route's `_find_email_imap_location()` already handles this. Rather than calling into the web route from CLI, the logic was inlined in CLI as `_locate_email_imap()` (same algorithm: Pass 1 = DB-known folders by Message-ID; Pass 2 = all IMAP folders by SENTON+FROM; subject disambiguation for same-sender same-day collisions). The BLOB fallback is needed for the 5 emails that were originally personal corpus (had `attachments.content` stored) and later reclassified to legal.
+
+**Deduplication key**: `(filename.lower().strip(), procedure_id)` — keeps the earliest email carrying the attachment, discards 17 forwarded copies. This ensures we download the original filing, not a re-sent copy.
+
+**Idempotency**: `procedure_events` insert checks for existing `(procedure_id, source_attachment_id, event_type='conclusions_received')` before inserting. `--force` flag bypasses the `downloaded=1` check to re-download existing files.
+
+**Result**: 33/33 MULLER adverse conclusions downloaded and linked as `procedure_events.conclusions_received` across 11 procedures.
+
+---
+
+## 2026-04-07 — Emails page layout breakpoint raised from 1200px → 1400px
+
+**Decision**: The CSS breakpoint that collapses `.emails-layout` from two-column to one-column was raised from `max-width: 1200px` to `max-width: 1400px`.
+
+**Rationale**: The sidebar is 240px fixed. A 1440px laptop display (common MacBook resolution) leaves ~1200px for the main content area — exactly at the old breakpoint, causing the layout to collapse unpredictably. The two-column grid needs `1fr + 500px` = at least 600 + 24 + 500 = 1124px of content space, so 1400px total (with sidebar) is the correct minimum. The `dashboard-two-col` breakpoint was kept at 1200px (it's a simpler 1fr/1fr grid) by splitting it into its own media query block.
+
+**Belt-and-suspenders**: An `htmx:afterSwap` listener in `emails.html` auto-scrolls to `#detail-panel` when a detail is loaded and the panel is outside the viewport — covers any edge case where the layout still collapses (e.g. window resize after load).
+
+**Impact**: `src/web/static/css/style.css` (version bumped to `?v=8`), `src/web/templates/pages/emails.html`, `src/web/templates/base.html`.
+
+---
+
+## 2026-04-07 — Procedure documents unified view: merge two sources in route
+
+**Decision**: The procedure detail page Documents section merges `procedure_documents` (manual uploads) and `attachments` (downloaded email attachments) in the route layer, not the template.
+
+**Rationale**: Both sources have different PKs, URLs, and metadata shapes. Merging in the route normalises them to a common dict shape with `_source` and `_serve_url` keys, keeping template logic simple (one loop, two conditionals: badge + delete button). Invoices are excluded (`category != 'invoice'`) to keep the Documents section focused on court filings and evidence. Sort is by `doc_date` after merge so the combined list is chronological.
+
+**Impact**: `src/web/routes/procedures.py` `procedure_detail()`, `src/web/templates/pages/procedure_detail.html`.
+
+---
+
+## 2026-04-07 — Thematic Threads: separate stats query from paginated content query
+
+**Decision**: For the `/themes` route, run two separate SQL queries: one lightweight stats query (no body text, all emails for the topic) and one paginated content query (with `delta_text`, `LIMIT PAGE_SIZE OFFSET`).
+
+**Rationale**: Topics like `enfants` have 2,225 emails. Fetching all `delta_text` for the stats strip would be unnecessarily heavy and risk a timeout or memory spike. The stats query only selects `direction`, `aggression`, `date` — three small columns — and runs on the full topic without pagination. The content query fetches `delta_text` for 50 emails at a time. This pattern supports both accurate stats (total, avg aggression, date range) and fast page loads.
+
+**Bug avoided**: `analysis_results` has no `analysis_type` column — it's on `analysis_runs`. The JOIN must be `LEFT JOIN analysis_runs run ON run.id = ar.run_id AND run.analysis_type = 'tone'` (not `WHERE ar.analysis_type = 'tone'`).
+
+**Impact**: `src/web/routes/book.py` `GET /themes`, `src/web/templates/pages/themes.html` (new file).

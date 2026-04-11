@@ -63,7 +63,11 @@ _SUBJECT_PREFIXES = re.compile(
 # ─────────────────────────── HEADER DECODING ────────────────────────────────
 
 def _decode_str(value: Optional[str]) -> str:
-    """Decode an RFC 2047 encoded email header value to plain text."""
+    """Decode an RFC 2047 encoded email header value to plain text.
+
+    Also collapses MIME header folding (embedded CR/LF + whitespace) that some
+    mail clients leave in Content-Disposition filenames.
+    """
     if not value:
         return ""
     parts = []
@@ -75,7 +79,14 @@ def _decode_str(value: Optional[str]) -> str:
                 parts.append(raw.decode("utf-8", errors="replace"))
         else:
             parts.append(raw)
-    return "".join(parts).strip()
+    result = "".join(parts)
+    # Collapse MIME header folding: CRLF (or bare CR/LF) followed by optional
+    # whitespace is a line-continuation sequence, not part of the value.
+    import re as _re
+    result = _re.sub(r"\r\n[ \t]+|\r[ \t]+|\n[ \t]+", " ", result)
+    # Strip any remaining bare control characters
+    result = _re.sub(r"[\x00-\x1f\x7f]", "", result)
+    return result.strip()
 
 
 def _parse_address(header: Optional[str]) -> Tuple[str, str]:

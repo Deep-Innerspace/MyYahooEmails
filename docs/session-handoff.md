@@ -4,84 +4,114 @@
 
 ---
 
-**Last Updated: 2026-03-27**
+**Last Updated: 2026-04-07**
 
 ## What Was Accomplished This Session
 
-### Phase 6 Planning — Lawyer Correspondence Module
-- Designed comprehensive Phase 6 plan (9 sub-phases: 6a through 6i)
-- Key architecture decisions:
-  - **Corpus column** on existing `emails` table ('personal'|'legal') — not separate tables
-  - **Option B** for dashboard: sub-navigation within Legal perspective, not a third perspective
-  - **Extend existing `attachments` table** (1,464 BLOBs) with on-demand download columns
-  - **Drop `court_events`** (empty), replace with `procedures` + `procedure_events` + `lawyer_invoices`
-  - Opposing counsel as reference contacts only (no email fetch)
-  - Unified timeline stays in main nav, common to both perspectives
-- Plan file: `.claude/plans/delightful-tickling-nest.md`
+### 1. `fetch conclusions` CLI command (new)
 
-### Phase 6a — Schema + Migration Infrastructure ✅
-- Created `feature/lawyer-corpus` branch from main
-- Introduced lightweight migration system: `schema_version` table + `_MIGRATIONS` list (10 migrations)
-- Added `corpus` column to emails (DEFAULT 'personal')
-- Auto-reclassified 131 lawyer emails to `corpus='legal'` (74 h.deblauwe, 55 vclavocat, 1 jtd, 1 other)
-- Extended `attachments` table with 6 new columns for on-demand download
-- Dropped `court_events` table; created `procedures`, `procedure_events`, `lawyer_invoices`
-- Updated `models.py` with `Procedure`, `ProcedureEvent`, `LawyerInvoice` dataclasses
-- Added `attachment_download_dir()` and `lawyer_contacts()` to config.py
-- Updated `config.yaml.example` with lawyer contact roles
-- All 19 existing tests pass; web app starts cleanly
-- DB backup: `data/emails.db.backup-pre-6a`
+Built `python cli.py fetch conclusions` — automatically detects, deduplicates, and downloads all MULLER adverse conclusions from legal-corpus emails.
 
-### Data Discovery
-- 128 lawyer emails already in DB (from original fetch — shared folders with ex-wife)
-- 349 sent emails to non-ex-wife recipients: 129 family, 74 lawyers, 146 third-party (schools, housing, etc.)
-- ~220 third-party emails need manual review in Phase 6g.1
+**Detection**: `corpus='legal'` + filename contains `muller` + (`conclusion` or `dire`), PDF only
+**Deduplication**: `(filename.lower(), procedure_id)` key → keeps earliest email (removed 17 forwarded copies)
+**Three-tier download strategy**:
+1. Stored IMAP (folder + uid)
+2. Full stale-UID recovery — two-pass: Message-ID across DB-known folders, then SENTON+FROM across ALL current IMAP folders (same logic as `_find_email_imap_location()` in web routes, now inlined in CLI as `_locate_email_imap()`)
+3. BLOB fallback — emails reclassified from personal corpus still have `attachments.content`
+
+**Result**: 33/33 conclusions processed (19 via IMAP, 9 via stale-UID recovery, 5 via BLOB), 33 `procedure_events` of type `conclusions_received` created across 11 procedures (2015–2026).
+
+**Files changed**:
+- `cli.py`: added `@fetch.command("conclusions")` with `--dry-run`, `--force`, `--limit` options
+
+### 2. Procedure Documents unified view
+
+The procedure detail page now shows **both** `procedure_documents` (manual uploads) and downloaded `attachments` (from emails) in the same Documents table.
+
+- Non-invoice downloaded attachments linked via `emails.procedure_id` are merged and sorted by date
+- Amber "email" badge distinguishes email-sourced docs; no delete button (they're part of emails)
+- Both types served via their own correct URLs (`/procedures/{id}/documents/{doc_id}` vs `/attachments/{id}`)
+- Document count: "N · M from emails"
+
+**Files changed**:
+- `src/web/routes/procedures.py`: `procedure_detail()` — fetches `attachments` with `downloaded=1`, `category != 'invoice'`, `download_path IS NOT NULL` linked to procedure; merges with `procedure_documents`
+- `src/web/templates/pages/procedure_detail.html`: uses `_serve_url` and `_source` to route; conditional delete button; document count with email breakdown
+
+### 3. Procedures page — cards sorted chronologically
+
+Changed `ORDER BY p.date_start DESC` → `ORDER BY p.date_start ASC` in the list query.
+Cards now go: 2015 Première Instance → … → 2026 Procédure Lounys Dubai.
+
+**Files changed**: `src/web/routes/procedures.py` `procedures_list()`
+
+### 4. Thematic Threads page — built from scratch
+
+The nav link at `Thematic Threads` was `href="#"` (dead). Now fully implemented.
+
+- `GET /themes?topic=<name>&offset=<n>` — left sidebar of topics, stats strip, paginated 50/page
+- Full `delta_text` displayed with `white-space:pre-wrap` (no truncation)
+- **"Full email ↗" button** on each card → right-side slide-in overlay panel (700px) loaded via HTMX `hx-get="/emails/{id}"` → `#theme-detail-content`; closes on backdrop click or Escape
+- Fix for query bug: `analysis_results` has no `analysis_type` column — it's on `analysis_runs`. Fixed the JOIN.
+- Fix for large topics (2,225 emails for `enfants`): separate stats query (no body text) + paginated content query
+
+**Files changed**:
+- `src/web/routes/book.py`: added `GET /themes` route
+- `src/web/templates/pages/themes.html`: new file (sidebar + stats strip + paginated thread + slide-in overlay)
+- `src/web/templates/base.html`: `href="#"` → `href="/themes"`
+
+### 5. Emails page — row-click bug (FIXED ✅)
+
+**Symptom**: After typing in the search box, clicking an email row didn't show the email in the detail panel.
+
+**Root cause**: CSS breakpoint at `max-width: 1200px` collapsed `.emails-layout` from two-column to one-column. With a 240px sidebar, the main content area on a typical 1440px laptop is only ~1200px — right at the collapse threshold. When collapsed, `#detail-panel` renders *below* the email list, outside the viewport. Content loaded correctly but wasn't visible.
+
+**Fix applied** (two-part):
+1. **Raised CSS breakpoint** from `1200px` → `1400px` for `emails-layout` / `detail-panel` collapse (keeps two-column layout on most laptops); split `dashboard-two-col` into its own `max-width: 1200px` rule so that breakpoint is unchanged.
+2. **Auto-scroll JS** in `emails.html` — `htmx:afterSwap` listener detects when `#detail-panel` is the swap target; if the panel is out of the viewport, scrolls to it smoothly. Belt-and-suspenders for narrow screens.
+
+**Files changed**:
+- `src/web/static/css/style.css`: breakpoint for emails-layout split from 1200px → 1400px (css version bumped to v=8)
+- `src/web/templates/pages/emails.html`: added auto-scroll `htmx:afterSwap` handler for `#detail-panel`
+- `src/web/templates/base.html`: stylesheet version bumped to `?v=8`
 
 ---
 
-## Current Database State
+## Current DB State
 
 | Metric | Value |
-|--------|-------|
-| Total emails | 3,922 (3,791 personal + 131 legal) |
-| Classification | 3,922/3,922 (100%) ✅ |
-| Tone analysis | 3,922/3,922 (100%) ✅ |
-| Manipulation | 3,922/3,922 (100%) ✅ |
-| Timeline events | 915 events from 3,922 emails (100%) ✅ |
-| Contradiction pairs | 45 total across 9 topics ✅ |
-| Procedures | 0 (tables created, awaiting Phase 6e) |
-| Lawyer invoices | 0 (tables created, awaiting Phase 6f) |
+|---|---|
+| Personal emails | 3,791 |
+| Legal emails | 2,743 |
+| Personal: classify/tone/manipulation | 100% ✅ |
+| Personal: timeline events | 902 events |
+| Legal: legal_analysis | 2,743/2,743 (100%) ✅ |
+| Legal: procedure_id set | 2,892/2,743 |
+| Procedures | 15 — all with date ranges |
+| Procedure events | 2,147 (was 2,114; +33 conclusions_received) |
+| MULLER conclusions downloaded | 33/33 ✅ |
+| Lawyer invoices | 37 |
+| Contradictions | 45 pairs |
 
 ---
 
 ## Resume Point for Next Session
 
-### Current branch: `feature/lawyer-corpus` (Phase 6a complete, uncommitted)
+### Priority 1 — Pre-conclusion behavior analysis
+Now that all 33 MULLER conclusions are downloaded and linked as `procedure_events`:
+- Build SQL query: for each `conclusions_received` event, get personal email aggression ±30 days
+- Chart: aggression/manipulation/frequency in the 30-day window before each conclusion filing
+- This surfaces the pattern of manufactured evidence / artificial polemic before her lawyer files
 
-### Step 1 — Commit Phase 6a
-```bash
-git add src/storage/database.py src/storage/models.py src/config.py config.yaml.example
-git commit -m "Phase 6a: schema migration infrastructure + corpus column + new tables"
-```
+### Priority 2 — Upload user's own lawyer conclusions
+The user's conclusions (my_lawyer sent to adverse) are more complex (drafts vs. final versions).
+Strategy: identify emails where my_lawyer sent a PDF with "conclusions" in filename AND the email is addressed to MULLER's lawyer. Needs manual review to distinguish drafts from filed versions.
 
-### Step 2 — Phase 6b: Fetch Pipeline Extension
-Files to modify:
-- `src/extraction/threader.py` — add `corpus` param to `store_email()`
-- `src/extraction/parser.py` — extract MIME section IDs in `_get_attachments()`
-- `src/extraction/imap_client.py` — add `fetch_mime_part()` for on-demand download
-- `cli.py` — add `--corpus` option, `fetch lawyers` command
-
-### Step 3 — Phase 6g: Corpus Filter + Sidebar (highest risk)
-- Add `corpus_clause()` helper
-- Update ~35-40 queries across 12 files
-- Restructure sidebar navigation
-
-### Implementation Order
-6a ✅ → 6b → 6g → 6g.1 → 6c → 6d → 6e → 6f → 6h → 6i
+### Priority 3 — Phase 6h Unified Timeline
+Merge both corpora + procedure events + cost events into a single chronological view.
+Color-coded by source type; cross-corpus correlation: personal email aggression ±14 days around procedure events.
 
 ### Quick Start
 ```bash
-git checkout feature/lawyer-corpus
-.venv/bin/python -m pytest tests/ -v
-.venv/bin/python cli.py web --reload    # http://127.0.0.1:8000
+git status   # verify on correct branch
+.venv/bin/python cli.py web   # http://127.0.0.1:8000
 ```

@@ -1,6 +1,12 @@
 {% if events %}
 <div class="timeline-summary text-sm text-muted mb-4">
   {{ total_events }} event{{ 's' if total_events != 1 else '' }} found
+  &nbsp;·&nbsp;
+  <span style="color:var(--severity-high)">⚖ {{ events | selectattr('source', 'eq', 'court') | list | length }} court</span>
+  &nbsp;·&nbsp;
+  <span style="color:var(--sent-color)">✉ {{ events | selectattr('source', 'eq', 'email') | list | length }} email</span>
+  &nbsp;·&nbsp;
+  <span style="color:var(--invoice-color)">💶 {{ events | selectattr('source', 'eq', 'invoice') | list | length }} invoice</span>
 </div>
 <div class="timeline-list">
   {% for item in events %}
@@ -9,24 +15,44 @@
     <div class="timeline-content">
       <div style="display:flex;align-items:center;gap:var(--space-2);flex-wrap:wrap;margin-bottom:4px">
         <div class="timeline-date">{{ item.date[:10] if item.date else '—' }}</div>
+
         {% if item.source == 'court' %}
-        <span class="badge badge-high">Court</span>
+        <span class="badge badge-high">⚖ Court</span>
+        {% elif item.source == 'invoice' %}
+        <span class="badge badge-invoice">💶 Invoice</span>
         {% else %}
-        <span class="badge badge-sent">Email Event</span>
+        <span class="badge badge-sent">✉ Email</span>
         {% endif %}
-        {% if item.significance %}
+
+        {% if item.significance and item.source != 'invoice' %}
         <span class="badge" style="background:{% if item.significance == 'high' %}var(--severity-high){% elif item.significance == 'medium' %}var(--severity-medium){% else %}var(--border-strong){% endif %};color:{% if item.significance == 'low' %}var(--text-secondary){% else %}white{% endif %}">
           {{ item.significance }}
         </span>
         {% endif %}
+
         {% if item.topic %}
         <span class="topic-pill">{{ item.topic }}</span>
         {% endif %}
+
+        {% if item.procedure_name and item.source == 'court' %}
+        <span class="badge" style="background:var(--accent-bg);color:var(--accent);border:1px solid var(--accent-border);font-size:0.7rem">
+          {{ item.procedure_name | truncate(30, true, '…') }}
+        </span>
+        {% endif %}
+
+        {% if item.amount_ttc %}
+        <span style="font-weight:600;font-size:0.75rem;color:var(--invoice-color)">
+          {{ "%.0f €" | format(item.amount_ttc) }}
+        </span>
+        {% endif %}
       </div>
+
       <div class="timeline-type-badge text-xs text-muted" style="font-weight:600;text-transform:uppercase;letter-spacing:0.05em">
         {{ item.type | replace('_', ' ') if item.type else '' }}
       </div>
+
       <div class="timeline-description">{{ item.description }}</div>
+
       {% if item.source == 'email' and item.email_id %}
       <a href="#"
          onclick="openTimelineEmailModal({{ item.email_id }}); return false;"
@@ -35,6 +61,19 @@
         View email &rarr;
       </a>
       {% endif %}
+
+      {% if item.source == 'court' and item.date %}
+      <div class="court-aggression-trigger text-xs text-muted"
+           style="margin-top:6px;cursor:pointer;display:inline-flex;align-items:center;gap:4px"
+           hx-get="/timeline/court-event/{{ item.date[:10] }}/correlation"
+           hx-target="next .court-aggression-panel"
+           hx-trigger="click once"
+           hx-swap="innerHTML">
+        <span>📊</span> Show aggression ±14 days
+      </div>
+      <div class="court-aggression-panel" style="margin-top:6px"></div>
+      {% endif %}
+
     </div>
   </div>
   {% endfor %}

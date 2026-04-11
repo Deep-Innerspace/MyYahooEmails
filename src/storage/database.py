@@ -437,6 +437,54 @@ _MIGRATIONS = [
         DROP TABLE procedure_events;
         ALTER TABLE procedure_events_new RENAME TO procedure_events;
     """),
+    (15, "Add payment_confirmations table for invoice scan workflow", """
+        CREATE TABLE IF NOT EXISTS payment_confirmations (
+            id            INTEGER PRIMARY KEY AUTOINCREMENT,
+            email_id      INTEGER NOT NULL REFERENCES emails(id) ON DELETE CASCADE,
+            amount        REAL,
+            payment_type  TEXT NOT NULL DEFAULT 'autre',
+            invoice_id    INTEGER REFERENCES lawyer_invoices(id) ON DELETE SET NULL,
+            notes         TEXT NOT NULL DEFAULT '',
+            created_at    TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+        );
+        CREATE INDEX IF NOT EXISTS idx_payment_confirmations_email
+            ON payment_confirmations(email_id);
+    """),
+    (16, "Add invoice_scan_dismissed table for assessed emails", """
+        CREATE TABLE IF NOT EXISTS invoice_scan_dismissed (
+            email_id     INTEGER PRIMARY KEY REFERENCES emails(id) ON DELETE CASCADE,
+            reason       TEXT NOT NULL DEFAULT '',
+            dismissed_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+        );
+    """),
+    (18, "Add procedure_id FK to emails for legal corpus procedure linkage", """
+        ALTER TABLE emails ADD COLUMN procedure_id INTEGER REFERENCES procedures(id);
+        CREATE INDEX IF NOT EXISTS idx_emails_procedure ON emails(procedure_id);
+    """),
+    (19, "Add structured ruling fields to procedure_events (judge, ruling_for, pension, custody, obligations)", """
+        ALTER TABLE procedure_events ADD COLUMN judge_name           TEXT NOT NULL DEFAULT '';
+        ALTER TABLE procedure_events ADD COLUMN ruling_for           TEXT NOT NULL DEFAULT '';
+        ALTER TABLE procedure_events ADD COLUMN pension_amount       REAL;
+        ALTER TABLE procedure_events ADD COLUMN custody_arrangement  TEXT NOT NULL DEFAULT '';
+        ALTER TABLE procedure_events ADD COLUMN obligations          TEXT NOT NULL DEFAULT '';
+    """),
+    (17, "Add procedure_documents table for per-procedure file uploads", """
+        CREATE TABLE IF NOT EXISTS procedure_documents (
+            id            INTEGER PRIMARY KEY AUTOINCREMENT,
+            procedure_id  INTEGER NOT NULL REFERENCES procedures(id) ON DELETE CASCADE,
+            doc_type      TEXT NOT NULL DEFAULT 'other',
+            filename      TEXT NOT NULL,
+            original_name TEXT NOT NULL DEFAULT '',
+            file_path     TEXT NOT NULL,
+            content_type  TEXT NOT NULL DEFAULT 'application/octet-stream',
+            size_bytes    INTEGER NOT NULL DEFAULT 0,
+            doc_date      TEXT,
+            notes         TEXT NOT NULL DEFAULT '',
+            uploaded_at   TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+        );
+        CREATE INDEX IF NOT EXISTS idx_proc_docs_procedure
+            ON procedure_documents(procedure_id);
+    """),
 ]
 
 

@@ -21,6 +21,7 @@ ROLES = [
     ("my_lawyer", "My Lawyer"),
     ("her_lawyer", "Her Lawyer"),
     ("opposing_counsel", "Opposing Counsel"),
+    ("notaire", "Notaire"),
     ("my_friend", "My Friend"),
     ("her_friend", "Her Friend"),
     ("family_mediation", "Family Mediation"),

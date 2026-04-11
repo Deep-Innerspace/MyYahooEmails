@@ -1,0 +1,598 @@
+{% extends "base.html" %}
+{% block title %}{{ proc.name }}{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <div>
+    <a href="/procedures/" style="color:var(--text-muted);text-decoration:none;font-size:var(--font-size-sm)">&larr; Back to procedures</a>
+    <h1 class="page-title" style="margin-top:var(--space-2)">{{ proc.name }}</h1>
+    <p class="page-subtitle">
+      <span class="status-badge status-{{ proc.status or 'unknown' }}">{{ (proc.status or 'unknown') | title }}</span>
+      <span class="badge badge-primary" style="margin-left:var(--space-2)">{{ (proc.procedure_type or 'autre') | replace('_', ' ') | title }}</span>
+    </p>
+  </div>
+  <div style="display:flex;gap:var(--space-2)">
+    <button class="btn btn-secondary" onclick="document.getElementById('edit-form').toggleAttribute('hidden')">
+      Edit
+    </button>
+    <form method="post" action="/procedures/{{ proc.id }}/delete" style="margin:0">
+      <button type="submit" class="btn btn-danger btn-sm"
+              hx-confirm="Are you sure you want to delete this procedure and all its events?">
+        Delete
+      </button>
+    </form>
+  </div>
+</div>
+
+<div class="page-body">
+
+  <!-- ─── Edit form (hidden by default) ────────────────────────────────── -->
+  <div id="edit-form" class="card mb-6" hidden>
+    <div class="card-header">
+      <h3 style="margin:0">Edit Procedure</h3>
+    </div>
+    <div class="card-body" style="padding:var(--space-5)">
+      <form method="post" action="/procedures/{{ proc.id }}/update">
+        <div class="proc-form-grid">
+          <div class="form-group">
+            <label class="form-label">Name *</label>
+            <input type="text" name="name" required value="{{ proc.name or '' }}">
+          </div>
+          <div class="form-group">
+            <label class="form-label">Type</label>
+            <select name="procedure_type">
+              {% for pt in procedure_types %}
+              <option value="{{ pt }}" {% if proc.procedure_type == pt %}selected{% endif %}>
+                {{ pt | replace('_', ' ') | title }}
+              </option>
+              {% endfor %}
+            </select>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Status</label>
+            <select name="status">
+              {% for s in status_options %}
+              <option value="{{ s }}" {% if proc.status == s %}selected{% endif %}>
+                {{ s | title }}
+              </option>
+              {% endfor %}
+            </select>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Jurisdiction</label>
+            <input type="text" name="jurisdiction" value="{{ proc.jurisdiction or '' }}">
+          </div>
+          <div class="form-group">
+            <label class="form-label">Case Number</label>
+            <input type="text" name="case_number" value="{{ proc.case_number or '' }}">
+          </div>
+          <div class="form-group">
+            <label class="form-label">Initiated By</label>
+            <select name="initiated_by" class="form-input">
+              <option value="" {% if not proc.initiated_by or proc.initiated_by not in ('party_a','party_b','both') %}selected{% endif %}>— Unknown —</option>
+              <option value="party_a" {% if proc.initiated_by == 'party_a' %}selected{% endif %}>Party A (you)</option>
+              <option value="party_b" {% if proc.initiated_by == 'party_b' %}selected{% endif %}>Party B (ex-wife)</option>
+              <option value="both"    {% if proc.initiated_by == 'both'    %}selected{% endif %}>Both (mutual)</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Start Date</label>
+            <input type="date" name="date_start" value="{{ proc.date_start or '' }}">
+          </div>
+          <div class="form-group">
+            <label class="form-label">End Date</label>
+            <input type="date" name="date_end" value="{{ proc.date_end or '' }}">
+          </div>
+          <div class="form-group">
+            <label class="form-label">Party A Lawyer (yours)</label>
+            <select name="party_a_lawyer_id">
+              <option value="">-- None --</option>
+              {% for l in lawyers %}
+              <option value="{{ l.id }}" {% if proc.party_a_lawyer_id == l.id %}selected{% endif %}>
+                {{ l.name }} ({{ l.role | replace('_', ' ') }})
+              </option>
+              {% endfor %}
+            </select>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Party B Lawyer (theirs)</label>
+            <select name="party_b_lawyer_id">
+              <option value="">-- None --</option>
+              {% for l in lawyers %}
+              <option value="{{ l.id }}" {% if proc.party_b_lawyer_id == l.id %}selected{% endif %}>
+                {{ l.name }} ({{ l.role | replace('_', ' ') }})
+              </option>
+              {% endfor %}
+            </select>
+          </div>
+        </div>
+        <div class="form-group" style="margin-top:var(--space-3)">
+          <label class="form-label">Description</label>
+          <textarea name="description" rows="2">{{ proc.description or '' }}</textarea>
+        </div>
+        <div class="form-group" style="margin-top:var(--space-3)">
+          <label class="form-label">Outcome Summary</label>
+          <textarea name="outcome_summary" rows="2">{{ proc.outcome_summary or '' }}</textarea>
+        </div>
+        <div class="form-group" style="margin-top:var(--space-3)">
+          <label class="form-label">Notes</label>
+          <textarea name="notes" rows="2">{{ proc.notes or '' }}</textarea>
+        </div>
+        <div style="display:flex;gap:var(--space-3);margin-top:var(--space-4)">
+          <button type="submit" class="btn btn-primary">Save Changes</button>
+          <button type="button" class="btn btn-secondary"
+                  onclick="document.getElementById('edit-form').setAttribute('hidden','')">Cancel</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- ─── Procedure info card ──────────────────────────────────────────── -->
+  <div class="card mb-6">
+    <div class="card-body" style="padding:var(--space-5)">
+      <div class="proc-info-grid">
+        {% if proc.jurisdiction %}
+        <div>
+          <span class="proc-info-label">Jurisdiction</span>
+          <span class="proc-info-value">{{ proc.jurisdiction }}</span>
+        </div>
+        {% endif %}
+        {% if proc.case_number %}
+        <div>
+          <span class="proc-info-label">Case Number</span>
+          <span class="proc-info-value">{{ proc.case_number }}</span>
+        </div>
+        {% endif %}
+        {% if proc.date_start or proc.date_end %}
+        <div>
+          <span class="proc-info-label">Date Range</span>
+          <span class="proc-info-value">{{ proc.date_start or '?' }} &rarr; {{ proc.date_end or 'ongoing' }}</span>
+        </div>
+        {% endif %}
+        {% if proc.initiated_by %}
+        <div>
+          <span class="proc-info-label">Initiated By</span>
+          <span class="proc-info-value">{{ proc.initiated_by }}</span>
+        </div>
+        {% endif %}
+        {% if proc.party_a_name %}
+        <div>
+          <span class="proc-info-label">Party A Lawyer</span>
+          <span class="proc-info-value">{{ proc.party_a_name }}</span>
+        </div>
+        {% endif %}
+        {% if proc.party_b_name %}
+        <div>
+          <span class="proc-info-label">Party B Lawyer</span>
+          <span class="proc-info-value">{{ proc.party_b_name }}</span>
+        </div>
+        {% endif %}
+      </div>
+
+      {% if proc.description %}
+      <div style="margin-top:var(--space-4)">
+        <span class="proc-info-label">Description</span>
+        <p style="margin:var(--space-1) 0 0;color:var(--text-primary)">{{ proc.description }}</p>
+      </div>
+      {% endif %}
+
+      {% if proc.outcome_summary %}
+      <div style="margin-top:var(--space-3)">
+        <span class="proc-info-label">Outcome Summary</span>
+        <p style="margin:var(--space-1) 0 0;color:var(--text-primary)">{{ proc.outcome_summary }}</p>
+      </div>
+      {% endif %}
+
+      {% if proc.notes %}
+      <div style="margin-top:var(--space-3)">
+        <span class="proc-info-label">Notes</span>
+        <p style="margin:var(--space-1) 0 0;color:var(--text-muted);font-style:italic">{{ proc.notes }}</p>
+      </div>
+      {% endif %}
+    </div>
+  </div>
+
+  <!-- ─── Rulings at a Glance ─────────────────────────────────────────── -->
+  {% set ruling_events = events | selectattr('ruling_for') | list %}
+  {% if ruling_events %}
+  <div class="card mb-6" style="border-left:4px solid var(--primary)">
+    <div class="card-body" style="padding:var(--space-4) var(--space-5)">
+      <div style="font-size:var(--font-size-sm);font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--text-secondary);margin-bottom:var(--space-3)">
+        ⚖️ Rulings at a Glance
+      </div>
+      {% for ev in ruling_events %}
+      <div style="display:flex;flex-wrap:wrap;align-items:flex-start;gap:var(--space-4);padding:var(--space-3) 0;{% if not loop.last %}border-bottom:1px solid var(--border);{% endif %}">
+        <!-- Date + type label -->
+        <div style="min-width:160px">
+          <div style="font-size:var(--font-size-sm);font-weight:600;color:var(--text-primary)">{{ ev.event_date }}</div>
+          <span class="badge badge-primary" style="margin-top:2px">{{ (ev.event_type or 'other') | replace('_',' ') | title }}</span>
+        </div>
+        <!-- Ruling verdict badge -->
+        {% if ev.ruling_for %}
+        <div>
+          <span style="font-size:.68rem;text-transform:uppercase;letter-spacing:.05em;color:var(--text-muted);font-weight:600">Ruling for</span>
+          <div style="margin-top:3px">
+            <span class="badge" style="font-size:var(--font-size-sm);padding:3px 10px;
+              {% if ev.ruling_for == 'party_a' %}background:rgba(16,185,129,.18);color:#065f46;border:1px solid rgba(16,185,129,.35)
+              {% elif ev.ruling_for == 'party_b' %}background:rgba(239,68,68,.14);color:#b91c1c;border:1px solid rgba(239,68,68,.3)
+              {% elif ev.ruling_for == 'both' %}background:rgba(59,130,246,.14);color:#1d4ed8;border:1px solid rgba(59,130,246,.3)
+              {% else %}background:var(--bg);color:var(--text-secondary);border:1px solid var(--border){% endif %}">
+              {% if ev.ruling_for == 'party_a' %}✓ Party A (me)
+              {% elif ev.ruling_for == 'party_b' %}✗ Party B (ex-wife)
+              {% elif ev.ruling_for == 'both' %}~ Both
+              {% else %}{{ ev.ruling_for | replace('_',' ') | title }}{% endif %}
+            </span>
+          </div>
+        </div>
+        {% endif %}
+        <!-- Judge -->
+        {% if ev.judge_name %}
+        <div>
+          <span style="font-size:.68rem;text-transform:uppercase;letter-spacing:.05em;color:var(--text-muted);font-weight:600">Judge</span>
+          <div style="font-size:var(--font-size-sm);color:var(--text-primary);margin-top:3px">{{ ev.judge_name }}</div>
+        </div>
+        {% endif %}
+        <!-- Pension -->
+        {% if ev.pension_amount is not none %}
+        <div>
+          <span style="font-size:.68rem;text-transform:uppercase;letter-spacing:.05em;color:var(--text-muted);font-weight:600">Pension</span>
+          <div style="font-size:var(--font-size-sm);font-weight:700;color:var(--text-primary);margin-top:3px">{{ "%.0f" | format(ev.pension_amount) }} €/mo</div>
+        </div>
+        {% endif %}
+        <!-- Custody -->
+        {% if ev.custody_arrangement %}
+        <div>
+          <span style="font-size:.68rem;text-transform:uppercase;letter-spacing:.05em;color:var(--text-muted);font-weight:600">Custody</span>
+          <div style="font-size:var(--font-size-sm);color:var(--text-primary);margin-top:3px">{{ ev.custody_arrangement | replace('_',' ') }}</div>
+        </div>
+        {% endif %}
+        <!-- Obligations count + anchor -->
+        {% if ev.obligations %}
+        <div>
+          <span style="font-size:.68rem;text-transform:uppercase;letter-spacing:.05em;color:var(--text-muted);font-weight:600">Obligations</span>
+          <div style="font-size:var(--font-size-sm);color:var(--text-primary);margin-top:3px">
+            {{ ev.obligations.split('\n') | select | list | length }} item(s)
+          </div>
+        </div>
+        {% endif %}
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+  {% endif %}
+
+  <!-- ─── Documents section ──────────────────────────────────────────── -->
+  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:var(--space-4)">
+    <h2 style="margin:0;font-size:var(--font-size-xl)">
+      Documents
+      <span style="color:var(--text-muted);font-weight:400;font-size:var(--font-size-base)">({{ documents | length }}{% set email_doc_count = documents | selectattr('_source', 'equalto', 'attachment') | list | length %}{% if email_doc_count %} · {{ email_doc_count }} from emails{% endif %})</span>
+    </h2>
+    <button class="btn btn-primary btn-sm"
+            onclick="document.getElementById('upload-doc-form').toggleAttribute('hidden')">
+      + Upload Document
+    </button>
+  </div>
+
+  <!-- Upload form (hidden by default) -->
+  <div id="upload-doc-form" class="card mb-6" hidden>
+    <div class="card-body" style="padding:var(--space-5)">
+      <form method="post" action="/procedures/{{ proc.id }}/documents"
+            enctype="multipart/form-data">
+        <div class="proc-form-grid">
+          <div class="form-group">
+            <label class="form-label">File *</label>
+            <input type="file" name="file" required accept=".pdf,.doc,.docx,.txt,.odt,.rtf">
+          </div>
+          <div class="form-group">
+            <label class="form-label">Document Type</label>
+            <select name="doc_type">
+              {% for dt in doc_types %}
+              <option value="{{ dt }}">{{ dt | replace('_', ' ') | title }}</option>
+              {% endfor %}
+            </select>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Document Date</label>
+            <input type="date" name="doc_date">
+          </div>
+        </div>
+        <div class="form-group" style="margin-top:var(--space-3)">
+          <label class="form-label">Notes</label>
+          <textarea name="notes" rows="2" placeholder="Optional notes about this document..."></textarea>
+        </div>
+        <div style="display:flex;gap:var(--space-3);margin-top:var(--space-4)">
+          <button type="submit" class="btn btn-primary btn-sm">Upload</button>
+          <button type="button" class="btn btn-secondary btn-sm"
+                  onclick="document.getElementById('upload-doc-form').setAttribute('hidden','')">Cancel</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Document list -->
+  {% if documents %}
+  <div class="card mb-6">
+    <div class="card-body" style="padding:0">
+      <table style="width:100%;border-collapse:collapse;font-size:var(--font-size-sm)">
+        <thead>
+          <tr style="border-bottom:1px solid var(--border);background:var(--bg-secondary)">
+            <th style="padding:var(--space-3) var(--space-4);text-align:left;font-weight:600">Type</th>
+            <th style="padding:var(--space-3) var(--space-4);text-align:left;font-weight:600">Filename</th>
+            <th style="padding:var(--space-3) var(--space-4);text-align:left;font-weight:600">Date</th>
+            <th style="padding:var(--space-3) var(--space-4);text-align:left;font-weight:600">Size</th>
+            <th style="padding:var(--space-3) var(--space-4);text-align:left;font-weight:600">Notes</th>
+            <th style="padding:var(--space-3) var(--space-4)"></th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for doc in documents %}
+          <tr style="border-bottom:1px solid var(--border)">
+            <td style="padding:var(--space-3) var(--space-4)">
+              <span class="badge badge-primary">{{ doc.doc_type | replace('_', ' ') | title }}</span>
+              {% if doc._source == 'attachment' %}
+              <span class="badge" style="background:#fef3c7;color:#d97706;border:1px solid #fde68a;font-size:10px;margin-left:4px">email</span>
+              {% endif %}
+            </td>
+            <td style="padding:var(--space-3) var(--space-4)">
+              <a href="{{ doc._serve_url }}"
+                 style="color:var(--accent);text-decoration:none;font-weight:500"
+                 target="_blank">
+                {{ doc.original_name }}
+              </a>
+            </td>
+            <td style="padding:var(--space-3) var(--space-4);color:var(--text-muted)">
+              {{ doc.doc_date or '—' }}
+            </td>
+            <td style="padding:var(--space-3) var(--space-4);color:var(--text-muted)">
+              {% if doc.size_bytes >= 1048576 %}
+                {{ "%.1f"|format(doc.size_bytes / 1048576) }} MB
+              {% elif doc.size_bytes >= 1024 %}
+                {{ (doc.size_bytes // 1024) }} KB
+              {% else %}
+                {{ doc.size_bytes }} B
+              {% endif %}
+            </td>
+            <td style="padding:var(--space-3) var(--space-4);color:var(--text-muted);font-style:italic">
+              {{ doc.notes or '' }}
+            </td>
+            <td style="padding:var(--space-3) var(--space-4);text-align:right">
+              {% if doc._source == 'procedure_document' %}
+              <form method="post"
+                    action="/procedures/{{ proc.id }}/documents/{{ doc.id }}/delete"
+                    style="margin:0;display:inline">
+                <button type="submit" class="btn btn-danger btn-sm"
+                        hx-confirm="Delete {{ doc.original_name }}?">×</button>
+              </form>
+              {% endif %}
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+  {% else %}
+  <div class="card mb-6" style="padding:var(--space-5);text-align:center;color:var(--text-muted)">
+    <p>No documents uploaded yet. Click "Upload Document" to attach judgments, conclusions, or other legal documents.</p>
+  </div>
+  {% endif %}
+
+  <!-- ─── Events section ───────────────────────────────────────────────── -->
+  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:var(--space-4)">
+    <h2 style="margin:0;font-size:var(--font-size-xl)">
+      Events
+      <span style="color:var(--text-muted);font-weight:400;font-size:var(--font-size-base)">({{ events | length }})</span>
+    </h2>
+    <button class="btn btn-primary btn-sm"
+            onclick="document.getElementById('add-event-form').toggleAttribute('hidden')">
+      + Add Event
+    </button>
+  </div>
+
+  <!-- Add event form (hidden) -->
+  <div id="add-event-form" class="card mb-6" hidden>
+    <div class="card-body" style="padding:var(--space-5)">
+      <form method="post" action="/procedures/{{ proc.id }}/events">
+        <div class="proc-form-grid">
+          <div class="form-group">
+            <label class="form-label">Date</label>
+            <input type="date" name="event_date">
+          </div>
+          <div class="form-group">
+            <label class="form-label">Event Type</label>
+            <select name="event_type" id="event-type-select"
+                  onchange="document.getElementById('ruling-fields').hidden=!['judgment','ordonnance'].includes(this.value)">
+              {% for et in event_types %}
+              <option value="{{ et }}">{{ et | replace('_', ' ') | title }}</option>
+              {% endfor %}
+            </select>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Date Precision</label>
+            <select name="date_precision">
+              {% for dp in precision_options %}
+              <option value="{{ dp }}">{{ dp | title }}</option>
+              {% endfor %}
+            </select>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Email ID (optional)</label>
+            <input type="number" name="source_email_id" placeholder="e.g. 1234">
+          </div>
+        </div>
+        <div class="form-group" style="margin-top:var(--space-3)">
+          <label class="form-label">Description</label>
+          <textarea name="description" rows="2" placeholder="What happened..."></textarea>
+        </div>
+        <div class="form-group" style="margin-top:var(--space-3)">
+          <label class="form-label">Outcome</label>
+          <textarea name="outcome" rows="2" placeholder="Result of this event..."></textarea>
+        </div>
+        <div class="form-group" style="margin-top:var(--space-3)">
+          <label class="form-label">Notes</label>
+          <textarea name="notes" rows="2" placeholder="Internal notes..."></textarea>
+        </div>
+
+        <!-- Ruling fields — shown only for judgment / ordonnance -->
+        <div id="ruling-fields" hidden style="margin-top:var(--space-4);padding:var(--space-4);background:rgba(0,0,0,.03);border-radius:var(--radius);border:1px solid var(--border)">
+          <div style="font-size:var(--font-size-sm);font-weight:700;color:var(--text-secondary);margin-bottom:var(--space-3);text-transform:uppercase;letter-spacing:.05em">
+            ⚖️ Ruling Details
+          </div>
+          <div class="proc-form-grid">
+            <div class="form-group">
+              <label class="form-label">Judge name</label>
+              <input type="text" name="judge_name" placeholder="e.g. Mme Dupont">
+            </div>
+            <div class="form-group">
+              <label class="form-label">Ruling for</label>
+              <select name="ruling_for">
+                <option value="">— unknown —</option>
+                <option value="party_a">Party A (me)</option>
+                <option value="party_b">Party B (ex-wife)</option>
+                <option value="both">Both / shared</option>
+                <option value="neutral">Neutral / procedural</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label class="form-label">Pension alimentaire (€/month)</label>
+              <input type="number" name="pension_amount" step="0.01" min="0" placeholder="e.g. 450.00">
+            </div>
+            <div class="form-group">
+              <label class="form-label">Custody arrangement</label>
+              <select name="custody_arrangement">
+                <option value="">— not applicable —</option>
+                <option value="alternée">Garde alternée</option>
+                <option value="résidence_principale_a">Résidence principale Party A</option>
+                <option value="résidence_principale_b">Résidence principale Party B</option>
+                <option value="supervisée">Visites supervisées</option>
+                <option value="other">Other</option>
+              </select>
+            </div>
+          </div>
+          <div class="form-group" style="margin-top:var(--space-3)">
+            <label class="form-label">Obligations (one per line)</label>
+            <textarea name="obligations" rows="3"
+                      placeholder="e.g. Payment of €5,000 within 30 days&#10;Surrender of passport&#10;Prohibition to travel abroad with children"></textarea>
+          </div>
+        </div>
+
+        <div style="display:flex;gap:var(--space-3);margin-top:var(--space-4)">
+          <button type="submit" class="btn btn-primary btn-sm">Add Event</button>
+          <button type="button" class="btn btn-secondary btn-sm"
+                  onclick="document.getElementById('add-event-form').setAttribute('hidden','')">Cancel</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Events timeline -->
+  {% if events %}
+  <div class="event-timeline">
+    {% for ev in events %}
+    <div class="event-card precision-{{ ev.date_precision or 'exact' }}">
+      <div class="event-card-header">
+        <div style="display:flex;align-items:center;gap:var(--space-2);flex-wrap:wrap">
+          {% if ev.event_date %}
+          <span class="event-date">{{ ev.event_date }}</span>
+          {% else %}
+          <span class="event-date" style="color:var(--text-muted)">No date</span>
+          {% endif %}
+          <span class="badge badge-primary">{{ (ev.event_type or 'other') | replace('_', ' ') | title }}</span>
+          {% if ev.date_precision and ev.date_precision != 'exact' %}
+          <span class="badge" style="background:var(--bg);color:var(--text-muted);border:1px dashed var(--border-strong);font-size:10px">
+            {{ ev.date_precision }}
+          </span>
+          {% endif %}
+        </div>
+        <form method="post" action="/procedures/{{ proc.id }}/events/{{ ev.id }}/delete"
+              style="margin:0;flex-shrink:0">
+          <button type="submit" class="btn btn-danger btn-sm"
+                  hx-confirm="Are you sure you want to delete this event?">
+            Delete
+          </button>
+        </form>
+      </div>
+
+      {% if ev.description %}
+      <p class="event-description">{{ ev.description }}</p>
+      {% endif %}
+
+      {% if ev.outcome %}
+      <p class="event-outcome">
+        <strong>Outcome:</strong> {{ ev.outcome }}
+      </p>
+      {% endif %}
+
+      {# ── Ruling details strip (judgment / ordonnance only) ── #}
+      {% if ev.judge_name or ev.ruling_for or ev.pension_amount is not none or ev.custody_arrangement or ev.obligations %}
+      <div style="margin-top:var(--space-3);padding:var(--space-3) var(--space-4);background:rgba(30,58,95,.05);border-left:3px solid var(--primary);border-radius:0 var(--radius) var(--radius) 0;display:flex;flex-wrap:wrap;gap:var(--space-4)">
+        {% if ev.judge_name %}
+        <div>
+          <span style="font-size:.7rem;text-transform:uppercase;letter-spacing:.05em;color:var(--text-muted);font-weight:600">Judge</span>
+          <div style="font-size:var(--font-size-sm);color:var(--text-primary);margin-top:2px">{{ ev.judge_name }}</div>
+        </div>
+        {% endif %}
+        {% if ev.ruling_for %}
+        <div>
+          <span style="font-size:.7rem;text-transform:uppercase;letter-spacing:.05em;color:var(--text-muted);font-weight:600">Ruling for</span>
+          <div style="margin-top:2px">
+            <span class="badge" style="
+              {% if ev.ruling_for == 'party_a' %}background:rgba(16,185,129,.15);color:#065f46;border:1px solid rgba(16,185,129,.3)
+              {% elif ev.ruling_for == 'party_b' %}background:rgba(239,68,68,.12);color:#b91c1c;border:1px solid rgba(239,68,68,.25)
+              {% elif ev.ruling_for == 'both' %}background:rgba(59,130,246,.12);color:#1d4ed8;border:1px solid rgba(59,130,246,.25)
+              {% else %}background:var(--bg);color:var(--text-secondary);border:1px solid var(--border){% endif %}">
+              {% if ev.ruling_for == 'party_a' %}✓ Party A (me)
+              {% elif ev.ruling_for == 'party_b' %}✗ Party B (ex-wife)
+              {% elif ev.ruling_for == 'both' %}~ Both
+              {% else %}{{ ev.ruling_for | replace('_',' ') | title }}{% endif %}
+            </span>
+          </div>
+        </div>
+        {% endif %}
+        {% if ev.pension_amount is not none %}
+        <div>
+          <span style="font-size:.7rem;text-transform:uppercase;letter-spacing:.05em;color:var(--text-muted);font-weight:600">Pension alimentaire</span>
+          <div style="font-size:var(--font-size-sm);font-weight:700;color:var(--text-primary);margin-top:2px">{{ "%.0f" | format(ev.pension_amount) }} €/month</div>
+        </div>
+        {% endif %}
+        {% if ev.custody_arrangement %}
+        <div>
+          <span style="font-size:.7rem;text-transform:uppercase;letter-spacing:.05em;color:var(--text-muted);font-weight:600">Custody</span>
+          <div style="font-size:var(--font-size-sm);color:var(--text-primary);margin-top:2px">{{ ev.custody_arrangement | replace('_',' ') }}</div>
+        </div>
+        {% endif %}
+        {% if ev.obligations %}
+        <div style="flex-basis:100%">
+          <span style="font-size:.7rem;text-transform:uppercase;letter-spacing:.05em;color:var(--text-muted);font-weight:600">Obligations</span>
+          <ul style="margin:4px 0 0 var(--space-4);padding:0;font-size:var(--font-size-sm);color:var(--text-primary)">
+            {% for ob in ev.obligations.split('\n') %}{% if ob.strip() %}<li>{{ ob.strip() }}</li>{% endif %}{% endfor %}
+          </ul>
+        </div>
+        {% endif %}
+      </div>
+      {% endif %}
+
+      {% if ev.email_subject %}
+      <div class="event-email-link">
+        <a href="/emails/{{ ev.source_email_id }}">View email: {{ ev.email_subject }} &rarr;</a>
+      </div>
+      {% elif ev.source_email_id %}
+      <div class="event-email-link">
+        <a href="/emails/{{ ev.source_email_id }}">View linked email #{{ ev.source_email_id }} &rarr;</a>
+      </div>
+      {% endif %}
+
+      {% if ev.notes %}
+      <p class="event-notes">{{ ev.notes }}</p>
+      {% endif %}
+    </div>
+    {% endfor %}
+  </div>
+  {% else %}
+  <div class="card" style="padding:var(--space-6);text-align:center;color:var(--text-muted)">
+    <p>No events recorded yet. Click "Add Event" to track hearings, filings, and other milestones.</p>
+  </div>
+  {% endif %}
+
+</div>
+{% endblock %}

@@ -97,6 +97,13 @@ def attachment_download_dir() -> Path:
     return path
 
 
+def procedure_docs_dir() -> Path:
+    """Root directory for procedure document uploads."""
+    path = _ROOT / "data" / "documents" / "procedures"
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
 def lawyer_contacts() -> List[Dict[str, Any]]:
     """Return contacts with role in ('my_lawyer', 'her_lawyer')."""
     return [c for c in contacts() if c.get("role") in ("my_lawyer", "her_lawyer")]

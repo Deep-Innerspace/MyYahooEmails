@@ -108,6 +108,16 @@ def overview_stats(conn: sqlite3.Connection,
     r["procedure_events_count"] = conn.execute("SELECT COUNT(*) FROM procedure_events").fetchone()[0]
     r["timeline_events_count"] = conn.execute("SELECT COUNT(*) FROM timeline_events").fetchone()[0]
 
+    # Legal corpus analysis coverage
+    r["legal_analysis_count"] = conn.execute(
+        """SELECT COUNT(DISTINCT ar.email_id) FROM analysis_results ar
+           JOIN analysis_runs ru ON ru.id=ar.run_id
+           JOIN emails e ON e.id=ar.email_id
+           WHERE ru.analysis_type='legal_analysis' AND e.corpus='legal'""",
+    ).fetchone()[0]
+    r["procedures_count"] = conn.execute("SELECT COUNT(*) FROM procedures").fetchone()[0]
+    r["invoices_count"] = conn.execute("SELECT COUNT(*) FROM lawyer_invoices").fetchone()[0]
+
     return r
 
 
@@ -455,49 +465,74 @@ def unassigned_senders(conn: sqlite3.Connection, min_count: int = 1) -> List[Dic
 def merged_timeline(conn: sqlite3.Connection,
                     since: Optional[str] = None,
                     until: Optional[str] = None,
-                    significance: Optional[str] = None) -> List[Dict]:
-    """Merge timeline_events + procedure_events into one chronological list."""
+                    significance: Optional[str] = None,
+                    corpus: Optional[str] = None) -> List[Dict]:
+    """Merge timeline_events + procedure_events + lawyer_invoices into one
+    chronological list.
+
+    Sources:
+      'email'   — extracted events from personal email analysis (timeline_events)
+      'court'   — procedure events (hearings, judgments, filings)
+      'invoice' — lawyer invoice dates with amounts
+
+    *corpus* filters timeline events by the source email's corpus
+    ('personal', 'legal', or None/'all' for no filter).
+    All court and invoice events are always included regardless of corpus filter.
+    """
     sig_clause = ""
     sig_params: list = []
     if significance:
         sig_levels = {"low": 0, "medium": 1, "high": 2}
         min_sig = sig_levels.get(significance, 0)
-        # Filter timeline events by significance
         sig_clause = "AND te.significance IN ('high'" + (", 'medium'" if min_sig <= 1 else "") + (", 'low'" if min_sig == 0 else "") + ")"
 
     date_clause_te = ""
     date_clause_ce = ""
+    date_clause_inv = ""
     date_params_te: list = []
     date_params_ce: list = []
+    date_params_inv: list = []
     if since:
         date_clause_te += " AND te.event_date >= ?"
-        date_clause_ce += " AND ce.event_date >= ?"
+        date_clause_ce += " AND pe.event_date >= ?"
+        date_clause_inv += " AND li.invoice_date >= ?"
         date_params_te.append(since)
         date_params_ce.append(since)
+        date_params_inv.append(since)
     if until:
         date_clause_te += " AND te.event_date <= ?"
-        date_clause_ce += " AND ce.event_date <= ?"
+        date_clause_ce += " AND pe.event_date <= ?"
+        date_clause_inv += " AND li.invoice_date <= ?"
         date_params_te.append(until)
         date_params_ce.append(until)
+        date_params_inv.append(until)
 
-    # Timeline events from email analysis
+    cc, cp = corpus_clause(corpus, table_alias="e")
+
+    # Timeline events from email analysis — include avg aggression for context
     te_rows = conn.execute(
         f"""SELECT te.event_date AS date, 'email' AS source,
                    te.event_type AS type, te.description,
-                   te.significance, t.name AS topic, te.email_id
+                   te.significance, t.name AS topic, te.email_id,
+                   NULL AS procedure_id, NULL AS procedure_name,
+                   NULL AS amount_ttc, NULL AS aggression
             FROM timeline_events te
+            JOIN emails e ON e.id = te.email_id
             LEFT JOIN topics t ON t.id = te.topic_id
-            WHERE 1=1 {sig_clause} {date_clause_te}
+            WHERE 1=1 {sig_clause} {date_clause_te} {cc}
             ORDER BY te.event_date""",
-        sig_params + date_params_te,
+        sig_params + date_params_te + cp,
     ).fetchall()
 
-    # Procedure events (replaced court_events in Phase 6a)
+    # Procedure events (hearings, judgments, filings)
     ce_rows = conn.execute(
         f"""SELECT pe.event_date AS date, 'court' AS source,
                    pe.event_type AS type,
-                   COALESCE(p.name || ' — ', '') || pe.description AS description,
-                   'high' AS significance, NULL AS topic, pe.source_email_id AS email_id
+                   pe.description AS description,
+                   'high' AS significance, NULL AS topic,
+                   pe.source_email_id AS email_id,
+                   pe.procedure_id, p.name AS procedure_name,
+                   NULL AS amount_ttc, NULL AS aggression
             FROM procedure_events pe
             LEFT JOIN procedures p ON p.id = pe.procedure_id
             WHERE 1=1 {date_clause_ce}
@@ -505,14 +540,415 @@ def merged_timeline(conn: sqlite3.Connection,
         date_params_ce,
     ).fetchall()
 
+    # Lawyer invoice events
+    inv_rows = conn.execute(
+        f"""SELECT li.invoice_date AS date, 'invoice' AS source,
+                   'invoice' AS type,
+                   c.name || ' — ' || COALESCE(li.description, '') || ' (' || COALESCE(p.name, 'no procedure') || ')' AS description,
+                   'medium' AS significance, NULL AS topic,
+                   li.email_id, li.procedure_id, p.name AS procedure_name,
+                   li.amount_ttc, NULL AS aggression
+            FROM lawyer_invoices li
+            JOIN contacts c ON c.id = li.contact_id
+            LEFT JOIN procedures p ON p.id = li.procedure_id
+            WHERE 1=1 {date_clause_inv}
+            ORDER BY li.invoice_date""",
+        date_params_inv,
+    ).fetchall()
+
     # Merge and sort — cast date to str to handle SQLite integer coercion of
     # year-only values like 2015 stored in TIMESTAMP columns
-    all_events = [dict(r) for r in te_rows] + [dict(r) for r in ce_rows]
+    all_events = [dict(r) for r in te_rows] + [dict(r) for r in ce_rows] + [dict(r) for r in inv_rows]
     for ev in all_events:
         if ev["date"] is not None:
             ev["date"] = str(ev["date"])
     all_events.sort(key=lambda x: x["date"] or "")
     return all_events
+
+
+def dossier_timeline(conn: sqlite3.Connection,
+                     since: Optional[str] = None,
+                     until: Optional[str] = None) -> List[Dict]:
+    """Return procedures with their nested events for the dossier view.
+
+    Each procedure dict contains:
+      - procedure metadata (id, name, type, jurisdiction, case_number, status,
+        date_start, date_end, outcome_summary)
+      - 'events': list of procedure_events sorted by date
+      - 'email_count': personal emails within the procedure date range
+      - 'invoice_total': total lawyer costs for this procedure
+      - 'aggression_before': avg aggression ±30 days before first event
+      - 'aggression_during': avg aggression within procedure date range
+    """
+    date_clause_p = ""
+    date_params_p: list = []
+    if since:
+        date_clause_p += " AND (p.date_end IS NULL OR p.date_end >= ?)"
+        date_params_p.append(since)
+    if until:
+        date_clause_p += " AND (p.date_start IS NULL OR p.date_start <= ?)"
+        date_params_p.append(until)
+
+    procs = conn.execute(
+        f"""SELECT p.id, p.name, p.procedure_type, p.jurisdiction, p.case_number,
+                   p.status, p.date_start, p.date_end, p.outcome_summary, p.description
+              FROM procedures p
+             WHERE 1=1 {date_clause_p}
+             ORDER BY COALESCE(p.date_start, '9999') ASC""",
+        date_params_p,
+    ).fetchall()
+
+    result = []
+    for proc in procs:
+        p = dict(proc)
+        pid = p["id"]
+
+        # Procedure events
+        events = conn.execute(
+            """SELECT pe.id, pe.event_date, pe.event_type, pe.description,
+                      pe.outcome, pe.jurisdiction, pe.date_precision,
+                      pe.source_email_id, pe.notes
+                 FROM procedure_events pe
+                WHERE pe.procedure_id = ?
+                ORDER BY pe.event_date""",
+            (pid,),
+        ).fetchall()
+        p["events"] = [dict(e) for e in events]
+
+        # Invoice total
+        inv = conn.execute(
+            "SELECT COALESCE(SUM(amount_ttc), 0) FROM lawyer_invoices WHERE procedure_id = ?",
+            (pid,),
+        ).fetchone()[0]
+        p["invoice_total"] = inv
+
+        # Email count (emails FK-linked to this procedure — legal corpus)
+        p["email_count"] = conn.execute(
+            "SELECT COUNT(*) FROM emails WHERE procedure_id = ?",
+            (pid,),
+        ).fetchone()[0]
+
+        # Aggression during procedure (personal emails in date range)
+        if p["date_start"]:
+            date_end = p["date_end"] or "2099-12-31"
+            agg = conn.execute(
+                """SELECT AVG(CAST(JSON_EXTRACT(ar.result_json, '$.aggression_level') AS REAL))
+                     FROM analysis_results ar
+                     JOIN analysis_runs ru ON ru.id = ar.run_id
+                     JOIN emails e ON e.id = ar.email_id
+                    WHERE ru.analysis_type = 'tone'
+                      AND e.corpus = 'personal'
+                      AND e.date >= ? AND e.date <= ?""",
+                (p["date_start"], date_end),
+            ).fetchone()[0]
+            p["aggression_during"] = round(agg, 2) if agg is not None else None
+        else:
+            p["aggression_during"] = None
+
+        result.append(p)
+
+    return result
+
+
+def court_event_window_aggression(conn: sqlite3.Connection,
+                                  event_date: str,
+                                  window_days: int = 14) -> Dict:
+    """Return personal email aggression stats ±window_days around a court event date."""
+    agg_before = conn.execute(
+        """SELECT AVG(CAST(JSON_EXTRACT(ar.result_json, '$.aggression_level') AS REAL)),
+                  COUNT(*)
+             FROM analysis_results ar
+             JOIN analysis_runs ru ON ru.id = ar.run_id
+             JOIN emails e ON e.id = ar.email_id
+            WHERE ru.analysis_type = 'tone'
+              AND e.corpus = 'personal'
+              AND e.date >= DATE(?, '-' || ? || ' days')
+              AND e.date < ?""",
+        (event_date, window_days, event_date),
+    ).fetchone()
+    agg_after = conn.execute(
+        """SELECT AVG(CAST(JSON_EXTRACT(ar.result_json, '$.aggression_level') AS REAL)),
+                  COUNT(*)
+             FROM analysis_results ar
+             JOIN analysis_runs ru ON ru.id = ar.run_id
+             JOIN emails e ON e.id = ar.email_id
+            WHERE ru.analysis_type = 'tone'
+              AND e.corpus = 'personal'
+              AND e.date > ?
+              AND e.date <= DATE(?, '+' || ? || ' days')""",
+        (event_date, event_date, window_days),
+    ).fetchone()
+    agg_base = conn.execute(
+        """SELECT AVG(CAST(JSON_EXTRACT(ar.result_json, '$.aggression_level') AS REAL))
+             FROM analysis_results ar
+             JOIN analysis_runs ru ON ru.id = ar.run_id
+             JOIN emails e ON e.id = ar.email_id
+            WHERE ru.analysis_type = 'tone' AND e.corpus = 'personal'""",
+    ).fetchone()[0]
+
+    def _fmt(row):
+        avg, cnt = row
+        return {"avg": round(avg, 2) if avg is not None else None, "count": cnt or 0}
+
+    return {
+        "before": _fmt(agg_before),
+        "after": _fmt(agg_after),
+        "baseline": round(agg_base, 2) if agg_base is not None else None,
+    }
+
+
+# ──────────────────── SYSTEMATIC PROCEDURE CORRELATIONS ──────────────────
+
+
+def all_procedure_event_correlations(
+    conn: sqlite3.Connection,
+    window_days: int = 14,
+    since: Optional[str] = None,
+    until: Optional[str] = None,
+    event_type: Optional[str] = "conclusions_received",
+) -> Dict[str, Any]:
+    """Batch-compute before/after aggression + manipulation for procedure events.
+
+    event_type: filter to a specific event type (default: 'conclusions_received').
+                Pass None to include all event types.
+    since/until filter which *procedure events* are analyzed (not the email windows).
+
+    Returns a dict with:
+        correlations  — list of per-event rows, sorted by event_date asc
+        summary       — aggregate stats (total, spikes, drops, avg_delta)
+        baseline_agg / baseline_manip — corpus-wide averages
+        window_days / event_type      — params used
+    """
+    # Corpus-wide baselines
+    base = conn.execute(
+        """SELECT AVG(CAST(JSON_EXTRACT(ar.result_json, '$.aggression_level') AS REAL)),
+                  AVG(CAST(JSON_EXTRACT(ar.result_json, '$.manipulation_score') AS REAL))
+             FROM analysis_results ar
+             JOIN analysis_runs ru ON ru.id = ar.run_id
+             JOIN emails e ON e.id = ar.email_id
+            WHERE ru.analysis_type = 'tone' AND e.corpus = 'personal'"""
+    ).fetchone()
+    baseline_agg   = round(base[0], 3) if base[0] is not None else None
+    baseline_manip = round(base[1], 3) if base[1] is not None else None
+
+    wheres, params = [], []
+    wheres.append("pe.event_date IS NOT NULL AND pe.event_date != ''")
+    if event_type:
+        wheres.append("pe.event_type = ?")
+        params.append(event_type)
+    if since:
+        wheres.append("pe.event_date >= ?")
+        params.append(since)
+    if until:
+        wheres.append("pe.event_date <= ?")
+        params.append(until)
+    where_clause = "WHERE " + " AND ".join(wheres)
+
+    events = conn.execute(
+        f"""SELECT pe.id, pe.event_date, pe.event_type, pe.description,
+                  pe.procedure_id, p.name AS procedure_name
+             FROM procedure_events pe
+             JOIN procedures p ON p.id = pe.procedure_id
+            {where_clause}
+            ORDER BY pe.event_date""",
+        params,
+    ).fetchall()
+
+    correlations = []
+    for ev in events:
+        ev = dict(ev)
+        ed = ev["event_date"][:10]
+
+        b = conn.execute(
+            """SELECT COUNT(*),
+                      AVG(CAST(JSON_EXTRACT(ar.result_json, '$.aggression_level')  AS REAL)),
+                      AVG(CAST(JSON_EXTRACT(ar.result_json, '$.manipulation_score') AS REAL))
+                 FROM analysis_results ar
+                 JOIN analysis_runs ru ON ru.id = ar.run_id
+                 JOIN emails e ON e.id = ar.email_id
+                WHERE ru.analysis_type = 'tone' AND e.corpus = 'personal'
+                  AND e.date >= DATE(?, '-' || ? || ' days') AND e.date < ?""",
+            (ed, window_days, ed),
+        ).fetchone()
+
+        a = conn.execute(
+            """SELECT COUNT(*),
+                      AVG(CAST(JSON_EXTRACT(ar.result_json, '$.aggression_level')  AS REAL)),
+                      AVG(CAST(JSON_EXTRACT(ar.result_json, '$.manipulation_score') AS REAL))
+                 FROM analysis_results ar
+                 JOIN analysis_runs ru ON ru.id = ar.run_id
+                 JOIN emails e ON e.id = ar.email_id
+                WHERE ru.analysis_type = 'tone' AND e.corpus = 'personal'
+                  AND e.date > ? AND e.date <= DATE(?, '+' || ? || ' days')""",
+            (ed, ed, window_days),
+        ).fetchone()
+
+        b_cnt, b_agg, b_manip = b
+        a_cnt, a_agg, a_manip = a
+
+        if not b_cnt and not a_cnt:
+            continue  # no personal emails nearby — skip
+
+        def _r(v):
+            return round(v, 3) if v is not None else None
+
+        agg_delta = _r(a_agg - b_agg) if a_agg is not None and b_agg is not None else (
+            _r(a_agg - baseline_agg) if a_agg is not None and baseline_agg is not None else None
+        )
+        manip_delta = _r(a_manip - b_manip) if a_manip is not None and b_manip is not None else None
+
+        correlations.append({
+            "event_id":      ev["id"],
+            "procedure_id":  ev["procedure_id"],
+            "procedure_name": ev["procedure_name"],
+            "event_date":    ed,
+            "event_type":    ev["event_type"],
+            "description":   ev["description"],
+            "before_count":  b_cnt or 0,
+            "before_agg":    _r(b_agg),
+            "before_manip":  _r(b_manip),
+            "after_count":   a_cnt or 0,
+            "after_agg":     _r(a_agg),
+            "after_manip":   _r(a_manip),
+            "agg_delta":     agg_delta,
+            "manip_delta":   manip_delta,
+        })
+
+    deltas = [c["agg_delta"] for c in correlations if c["agg_delta"] is not None]
+    # Chronological order — for conclusions this is the natural reading order
+    correlations.sort(key=lambda c: c["event_date"])
+
+    return {
+        "correlations":    correlations,
+        "summary": {
+            "total":      len(correlations),
+            "with_spike": sum(1 for d in deltas if d > 0.05),
+            "with_drop":  sum(1 for d in deltas if d < -0.05),
+            "avg_delta":  round(sum(deltas) / len(deltas), 3) if deltas else None,
+        },
+        "baseline_agg":   baseline_agg,
+        "baseline_manip": baseline_manip,
+        "window_days":    window_days,
+        "event_type":     event_type,
+    }
+
+
+def pre_conclusion_behavior(
+    conn: sqlite3.Connection,
+    window_days: int = 30,
+    since: Optional[str] = None,
+    until: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Analyze personal email behavior in the window before adverse conclusions.
+
+    Targets procedure_events with event_type = 'conclusions_received'.
+    since/until filter which conclusion events are included.
+    Returns aggression + manipulation + frequency stats per conclusion,
+    plus aggregate summary.
+    """
+    date_wheres, date_params = [], []
+    if since:
+        date_wheres.append("pe.event_date >= ?")
+        date_params.append(since)
+    if until:
+        date_wheres.append("pe.event_date <= ?")
+        date_params.append(until)
+    date_clause = ("AND " + " AND ".join(date_wheres)) if date_wheres else ""
+
+    conclusions = conn.execute(
+        f"""SELECT pe.id, pe.event_date, pe.description,
+                  pe.procedure_id, p.name AS procedure_name
+             FROM procedure_events pe
+             JOIN procedures p ON p.id = pe.procedure_id
+            WHERE pe.event_type = 'conclusions_received'
+              AND pe.event_date IS NOT NULL AND pe.event_date != ''
+              {date_clause}
+            ORDER BY pe.event_date""",
+        date_params,
+    ).fetchall()
+
+    base = conn.execute(
+        """SELECT AVG(CAST(JSON_EXTRACT(ar.result_json, '$.aggression_level') AS REAL)),
+                  AVG(CAST(JSON_EXTRACT(ar.result_json, '$.manipulation_score') AS REAL))
+             FROM analysis_results ar
+             JOIN analysis_runs ru ON ru.id = ar.run_id
+             JOIN emails e ON e.id = ar.email_id
+            WHERE ru.analysis_type = 'tone' AND e.corpus = 'personal'"""
+    ).fetchone()
+    baseline_agg   = round(base[0], 3) if base[0] is not None else None
+    baseline_manip = round(base[1], 3) if base[1] is not None else None
+
+    results = []
+    for c in conclusions:
+        c = dict(c)
+        ed = c["event_date"][:10]
+
+        win = conn.execute(
+            """SELECT COUNT(*),
+                      AVG(CAST(JSON_EXTRACT(ar.result_json, '$.aggression_level')  AS REAL)),
+                      AVG(CAST(JSON_EXTRACT(ar.result_json, '$.manipulation_score') AS REAL)),
+                      MAX(CAST(JSON_EXTRACT(ar.result_json, '$.aggression_level')  AS REAL))
+                 FROM analysis_results ar
+                 JOIN analysis_runs ru ON ru.id = ar.run_id
+                 JOIN emails e ON e.id = ar.email_id
+                WHERE ru.analysis_type = 'tone' AND e.corpus = 'personal'
+                  AND e.date >= DATE(?, '-' || ? || ' days') AND e.date < ?""",
+            (ed, window_days, ed),
+        ).fetchone()
+
+        w7 = conn.execute(
+            """SELECT COUNT(*),
+                      AVG(CAST(JSON_EXTRACT(ar.result_json, '$.aggression_level') AS REAL))
+                 FROM analysis_results ar
+                 JOIN analysis_runs ru ON ru.id = ar.run_id
+                 JOIN emails e ON e.id = ar.email_id
+                WHERE ru.analysis_type = 'tone' AND e.corpus = 'personal'
+                  AND e.date >= DATE(?, '-7 days') AND e.date < ?""",
+            (ed, ed),
+        ).fetchone()
+
+        cnt, avg_agg, avg_manip, max_agg = win
+        w7_cnt, w7_agg = w7
+
+        def _r(v):
+            return round(v, 3) if v is not None else None
+
+        agg_vs_baseline = (
+            _r(avg_agg - baseline_agg)
+            if avg_agg is not None and baseline_agg is not None
+            else None
+        )
+
+        results.append({
+            "event_id":       c["id"],
+            "procedure_id":   c["procedure_id"],
+            "procedure_name": c["procedure_name"],
+            "event_date":     ed,
+            "description":    c["description"],
+            "window_count":   cnt or 0,
+            "window_agg":     _r(avg_agg),
+            "window_manip":   _r(avg_manip),
+            "max_agg":        _r(max_agg),
+            "week7_count":    w7_cnt or 0,
+            "week7_agg":      _r(w7_agg),
+            "agg_vs_baseline": agg_vs_baseline,
+        })
+
+    vals = [r["window_agg"] for r in results if r["window_agg"] is not None]
+    above_baseline = [r for r in results if (r["agg_vs_baseline"] or 0) > 0.02]
+
+    return {
+        "conclusions": results,
+        "summary": {
+            "total":          len(results),
+            "with_data":      sum(1 for r in results if r["window_count"] > 0),
+            "above_baseline": len(above_baseline),
+            "avg_window_agg": round(sum(vals) / len(vals), 3) if vals else None,
+        },
+        "baseline_agg":   baseline_agg,
+        "baseline_manip": baseline_manip,
+        "window_days":    window_days,
+    }
 
 
 # ─────────────────────────── CONTRADICTIONS ──────────────────────────────

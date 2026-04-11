@@ -4,7 +4,13 @@
 {% block content %}
 <div class="page-header">
   <div style="min-width:0;flex:1">
-    <a href="/emails/" class="btn btn-ghost btn-sm" style="margin-bottom:var(--space-2)">← Retour aux emails</a>
+    <a href="{{ back_url }}" class="btn btn-ghost btn-sm" style="margin-bottom:var(--space-2)">
+      ←
+      {% if '/invoices/scan' in back_url %}Retour au scan factures
+      {% elif '/invoices' in back_url %}Retour aux coûts
+      {% else %}Retour aux emails
+      {% endif %}
+    </a>
     <h1 class="page-title" style="font-size:var(--font-size-xl)">{{ email.subject }}</h1>
     <div class="email-meta-row" style="margin-top:var(--space-2)">
       <span class="badge {% if email.direction == 'sent' %}badge-sent{% else %}badge-received{% endif %}">
@@ -77,7 +83,7 @@
           <span class="card-title">Corps du message</span>
           <div style="display:flex;gap:var(--space-2)">
             <button class="btn btn-secondary btn-sm" id="toggle-full-btn"
-                    onclick="toggleFullBody()">Voir le complet</button>
+                    onclick="toggleFullBody()">Full thread</button>
             <button class="btn btn-secondary btn-sm"
                     hx-get="/emails/{{ email.id }}/thread"
                     hx-target="#thread-panel"
@@ -111,6 +117,16 @@
 
       <!-- Thread panel (HTMX target) -->
       <div id="thread-panel" class="card" style="margin-bottom:var(--space-4)"></div>
+
+      <!-- Attachments -->
+      {% if email.attachments %}
+      {% set attachments = email.attachments %}
+      <div class="card" style="margin-bottom:var(--space-4)">
+        <div class="card-body">
+          {% include "partials/attachment_list.html" %}
+        </div>
+      </div>
+      {% endif %}
 
       <!-- Book-only: Quote form -->
       <div class="book-only">
@@ -308,13 +324,11 @@ function toggleFullBody() {
   const full = document.getElementById('full-body');
   const btn = document.getElementById('toggle-full-btn');
   if (!full) return;
-  if (full.style.display === 'none') {
-    full.style.display = 'block';
-    btn.textContent = 'Voir le delta';
-  } else {
-    full.style.display = 'none';
-    btn.textContent = 'Voir le complet';
-  }
+  const expanded = full.style.display !== 'none';
+  full.style.display = expanded ? 'none' : 'block';
+  btn.textContent = expanded ? 'Full thread' : 'Delta only';
+  btn.classList.toggle('btn-secondary', expanded);
+  btn.classList.toggle('btn-primary', !expanded);
 }
 </script>
 {% endblock %}

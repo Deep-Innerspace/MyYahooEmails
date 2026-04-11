@@ -119,9 +119,12 @@ def import_results(
     skipped  = 0
     errors   = []
 
-    # Contradictions uses a completely different sheet/storage path
+    # Contradictions and legal_analysis use separate sheet/storage paths
     if analysis_type == "contradictions":
         return _import_contradictions(wb, excel_path, run_id, provider, model)
+
+    if analysis_type == "legal_analysis":
+        return _import_legal_analysis(wb, excel_path, run_id)
 
     parsers = {
         "classify":     _parse_classify,
@@ -318,6 +321,198 @@ def _parse_manipulation(row, headers) -> Optional[dict]:
         "dominant_pattern": dominant_pattern,
         "notes":           notes,
         "source":          "excel-import",
+    }
+
+
+def _import_legal_analysis(wb, excel_path: Path, run_id: int) -> dict:
+    """
+    Import legal_analysis results from a filled workbook.
+
+    Events sheet  → procedure_events (procedure_ref is a valid int 1–N)
+                    or timeline_events (no linked procedure)
+    Analysis sheet → analysis_results as JSON, one row per email.
+    Uses a single connection for all writes (no nested get_db() calls).
+    """
+    from src.storage.database import get_db
+
+    if "Events" not in wb.sheetnames:
+        raise ValueError("No 'Events' sheet found. Was this exported with --type legal_analysis?")
+    if "Analysis" not in wb.sheetnames:
+        raise ValueError("No 'Analysis' sheet found. Was this exported with --type legal_analysis?")
+
+    events_imported   = 0
+    analysis_imported = 0
+    skipped           = 0
+    errors            = []
+
+    def _cell(row, headers, name):
+        """Return stripped string value for column `name`, or None if blank."""
+        try:
+            idx = headers.index(name)
+            val = row[idx] if idx < len(row) else None
+            return str(val).strip() if val not in (None, "") else None
+        except ValueError:
+            return None
+
+    def _norm_date(raw):
+        """Normalise a date string to YYYY-MM-DD (or shorter, as-is)."""
+        if not raw:
+            return None
+        raw = str(raw).strip()
+        if len(raw) >= 10:
+            return raw[:10]
+        if len(raw) == 4 and raw.isdigit():
+            return raw + "-01-01"
+        if len(raw) == 7 and raw[4] == "-":
+            return raw + "-01"
+        return raw or None
+
+    with get_db() as conn:
+        valid_proc_ids = {
+            r[0] for r in conn.execute("SELECT id FROM procedures").fetchall()
+        }
+
+        # ── Email date cache (fallback when LLM leaves event_date blank) ────────
+        email_date_cache = {}
+
+        def _email_date(eid):
+            if eid not in email_date_cache:
+                row_d = conn.execute(
+                    "SELECT date FROM emails WHERE id=?", (eid,)
+                ).fetchone()
+                email_date_cache[eid] = str(row_d[0])[:10] if row_d and row_d[0] else "1900-01-01"
+            return email_date_cache[eid]
+
+        # ── Events sheet ──────────────────────────────────────────────────────
+        ws_ev = wb["Events"]
+        ev_hdrs = [cell.value for cell in next(ws_ev.iter_rows(min_row=1, max_row=1))]
+
+        for row in ws_ev.iter_rows(min_row=2, values_only=True):
+            if not row or not row[0]:
+                continue
+            try:
+                email_id = int(row[0])
+            except (TypeError, ValueError):
+                continue
+
+            description = _cell(row, ev_hdrs, "description")
+            if not description:
+                skipped += 1
+                continue
+
+            event_type   = _cell(row, ev_hdrs, "event_type") or "legal"
+            event_date   = _norm_date(_cell(row, ev_hdrs, "event_date"))
+            proc_raw     = _cell(row, ev_hdrs, "procedure_ref")
+            amount_raw   = _cell(row, ev_hdrs, "amount_eur")
+            significance = _cell(row, ev_hdrs, "significance") or "medium"
+
+            # When LLM omits the date, fall back to the email's own date
+            # and mark precision as "approximate" so it's distinguishable.
+            if not event_date:
+                event_date = _email_date(email_id)
+                date_precision = "approximate"
+            else:
+                date_precision = "exact" if len(event_date) == 10 else "approximate"
+
+            try:
+                proc_id = int(proc_raw) if proc_raw and str(proc_raw).isdigit() else None
+                if proc_id and proc_id not in valid_proc_ids:
+                    proc_id = None
+
+                if proc_id:
+                    conn.execute(
+                        """INSERT INTO procedure_events
+                           (procedure_id, event_date, event_type, date_precision,
+                            description, outcome, jurisdiction, source_email_id, notes)
+                           VALUES (?, ?, ?, ?, ?, '', '', ?, ?)""",
+                        (
+                            proc_id, event_date, event_type, date_precision,
+                            description, email_id,
+                            f"excel-import run_id={run_id} significance={significance}"
+                            + (f" amount={amount_raw}EUR" if amount_raw else ""),
+                        ),
+                    )
+                else:
+                    conn.execute(
+                        """INSERT INTO timeline_events
+                           (run_id, email_id, event_date, event_type, description, significance)
+                           VALUES (?, ?, ?, ?, ?, ?)""",
+                        (run_id, email_id, event_date, event_type, description, significance),
+                    )
+                events_imported += 1
+
+            except Exception as exc:
+                errors.append(f"Events email_id={email_id}: {exc}")
+
+        # ── Analysis sheet ────────────────────────────────────────────────────
+        ws_an = wb["Analysis"]
+        an_hdrs = [cell.value for cell in next(ws_an.iter_rows(min_row=1, max_row=1))]
+
+        for row in ws_an.iter_rows(min_row=2, values_only=True):
+            if not row or not row[0]:
+                continue
+            try:
+                email_id = int(row[0])
+            except (TypeError, ValueError):
+                continue
+
+            filled = [row[i] for i in range(1, min(len(row), len(an_hdrs)))]
+            if not any(v not in (None, "", " ") for v in filled):
+                skipped += 1
+                continue
+
+            try:
+                mood_intensity_raw = _cell(row, an_hdrs, "mood_intensity")
+                try:
+                    mood_intensity = int(float(mood_intensity_raw)) if mood_intensity_raw else None
+                except (ValueError, TypeError):
+                    mood_intensity = None
+
+                result = {
+                    "mood_valence":       _cell(row, an_hdrs, "mood_valence"),
+                    "mood_intensity":     mood_intensity,
+                    "urgency":            _cell(row, an_hdrs, "urgency"),
+                    "key_concern":        _cell(row, an_hdrs, "key_concern"),
+                    "trust_in_lawyer":    _cell(row, an_hdrs, "trust_in_lawyer"),
+                    "father_role_stress": _cell(row, an_hdrs, "father_role_stress"),
+                    "financial_stress":   _cell(row, an_hdrs, "financial_stress"),
+                    "lawyer_stance":      _cell(row, an_hdrs, "lawyer_stance"),
+                    "strategy_signal":    _cell(row, an_hdrs, "strategy_signal"),
+                    "action_required":    _cell(row, an_hdrs, "action_required"),
+                    "risk_signal":        _cell(row, an_hdrs, "risk_signal"),
+                    "procedure_ref":      _cell(row, an_hdrs, "procedure_ref"),
+                    "persons_mentioned":  _cell(row, an_hdrs, "persons_mentioned"),
+                    "amounts_mentioned":  _cell(row, an_hdrs, "amounts_mentioned"),
+                    "children_mentioned": _cell(row, an_hdrs, "children_mentioned"),
+                    "source":             "excel-import",
+                }
+                result = {k: v for k, v in result.items() if v is not None}
+
+                conn.execute(
+                    """INSERT OR REPLACE INTO analysis_results
+                       (run_id, email_id, sender_contact_id, result_json)
+                       VALUES (?, ?, NULL, ?)""",
+                    (run_id, email_id, json.dumps(result)),
+                )
+                analysis_imported += 1
+
+            except Exception as exc:
+                errors.append(f"Analysis email_id={email_id}: {exc}")
+
+        conn.commit()
+
+    imported = events_imported + analysis_imported
+    status = "complete" if not errors else "partial"
+    finish_run(run_id, status, imported)
+
+    return {
+        "run_id":            run_id,
+        "events_imported":   events_imported,
+        "analysis_imported": analysis_imported,
+        "imported":          imported,
+        "skipped":           skipped,
+        "errors":            errors,
+        "status":            status,
     }
 
 
