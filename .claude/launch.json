@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "MyYahooEmails",
+      "runtimeExecutable": ".venv/bin/python",
+      "runtimeArgs": ["cli.py", "web", "--port", "8000"],
+      "port": 8000
+    }
+  ]
+}
