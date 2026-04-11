@@ -331,7 +331,8 @@
           </div>
           <div class="form-group">
             <label class="form-label">Event Type</label>
-            <select name="event_type">
+            <select name="event_type" id="event-type-select"
+                  onchange="document.getElementById('ruling-fields').hidden=!['judgment','ordonnance'].includes(this.value)">
               {% for et in event_types %}
               <option value="{{ et }}">{{ et | replace('_', ' ') | title }}</option>
               {% endfor %}
@@ -362,6 +363,50 @@
           <label class="form-label">Notes</label>
           <textarea name="notes" rows="2" placeholder="Internal notes..."></textarea>
         </div>
+
+        <!-- Ruling fields — shown only for judgment / ordonnance -->
+        <div id="ruling-fields" hidden style="margin-top:var(--space-4);padding:var(--space-4);background:rgba(0,0,0,.03);border-radius:var(--radius);border:1px solid var(--border)">
+          <div style="font-size:var(--font-size-sm);font-weight:700;color:var(--text-secondary);margin-bottom:var(--space-3);text-transform:uppercase;letter-spacing:.05em">
+            ⚖️ Ruling Details
+          </div>
+          <div class="proc-form-grid">
+            <div class="form-group">
+              <label class="form-label">Judge name</label>
+              <input type="text" name="judge_name" placeholder="e.g. Mme Dupont">
+            </div>
+            <div class="form-group">
+              <label class="form-label">Ruling for</label>
+              <select name="ruling_for">
+                <option value="">— unknown —</option>
+                <option value="party_a">Party A (me)</option>
+                <option value="party_b">Party B (ex-wife)</option>
+                <option value="both">Both / shared</option>
+                <option value="neutral">Neutral / procedural</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label class="form-label">Pension alimentaire (€/month)</label>
+              <input type="number" name="pension_amount" step="0.01" min="0" placeholder="e.g. 450.00">
+            </div>
+            <div class="form-group">
+              <label class="form-label">Custody arrangement</label>
+              <select name="custody_arrangement">
+                <option value="">— not applicable —</option>
+                <option value="alternée">Garde alternée</option>
+                <option value="résidence_principale_a">Résidence principale Party A</option>
+                <option value="résidence_principale_b">Résidence principale Party B</option>
+                <option value="supervisée">Visites supervisées</option>
+                <option value="other">Other</option>
+              </select>
+            </div>
+          </div>
+          <div class="form-group" style="margin-top:var(--space-3)">
+            <label class="form-label">Obligations (one per line)</label>
+            <textarea name="obligations" rows="3"
+                      placeholder="e.g. Payment of €5,000 within 30 days&#10;Surrender of passport&#10;Prohibition to travel abroad with children"></textarea>
+          </div>
+        </div>
+
         <div style="display:flex;gap:var(--space-3);margin-top:var(--space-4)">
           <button type="submit" class="btn btn-primary btn-sm">Add Event</button>
           <button type="button" class="btn btn-secondary btn-sm"
@@ -407,6 +452,55 @@
       <p class="event-outcome">
         <strong>Outcome:</strong> {{ ev.outcome }}
       </p>
+      {% endif %}
+
+      {# ── Ruling details strip (judgment / ordonnance only) ── #}
+      {% if ev.judge_name or ev.ruling_for or ev.pension_amount is not none or ev.custody_arrangement or ev.obligations %}
+      <div style="margin-top:var(--space-3);padding:var(--space-3) var(--space-4);background:rgba(30,58,95,.05);border-left:3px solid var(--primary);border-radius:0 var(--radius) var(--radius) 0;display:flex;flex-wrap:wrap;gap:var(--space-4)">
+        {% if ev.judge_name %}
+        <div>
+          <span style="font-size:.7rem;text-transform:uppercase;letter-spacing:.05em;color:var(--text-muted);font-weight:600">Judge</span>
+          <div style="font-size:var(--font-size-sm);color:var(--text-primary);margin-top:2px">{{ ev.judge_name }}</div>
+        </div>
+        {% endif %}
+        {% if ev.ruling_for %}
+        <div>
+          <span style="font-size:.7rem;text-transform:uppercase;letter-spacing:.05em;color:var(--text-muted);font-weight:600">Ruling for</span>
+          <div style="margin-top:2px">
+            <span class="badge" style="
+              {% if ev.ruling_for == 'party_a' %}background:rgba(16,185,129,.15);color:#065f46;border:1px solid rgba(16,185,129,.3)
+              {% elif ev.ruling_for == 'party_b' %}background:rgba(239,68,68,.12);color:#b91c1c;border:1px solid rgba(239,68,68,.25)
+              {% elif ev.ruling_for == 'both' %}background:rgba(59,130,246,.12);color:#1d4ed8;border:1px solid rgba(59,130,246,.25)
+              {% else %}background:var(--bg);color:var(--text-secondary);border:1px solid var(--border){% endif %}">
+              {% if ev.ruling_for == 'party_a' %}✓ Party A (me)
+              {% elif ev.ruling_for == 'party_b' %}✗ Party B (ex-wife)
+              {% elif ev.ruling_for == 'both' %}~ Both
+              {% else %}{{ ev.ruling_for | replace('_',' ') | title }}{% endif %}
+            </span>
+          </div>
+        </div>
+        {% endif %}
+        {% if ev.pension_amount is not none %}
+        <div>
+          <span style="font-size:.7rem;text-transform:uppercase;letter-spacing:.05em;color:var(--text-muted);font-weight:600">Pension alimentaire</span>
+          <div style="font-size:var(--font-size-sm);font-weight:700;color:var(--text-primary);margin-top:2px">{{ "%.0f" | format(ev.pension_amount) }} €/month</div>
+        </div>
+        {% endif %}
+        {% if ev.custody_arrangement %}
+        <div>
+          <span style="font-size:.7rem;text-transform:uppercase;letter-spacing:.05em;color:var(--text-muted);font-weight:600">Custody</span>
+          <div style="font-size:var(--font-size-sm);color:var(--text-primary);margin-top:2px">{{ ev.custody_arrangement | replace('_',' ') }}</div>
+        </div>
+        {% endif %}
+        {% if ev.obligations %}
+        <div style="flex-basis:100%">
+          <span style="font-size:.7rem;text-transform:uppercase;letter-spacing:.05em;color:var(--text-muted);font-weight:600">Obligations</span>
+          <ul style="margin:4px 0 0 var(--space-4);padding:0;font-size:var(--font-size-sm);color:var(--text-primary)">
+            {% for ob in ev.obligations.split('\n') %}{% if ob.strip() %}<li>{{ ob.strip() }}</li>{% endif %}{% endfor %}
+          </ul>
+        </div>
+        {% endif %}
+      </div>
       {% endif %}
 
       {% if ev.email_subject %}

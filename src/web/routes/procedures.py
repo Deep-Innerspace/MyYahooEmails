@@ -370,13 +370,25 @@ async def add_event(
     outcome: str = Form(""),
     source_email_id: Optional[str] = Form(None),
     notes: str = Form(""),
+    # Structured ruling fields
+    judge_name: str = Form(""),
+    ruling_for: str = Form(""),
+    pension_amount: Optional[str] = Form(None),
+    custody_arrangement: str = Form(""),
+    obligations: str = Form(""),
     conn: sqlite3.Connection = Depends(get_conn),
 ):
+    try:
+        pension = float(pension_amount) if pension_amount and pension_amount.strip() else None
+    except ValueError:
+        pension = None
+
     conn.execute("""
         INSERT INTO procedure_events
             (procedure_id, event_date, event_type, date_precision,
-             description, outcome, source_email_id, notes)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+             description, outcome, source_email_id, notes,
+             judge_name, ruling_for, pension_amount, custody_arrangement, obligations)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     """, (
         proc_id,
         event_date or None,
@@ -386,6 +398,11 @@ async def add_event(
         outcome.strip() or None,
         int(source_email_id) if source_email_id else None,
         notes.strip() or None,
+        judge_name.strip(),
+        ruling_for.strip(),
+        pension,
+        custody_arrangement.strip(),
+        obligations.strip(),
     ))
     conn.commit()
     return RedirectResponse(f"/procedures/{proc_id}", status_code=303)

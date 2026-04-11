@@ -461,6 +461,13 @@ _MIGRATIONS = [
         ALTER TABLE emails ADD COLUMN procedure_id INTEGER REFERENCES procedures(id);
         CREATE INDEX IF NOT EXISTS idx_emails_procedure ON emails(procedure_id);
     """),
+    (19, "Add structured ruling fields to procedure_events (judge, ruling_for, pension, custody, obligations)", """
+        ALTER TABLE procedure_events ADD COLUMN judge_name           TEXT NOT NULL DEFAULT '';
+        ALTER TABLE procedure_events ADD COLUMN ruling_for           TEXT NOT NULL DEFAULT '';
+        ALTER TABLE procedure_events ADD COLUMN pension_amount       REAL;
+        ALTER TABLE procedure_events ADD COLUMN custody_arrangement  TEXT NOT NULL DEFAULT '';
+        ALTER TABLE procedure_events ADD COLUMN obligations          TEXT NOT NULL DEFAULT '';
+    """),
     (17, "Add procedure_documents table for per-procedure file uploads", """
         CREATE TABLE IF NOT EXISTS procedure_documents (
             id            INTEGER PRIMARY KEY AUTOINCREMENT,

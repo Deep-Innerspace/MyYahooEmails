@@ -162,13 +162,19 @@ class ProcedureEvent:
     id: Optional[int]
     procedure_id: int
     event_date: str
-    event_type: str          # 'filing', 'hearing', 'judgment', 'ordonnance', 'signification', 'appeal', 'mediation', 'expertise', 'depot_conclusions'
+    event_type: str          # 'filing', 'hearing', 'judgment', 'ordonnance', 'signification', 'appeal', 'mediation', 'expertise', 'depot_conclusions', 'conclusions_received'
     date_precision: str = "exact"  # 'exact', 'month', 'approximate'
     description: str = ""
     outcome: str = ""
     source_email_id: Optional[int] = None
     source_attachment_id: Optional[int] = None
     notes: str = ""
+    # Structured ruling fields (judgment / ordonnance only)
+    judge_name: str = ""
+    ruling_for: str = ""          # party_a | party_b | both | neutral | unknown
+    pension_amount: Optional[float] = None   # monthly EUR, nullable
+    custody_arrangement: str = ""  # alternée | résidence_principale_a | résidence_principale_b | supervisée | other
+    obligations: str = ""          # JSON array of specific obligation strings
 
 
 @dataclass
