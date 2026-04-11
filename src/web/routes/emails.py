@@ -453,6 +453,12 @@ async def bulk_delete_emails(
         conn.execute("DELETE FROM notes WHERE entity_type='email' AND entity_id = ?", (email_id,))
         conn.execute("DELETE FROM bookmarks WHERE email_id = ?", (email_id,))
         conn.execute("DELETE FROM analysis_results WHERE email_id = ?", (email_id,))
+        # contradictions: NOT NULL FKs — delete the whole pair
+        conn.execute("DELETE FROM contradictions WHERE email_id_a = ? OR email_id_b = ?", (email_id, email_id))
+        # nullable FKs — NULL out rather than delete the parent row
+        conn.execute("UPDATE procedure_events SET source_email_id = NULL WHERE source_email_id = ?", (email_id,))
+        conn.execute("UPDATE lawyer_invoices SET email_id = NULL WHERE email_id = ?", (email_id,))
+        conn.execute("UPDATE procedure_documents SET source_email_id = NULL WHERE source_email_id = ?", (email_id,))
         conn.execute("DELETE FROM emails WHERE id = ?", (email_id,))
     conn.commit()
     return HTMLResponse("")
@@ -528,6 +534,12 @@ async def delete_email(
     conn.execute("DELETE FROM notes WHERE entity_type='email' AND entity_id = ?", (email_id,))
     conn.execute("DELETE FROM bookmarks WHERE email_id = ?", (email_id,))
     conn.execute("DELETE FROM analysis_results WHERE email_id = ?", (email_id,))
+    # contradictions: NOT NULL FKs — delete the whole pair
+    conn.execute("DELETE FROM contradictions WHERE email_id_a = ? OR email_id_b = ?", (email_id, email_id))
+    # nullable FKs — NULL out rather than delete the parent row
+    conn.execute("UPDATE procedure_events SET source_email_id = NULL WHERE source_email_id = ?", (email_id,))
+    conn.execute("UPDATE lawyer_invoices SET email_id = NULL WHERE email_id = ?", (email_id,))
+    conn.execute("UPDATE procedure_documents SET source_email_id = NULL WHERE source_email_id = ?", (email_id,))
     conn.execute("DELETE FROM emails WHERE id = ?", (email_id,))
     conn.commit()
 
