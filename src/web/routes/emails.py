@@ -88,6 +88,7 @@ async def email_list(
     date_from: Optional[str] = Query(None),
     date_to: Optional[str] = Query(None),
     bookmarked: bool = Query(False),
+    corpus: str = Query("all"),             # 'all', 'personal', 'legal'
     page: int = Query(1, ge=1),
     conn: sqlite3.Connection = Depends(get_conn),
     perspective: str = Depends(get_perspective),
@@ -98,7 +99,7 @@ async def email_list(
         conn, q=q, topics=topic_list, topic_mode=topic_mode,
         direction=direction, contact=contact,
         date_from=date_from, date_to=date_to,
-        bookmarked=bookmarked, page=page,
+        bookmarked=bookmarked, page=page, corpus=corpus,
     )
 
     all_topics = _get_all_topics(conn)
@@ -120,6 +121,7 @@ async def email_list(
         "date_from": date_from or "",
         "date_to": date_to or "",
         "bookmarked": bookmarked,
+        "corpus": corpus,
         "all_topics": all_topics,
     }
 
@@ -141,6 +143,7 @@ async def email_search_partial(
     date_from: Optional[str] = Query(None),
     date_to: Optional[str] = Query(None),
     bookmarked: bool = Query(False),
+    corpus: str = Query("all"),
     page: int = Query(1, ge=1),
     conn: sqlite3.Connection = Depends(get_conn),
     perspective: str = Depends(get_perspective),
@@ -151,7 +154,7 @@ async def email_search_partial(
         conn, q=q, topics=topic_list, topic_mode=topic_mode,
         direction=direction, contact=contact,
         date_from=date_from, date_to=date_to,
-        bookmarked=bookmarked, page=page,
+        bookmarked=bookmarked, page=page, corpus=corpus,
     )
     all_topics = _get_all_topics(conn)
     total_pages = max(1, (total + PAGE_SIZE - 1) // PAGE_SIZE)
@@ -170,6 +173,7 @@ async def email_search_partial(
         "date_from": date_from or "",
         "date_to": date_to or "",
         "bookmarked": bookmarked,
+        "corpus": corpus,
         "all_topics": all_topics,
     })
 
@@ -260,10 +264,14 @@ async def toggle_bookmark(
 
 
 def _search_with_filters(conn, q, topics, topic_mode, direction, contact,
-                          date_from, date_to, bookmarked, page):
+                          date_from, date_to, bookmarked, page, corpus=None):
     """Build and execute a filtered email search query."""
     conditions = []
     params = []
+
+    if corpus and corpus != "all":
+        conditions.append("e.corpus = ?")
+        params.append(corpus)
 
     if bookmarked:
         conditions.append("e.id IN (SELECT email_id FROM bookmarks)")

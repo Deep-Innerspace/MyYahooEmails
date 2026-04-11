@@ -50,7 +50,7 @@
 <div class="page-header">
   <div>
     <h1 class="page-title">Manipulation Patterns</h1>
-    <p class="page-subtitle">Per-email manipulation pattern detection</p>
+    <p class="page-subtitle">Per-email manipulation pattern detection <span class="corpus-tag personal">Personal emails only</span></p>
   </div>
   <div class="flex gap-3 items-center">
     <span class="badge badge-secondary">{{ total }} emails above threshold</span>
@@ -72,7 +72,7 @@
     <!-- 1. Score Timeline (full width) -->
     <div class="card chart-card mb-4">
       <div class="card-header">
-        <span class="card-title">📈 Score Evolution Over Time</span>
+        <span class="card-title">📈 Score Evolution Over Time <span class="corpus-tag personal">Personal</span></span>
         <span class="info-icon"
               data-tip="Average manipulation score per quarter for sent and received emails. Only emails with a score > 0 are included. Rising lines indicate escalating manipulative behaviour during those periods.">i</span>
         <div style="margin-left:auto">
@@ -94,7 +94,7 @@
       <!-- Pattern Frequency -->
       <div class="card chart-card">
         <div class="card-header">
-          <span class="card-title">📊 Pattern Frequency</span>
+          <span class="card-title">📊 Pattern Frequency <span class="corpus-tag personal">Personal</span></span>
           <span class="info-icon"
                 data-tip="How many emails contained each manipulation pattern, broken down by direction (sent vs received). Longer bars = more pervasive tactic. Useful to identify the dominant strategies used throughout the correspondence.">i</span>
         </div>
@@ -105,7 +105,7 @@
       <!-- Score Distribution -->
       <div class="card chart-card">
         <div class="card-header">
-          <span class="card-title">🔢 Score Distribution</span>
+          <span class="card-title">🔢 Score Distribution <span class="corpus-tag personal">Personal</span></span>
           <span class="info-icon"
                 data-tip="Histogram showing how many emails fall into each 0.1-wide score bucket (0.0–0.1, 0.1–0.2, … 0.9–1.0). Helps distinguish whether manipulation is sporadic (most emails near 0) or systematic (mass of emails at high scores).">i</span>
         </div>
@@ -122,7 +122,7 @@
       <div class="card chart-card mb-4" id="patterns-time-card-received">
         <div class="card-header" style="cursor:pointer; flex-direction:column; align-items:stretch; gap:var(--space-2)" onclick="togglePatternsTime('received')">
           <div style="display:flex; align-items:center; justify-content:space-between">
-            <span class="card-title">📥 Received Patterns</span>
+            <span class="card-title">📥 Received Patterns <span class="corpus-tag personal">Personal</span></span>
             <span class="info-icon" onclick="event.stopPropagation()"
                   data-tip="Stacked area chart of the top 5 manipulation tactics detected in emails received from her. Shifts in the colour bands show when specific tactics appeared, intensified, or faded.">i</span>
           </div>
@@ -146,7 +146,7 @@
       <div class="card chart-card mb-6" id="patterns-time-card-sent">
         <div class="card-header" style="cursor:pointer; flex-direction:column; align-items:stretch; gap:var(--space-2)" onclick="togglePatternsTime('sent')">
           <div style="display:flex; align-items:center; justify-content:space-between">
-            <span class="card-title">📤 Sent Patterns</span>
+            <span class="card-title">📤 Sent Patterns <span class="corpus-tag personal">Personal</span></span>
             <span class="info-icon" onclick="event.stopPropagation()"
                   data-tip="Stacked area chart of the top 5 manipulation tactics detected in emails you sent. Comparing this with the Received chart highlights contrasts in communication style over time.">i</span>
           </div>

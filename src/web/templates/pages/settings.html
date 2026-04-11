@@ -14,47 +14,57 @@
   <!-- Overview stats -->
   <div class="stat-grid mb-6">
     <div class="stat-card">
-      <div class="stat-label">Total Emails</div>
+      <div class="stat-label">Total Emails <span class="corpus-tag all-emails">All</span></div>
       <div class="stat-value">{{ "{:,}".format(overview.total) }}</div>
+      <div class="stat-sub">{{ "{:,}".format(overview.personal_count) }} personal · {{ "{:,}".format(overview.legal_count) }} legal</div>
     </div>
     <div class="stat-card">
-      <div class="stat-label">Threads</div>
+      <div class="stat-label">Threads <span class="corpus-tag all-emails">All</span></div>
       <div class="stat-value">{{ "{:,}".format(overview.threads) }}</div>
+      <div class="stat-sub">unique conversations</div>
     </div>
     <div class="stat-card">
-      <div class="stat-label">Analysis Runs</div>
+      <div class="stat-label">Analysis Runs <span class="corpus-tag all-emails">All</span></div>
       <div class="stat-value">{{ overview.runs_count }}</div>
+      <div class="stat-sub">across all corpora</div>
     </div>
     <div class="stat-card">
-      <div class="stat-label">Contradictions</div>
+      <div class="stat-label">Contradictions <span class="corpus-tag personal">Personal</span></div>
       <div class="stat-value">{{ overview.contradiction_count }}</div>
+      <div class="stat-sub">detected pairs</div>
     </div>
     <div class="stat-card">
-      <div class="stat-label">Timeline Events</div>
+      <div class="stat-label">Timeline Events <span class="corpus-tag all-emails">All</span></div>
       <div class="stat-value">{{ overview.timeline_events_count }}</div>
+      <div class="stat-sub">extracted from emails</div>
     </div>
     <div class="stat-card">
-      <div class="stat-label">Court Events</div>
+      <div class="stat-label">Court Events <span class="corpus-tag all-emails">All</span></div>
       <div class="stat-value">{{ overview.procedure_events_count }}</div>
+      <div class="stat-sub">hearings, filings, decisions</div>
     </div>
   </div>
 
   <!-- Analysis coverage -->
   <div class="card mb-6">
     <div class="card-header">
-      <span class="card-title">Analysis Coverage</span>
+      <span class="card-title">Analysis Coverage <span class="corpus-tag personal">Personal</span></span>
+      <span class="info-icon" data-tip="Coverage is calculated over personal emails only ({{ overview.personal_count }} emails). Lawyer emails (legal corpus, {{ overview.legal_count }} emails) are excluded — their professional tone and topic data is not relevant to the personal relationship analysis.">i</span>
     </div>
     <div class="card-body">
-      {% set total = overview.total or 1 %}
       {% for key, cov in coverage.items() %}
       <div class="progress-row">
         <span class="progress-label">{{ cov.label }}</span>
         <div class="progress-track">
           <div class="progress-fill" data-value="{{ cov.pct }}" style="width:{{ cov.pct }}%"></div>
         </div>
-        <span class="progress-pct">{{ cov.count }} / {{ overview.total }} ({{ cov.pct }}%)</span>
+        <span class="progress-pct">{{ cov.count }} / {{ overview.personal_count }} ({{ cov.pct }}%)</span>
       </div>
       {% endfor %}
+      <div class="mt-4 text-sm text-muted">
+        Coverage % is over the <strong>{{ "{:,}".format(overview.personal_count) }} personal emails</strong>.
+        The {{ overview.legal_count }} legal (lawyer) emails are tracked separately and excluded from evidence analysis metrics.
+      </div>
     </div>
   </div>
 

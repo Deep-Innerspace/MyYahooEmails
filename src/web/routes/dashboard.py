@@ -6,7 +6,7 @@ from fastapi.templating import Jinja2Templates
 from pathlib import Path
 
 from src.web.deps import get_conn, get_perspective
-from src.statistics.aggregator import overview_stats, frequency_data, tone_trends, top_aggressive_emails
+from src.statistics.aggregator import overview_stats, top_aggressive_emails
 
 BASE_DIR = Path(__file__).parent.parent
 templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
@@ -21,17 +21,16 @@ async def dashboard(
     perspective: str = Depends(get_perspective),
 ):
     overview = overview_stats(conn)
-    freq = frequency_data(conn, by="month")
-    tone = tone_trends(conn, by="month")
-    top_aggressive = top_aggressive_emails(conn, limit=5)
+    # Top aggressive + inline tone data are always personal-corpus-only:
+    # lawyer emails are professional correspondence and their tone scores
+    # are not meaningful for the personal relationship evidence analysis.
+    top_aggressive = top_aggressive_emails(conn, limit=5, corpus="personal")
 
     return templates.TemplateResponse("pages/dashboard.html", {
         "request": request,
         "perspective": perspective,
         "page": "dashboard",
         "overview": overview,
-        "freq_data": freq,
-        "tone_data": tone,
         "top_aggressive": top_aggressive,
     })
 

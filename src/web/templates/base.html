@@ -6,7 +6,7 @@
   <title>{% block title %}MyYahooEmails{% endblock %} — Dashboard</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap">
-  <link rel="stylesheet" href="/static/css/style.css?v=3">
+  <link rel="stylesheet" href="/static/css/style.css?v=4">
 </head>
 <body class="perspective-{{ perspective }}" data-perspective="{{ perspective }}">
 
@@ -73,7 +73,7 @@
 
       <!-- Legal perspective only -->
       {% if perspective == 'legal' %}
-      <span class="nav-section-label">Legal Analysis</span>
+      <span class="nav-section-label">Case Analysis</span>
 
       <a href="/analysis/contradictions" class="nav-link {% if page == 'contradictions' %}active{% endif %}">
         <span class="nav-icon">⚡</span>
@@ -85,9 +85,16 @@
         Manipulation
       </a>
 
-      <a href="/court-events/" class="nav-link {% if page == 'court' %}active{% endif %}">
+      <span class="nav-section-label">Legal Strategy</span>
+
+      <a href="/procedures/" class="nav-link {% if page == 'procedures' %}active{% endif %}">
         <span class="nav-icon">🏛️</span>
-        Court Events
+        Procedures
+      </a>
+
+      <a href="/emails/?corpus=legal" class="nav-link {% if page == 'emails' and (corpus | default('all')) == 'legal' %}active{% endif %}">
+        <span class="nav-icon">📂</span>
+        Lawyer Emails
       </a>
       {% endif %}
 

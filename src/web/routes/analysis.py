@@ -44,7 +44,7 @@ async def analysis_page(
     perspective: str = Depends(get_perspective),
 ):
     """Full analysis page — loads with tone tab active."""
-    tone = tone_trends(conn, by="quarter")
+    tone = tone_trends(conn, by="quarter", corpus="personal")
     avgs = _calc_tone_avgs(tone)
     ctx = {
         "request": request,
@@ -71,9 +71,9 @@ async def analysis_tone_partial(
     """HTMX partial — tone trends."""
     dir_filter = direction if direction and direction != "both" else None
     # Always fetch all-direction data so averages are always computed for both sent+received
-    all_tone = tone_trends(conn, by=by, direction=None)
+    all_tone = tone_trends(conn, by=by, direction=None, corpus="personal")
     # Filtered data drives chart only
-    tone = tone_trends(conn, by=by, direction=dir_filter) if dir_filter else all_tone
+    tone = tone_trends(conn, by=by, direction=dir_filter, corpus="personal") if dir_filter else all_tone
     avgs = _calc_tone_avgs(all_tone)
 
     return templates.TemplateResponse("partials/analysis_tone.html", {
@@ -95,7 +95,7 @@ async def analysis_topics_partial(
     perspective: str = Depends(get_perspective),
 ):
     """HTMX partial — topic evolution."""
-    evolution = topic_evolution(conn, by=by)
+    evolution = topic_evolution(conn, by=by, corpus="personal")
 
     # Aggregate per topic
     topic_totals: dict = {}
@@ -109,7 +109,7 @@ async def analysis_topics_partial(
             topic_totals[name]["top_period"] = row["period"]
 
     topic_list = sorted(topic_totals.values(), key=lambda x: x["total"], reverse=True)
-    excluded = system_topic_counts(conn)
+    excluded = system_topic_counts(conn, corpus="personal")
 
     return templates.TemplateResponse("partials/analysis_topics.html", {
         "request": request,
@@ -131,7 +131,7 @@ async def analysis_response_times_partial(
     perspective: str = Depends(get_perspective),
 ):
     """HTMX partial — response times."""
-    rt = response_times(conn, by=by)
+    rt = response_times(conn, by=by, corpus="personal")
     return templates.TemplateResponse("partials/analysis_response_times.html", {
         "request": request,
         "perspective": perspective,
@@ -191,6 +191,7 @@ async def manipulation_page(
     wheres = [
         "ru.analysis_type = 'manipulation'",
         "ru.status IN ('complete', 'partial')",
+        "e.corpus = 'personal'",   # exclude lawyer emails — professional tone ≠ personal manipulation
     ]
     params: list = []
 
