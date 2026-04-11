@@ -646,3 +646,29 @@ parsed = raw.parse()  # get the actual response content
 **Bug avoided**: `analysis_results` has no `analysis_type` column — it's on `analysis_runs`. The JOIN must be `LEFT JOIN analysis_runs run ON run.id = ar.run_id AND run.analysis_type = 'tone'` (not `WHERE ar.analysis_type = 'tone'`).
 
 **Impact**: `src/web/routes/book.py` `GET /themes`, `src/web/templates/pages/themes.html` (new file).
+
+---
+
+## 2026-04-11 — Email delete must clear non-cascade FK references explicitly
+
+**Decision**: Before `DELETE FROM emails WHERE id = ?`, explicitly clear all non-cascade FK references in both single-delete and bulk-delete routes.
+
+**Rationale**: `PRAGMA foreign_keys=ON` is set on every connection. Five references to `emails(id)` have no `ON DELETE CASCADE`:
+- `contradictions.email_id_a` / `email_id_b` (NOT NULL) — delete the whole contradiction pair
+- `procedure_events.source_email_id` (nullable) — NULL out (event remains meaningful without the source email)
+- `lawyer_invoices.email_id` (nullable) — NULL out
+- `procedure_documents.source_email_id` (nullable) — NULL out
+
+**Rule**: Any new table with a non-cascade FK to `emails` must be handled in both `delete_email()` and `bulk_delete_emails()` in `src/web/routes/emails.py`.
+
+**Impact**: `src/web/routes/emails.py` — 4 statements added to each of the two delete flows. Commit `d70626e` on `main`.
+
+---
+
+## 2026-04-11 — All feature branches deleted; main is sole branch
+
+**Decision**: After merging Phase 6 (`feature/corpus-filter-ui`) to main, both feature branches (`feature/corpus-filter-ui`, `feature/lawyer-corpus`) were deleted locally and from GitHub.
+
+**Rationale**: Both were fully merged; no unmerged commits remained. Git history preserves all work. Future features will branch from main as needed.
+
+**Impact**: `origin/main` is now the only remote branch. Direct commits to main are acceptable for small fixes.

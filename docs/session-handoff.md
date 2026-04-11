@@ -4,75 +4,44 @@
 
 ---
 
-**Last Updated: 2026-04-07**
+**Last Updated: 2026-04-11**
 
 ## What Was Accomplished This Session
 
-### 1. `fetch conclusions` CLI command (new)
+### 1. Phase 6 fully closed
 
-Built `python cli.py fetch conclusions` — automatically detects, deduplicates, and downloads all MULLER adverse conclusions from legal-corpus emails.
+All Phase 6 sub-phases (6a through 6k + 6i) confirmed complete. CLAUDE.md updated to mark:
+- Phase 6 header: `🔲 IN PROGRESS` → `✅ COMPLETE — merged to main 2026-04-11`
+- Phase 6i: `🔲` → `✅` with correct description (structured ruling fields + Rulings at a Glance card)
+- Phase 6h remainder: `🔲` → `✅` (systematic aggression correlation + pre-conclusion behavior detector)
 
-**Detection**: `corpus='legal'` + filename contains `muller` + (`conclusion` or `dire`), PDF only
-**Deduplication**: `(filename.lower(), procedure_id)` key → keeps earliest email (removed 17 forwarded copies)
-**Three-tier download strategy**:
-1. Stored IMAP (folder + uid)
-2. Full stale-UID recovery — two-pass: Message-ID across DB-known folders, then SENTON+FROM across ALL current IMAP folders (same logic as `_find_email_imap_location()` in web routes, now inlined in CLI as `_locate_email_imap()`)
-3. BLOB fallback — emails reclassified from personal corpus still have `attachments.content`
+### 2. Feature branches merged and deleted
 
-**Result**: 33/33 conclusions processed (19 via IMAP, 9 via stale-UID recovery, 5 via BLOB), 33 `procedure_events` of type `conclusions_received` created across 11 procedures (2015–2026).
+- PR #2 (`feature/corpus-filter-ui` → `main`) was merged
+- `feature/lawyer-corpus` was already merged in a prior session
+- Both branches deleted locally and from GitHub remote
+- `main` is now the sole branch
 
-**Files changed**:
-- `cli.py`: added `@fetch.command("conclusions")` with `--dry-run`, `--force`, `--limit` options
+### 3. Bug fix: email delete FK violation
 
-### 2. Procedure Documents unified view
+**Bug**: Single-delete (`POST /emails/{id}/delete`) and bulk-delete (`POST /emails/bulk-delete`) failed with `sqlite3.IntegrityError` when the target email was referenced by tables with non-cascade FK constraints. `PRAGMA foreign_keys=ON` is set on every connection, so these violations are enforced.
 
-The procedure detail page now shows **both** `procedure_documents` (manual uploads) and downloaded `attachments` (from emails) in the same Documents table.
+**Root cause**: Delete routines cleared 6 tables (timeline_events, email_topics, attachments, notes, bookmarks, analysis_results) but missed 5 non-cascade FK references:
 
-- Non-invoice downloaded attachments linked via `emails.procedure_id` are merged and sorted by date
-- Amber "email" badge distinguishes email-sourced docs; no delete button (they're part of emails)
-- Both types served via their own correct URLs (`/procedures/{id}/documents/{doc_id}` vs `/attachments/{id}`)
-- Document count: "N · M from emails"
+| Table | Column | Constraint | Fix |
+|---|---|---|---|
+| `contradictions` | `email_id_a` / `email_id_b` | NOT NULL | DELETE the pair |
+| `procedure_events` | `source_email_id` | nullable | NULL out |
+| `lawyer_invoices` | `email_id` | nullable | NULL out |
+| `procedure_documents` | `source_email_id` | nullable | NULL out |
 
-**Files changed**:
-- `src/web/routes/procedures.py`: `procedure_detail()` — fetches `attachments` with `downloaded=1`, `category != 'invoice'`, `download_path IS NOT NULL` linked to procedure; merges with `procedure_documents`
-- `src/web/templates/pages/procedure_detail.html`: uses `_serve_url` and `_source` to route; conditional delete button; document count with email breakdown
+**Fix**: Added 4 statements to both delete flows in `src/web/routes/emails.py`. Committed directly to `main` as `d70626e`.
 
-### 3. Procedures page — cards sorted chronologically
+### 4. Bug checks (no action needed)
 
-Changed `ORDER BY p.date_start DESC` → `ORDER BY p.date_start ASC` in the list query.
-Cards now go: 2015 Première Instance → … → 2026 Procédure Lounys Dubai.
-
-**Files changed**: `src/web/routes/procedures.py` `procedures_list()`
-
-### 4. Thematic Threads page — built from scratch
-
-The nav link at `Thematic Threads` was `href="#"` (dead). Now fully implemented.
-
-- `GET /themes?topic=<name>&offset=<n>` — left sidebar of topics, stats strip, paginated 50/page
-- Full `delta_text` displayed with `white-space:pre-wrap` (no truncation)
-- **"Full email ↗" button** on each card → right-side slide-in overlay panel (700px) loaded via HTMX `hx-get="/emails/{id}"` → `#theme-detail-content`; closes on backdrop click or Escape
-- Fix for query bug: `analysis_results` has no `analysis_type` column — it's on `analysis_runs`. Fixed the JOIN.
-- Fix for large topics (2,225 emails for `enfants`): separate stats query (no body text) + paginated content query
-
-**Files changed**:
-- `src/web/routes/book.py`: added `GET /themes` route
-- `src/web/templates/pages/themes.html`: new file (sidebar + stats strip + paginated thread + slide-in overlay)
-- `src/web/templates/base.html`: `href="#"` → `href="/themes"`
-
-### 5. Emails page — row-click bug (FIXED ✅)
-
-**Symptom**: After typing in the search box, clicking an email row didn't show the email in the detail panel.
-
-**Root cause**: CSS breakpoint at `max-width: 1200px` collapsed `.emails-layout` from two-column to one-column. With a 240px sidebar, the main content area on a typical 1440px laptop is only ~1200px — right at the collapse threshold. When collapsed, `#detail-panel` renders *below* the email list, outside the viewport. Content loaded correctly but wasn't visible.
-
-**Fix applied** (two-part):
-1. **Raised CSS breakpoint** from `1200px` → `1400px` for `emails-layout` / `detail-panel` collapse (keeps two-column layout on most laptops); split `dashboard-two-col` into its own `max-width: 1200px` rule so that breakpoint is unchanged.
-2. **Auto-scroll JS** in `emails.html` — `htmx:afterSwap` listener detects when `#detail-panel` is the swap target; if the panel is out of the viewport, scrolls to it smoothly. Belt-and-suspenders for narrow screens.
-
-**Files changed**:
-- `src/web/static/css/style.css`: breakpoint for emails-layout split from 1200px → 1400px (css version bumped to v=8)
-- `src/web/templates/pages/emails.html`: added auto-scroll `htmx:afterSwap` handler for `#detail-panel`
-- `src/web/templates/base.html`: stylesheet version bumped to `?v=8`
+Two additional bugs were reviewed and confirmed **already fixed**:
+- "NOT NULL on jurisdiction/notes in create_procedure" — fixed 2026-04-07, `.strip()` without `or None` already in place
+- "NULL coercion on invoice_number/description" — never present; already uses plain `.strip()` with `Form("")` defaults
 
 ---
 
@@ -87,31 +56,36 @@ The nav link at `Thematic Threads` was `href="#"` (dead). Now fully implemented.
 | Legal: legal_analysis | 2,743/2,743 (100%) ✅ |
 | Legal: procedure_id set | 2,892/2,743 |
 | Procedures | 15 — all with date ranges |
-| Procedure events | 2,147 (was 2,114; +33 conclusions_received) |
+| Procedure events | 2,147 |
 | MULLER conclusions downloaded | 33/33 ✅ |
 | Lawyer invoices | 37 |
 | Contradictions | 45 pairs |
 
 ---
 
+## Current Git State
+
+- Branch: `main` (only branch)
+- Latest commit: `d70626e` — fix: clear non-cascade FK refs before deleting emails
+- Remote: `origin/main` in sync
+
+---
+
 ## Resume Point for Next Session
 
-### Priority 1 — Pre-conclusion behavior analysis
-Now that all 33 MULLER conclusions are downloaded and linked as `procedure_events`:
-- Build SQL query: for each `conclusions_received` event, get personal email aggression ±30 days
-- Chart: aggression/manipulation/frequency in the 30-day window before each conclusion filing
-- This surfaces the pattern of manufactured evidence / artificial polemic before her lawyer files
+All planned phases are complete. Candidate next features:
 
-### Priority 2 — Upload user's own lawyer conclusions
-The user's conclusions (my_lawyer sent to adverse) are more complex (drafts vs. final versions).
-Strategy: identify emails where my_lawyer sent a PDF with "conclusions" in filename AND the email is addressed to MULLER's lawyer. Needs manual review to distinguish drafts from filed versions.
+### Option A — Reply assistant
+Draft responses to ex-wife emails using the full email context (tone, manipulation patterns, legal stakes).
 
-### Priority 3 — Phase 6h Unified Timeline
-Merge both corpora + procedure events + cost events into a single chronological view.
-Color-coded by source type; cross-corpus correlation: personal email aggression ±14 days around procedure events.
+### Option B — Book narrative generation
+The chapter/quote/pivotal moments infrastructure is built. Could drive automated narrative arc generation or export to Word/PDF.
+
+### Option C — Data entry (no code needed)
+Upload documents for procedures #11, #14, #15 (awaiting documents) as they become available.
 
 ### Quick Start
 ```bash
-git status   # verify on correct branch
+git status              # should show clean, on main
 .venv/bin/python cli.py web   # http://127.0.0.1:8000
 ```
