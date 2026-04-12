@@ -665,6 +665,36 @@ parsed = raw.parse()  # get the actual response content
 
 ---
 
+## 2026-04-12 — Northline branding: workspace-based navigation replaces Perspective/Corpus toggles
+
+**Decision**: Replaced the dual Perspective toggle (Legal/Book) + Corpus toggle (Personal/Legal/All) with 4 unified workspace tabs: Correspondence, Case Analysis, Legal Strategy, Book. Each workspace implies its corpus and perspective automatically.
+
+**Rationale**: The dual-toggle system was confusing — two separate "Legal" toggles meaning entirely different things, and the corpus concept was invisible to new users. Workspaces are semantically clear and map naturally to how the user actually works.
+
+**Impact**: `_ws_map` Jinja2 dict in `base.html` infers workspace from the `page` variable. `body.perspective-*` class and data attributes remain for backward CSS compatibility. Cookie management in `app.js` sets all 3 cookies (workspace, perspective, corpus) on tab click.
+
+---
+
+## 2026-04-12 — File-based memories for reply context (not DB BLOBs)
+
+**Decision**: Topic memory files for the Reply Command Center are stored as markdown files in `data/memories/` on disk. The `reply_memories` DB table holds only metadata (slug, display_name, file_path, topic_id).
+
+**Rationale**: Markdown files can be edited with any external text editor, are readable without the app, can be version-controlled separately, and don't bloat the SQLite DB. The `data/` directory is already gitignored, so sensitive case facts won't leak.
+
+**Impact**: `src/config.py::memories_dir()` returns the canonical path. `seed_memories()` in `database.py` creates DB rows and template markdown files on first `init_db()`. Web routes in `reply.py` read/write files directly from disk.
+
+---
+
+## 2026-04-12 — Reply draft generation uses background threads + HTMX polling
+
+**Decision**: LLM reply generation runs in a daemon thread (same pattern as IMAP sync). The UI submits a POST, gets back a polling partial, and polls every 2 seconds until done.
+
+**Rationale**: Claude calls for reply generation take 5–15 seconds. Synchronous FastAPI would block the request. Background threads are already proven by the sync routes. WebSockets would add complexity with no benefit at single-user scale.
+
+**Impact**: `_jobs` dict in `reply.py` holds in-memory job state. `POST /reply/generate/{email_id}` starts the thread; `GET /reply/generate/{email_id}/poll/{job_id}` returns status. On completion, returns the full refreshed detail panel (not just the draft card).
+
+---
+
 ## 2026-04-11 — All feature branches deleted; main is sole branch
 
 **Decision**: After merging Phase 6 (`feature/corpus-filter-ui`) to main, both feature branches (`feature/corpus-filter-ui`, `feature/lawyer-corpus`) were deleted locally and from GitHub.

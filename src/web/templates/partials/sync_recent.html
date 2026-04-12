@@ -1,0 +1,38 @@
+{% if recent_emails %}
+<table class="data-table">
+  <thead>
+    <tr>
+      <th style="width:140px">Date</th>
+      <th style="width:160px">Contact</th>
+      <th>Subject</th>
+      <th style="width:80px">Direction</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for e in recent_emails %}
+    <tr class="clickable-row" onclick="window.location='/emails/{{ e.id }}'">
+      <td class="text-muted" style="font-size:0.8rem;white-space:nowrap">
+        {{ e.date[:16] if e.date else '—' }}
+      </td>
+      <td style="font-weight:500;font-size:0.85rem">
+        {{ e.contact_name | truncate(22, true, '…') }}
+      </td>
+      <td style="font-size:0.85rem;color:var(--text-primary)">
+        {{ e.subject | truncate(60, true, '…') if e.subject else '(no subject)' }}
+      </td>
+      <td>
+        {% if e.direction == 'sent' %}
+          <span class="badge badge-neutral">sent</span>
+        {% else %}
+          <span class="badge badge-info">received</span>
+        {% endif %}
+      </td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<div class="empty-state" style="padding:var(--space-8) var(--space-6)">
+  <p class="text-muted" style="font-size:0.9rem">No emails in this corpus yet.</p>
+</div>
+{% endif %}

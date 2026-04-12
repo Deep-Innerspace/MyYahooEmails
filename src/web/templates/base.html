@@ -3,179 +3,202 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>{% block title %}MyYahooEmails{% endblock %} — Dashboard</title>
+  <title>{% block title %}Northline{% endblock %}</title>
+  <link rel="icon" type="image/x-icon" href="/static/favicon.ico">
+  <link rel="icon" type="image/png" sizes="32x32" href="/static/icons/icon-32.png">
+  <link rel="icon" type="image/png" sizes="64x64" href="/static/icons/icon-64.png">
+  <link rel="apple-touch-icon" sizes="180x180" href="/static/apple-touch-icon.png">
   <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap">
-  <link rel="stylesheet" href="/static/css/style.css?v=8">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Instrument+Serif&display=swap">
+  <link rel="stylesheet" href="/static/css/style.css?v=11">
 </head>
-<body class="perspective-{{ perspective }}" data-perspective="{{ perspective }}">
+{# ── Workspace inference from current page ──────────────────────────────── #}
+{% set _ws_map = {
+  'emails': 'correspondence', 'contacts': 'correspondence',
+  'sync_personal': 'correspondence', 'sync_legal': 'correspondence',
+  'reply': 'correspondence',
+  'dashboard': 'case-analysis', 'timeline': 'case-analysis',
+  'analysis': 'case-analysis', 'contradictions': 'case-analysis',
+  'manipulation': 'case-analysis', 'reports': 'case-analysis',
+  'procedures': 'legal-strategy', 'invoices': 'legal-strategy',
+  'narrative': 'book', 'chapters': 'book', 'themes': 'book',
+  'quotes': 'book', 'pivotal': 'book',
+  'settings': 'settings'
+} %}
+{% set workspace = _ws_map[page] if page is defined and page in _ws_map else 'case-analysis' %}
+{% set _ws_perspective = 'book' if workspace == 'book' else 'legal' %}
+<body class="perspective-{{ _ws_perspective }}"
+      data-workspace="{{ workspace }}"
+      data-perspective="{{ _ws_perspective }}"
+      data-page="{{ page | default('dashboard') }}">
 
-  <!-- Loading bar (HTMX indicator) -->
+  <!-- Loading bar -->
   <div id="loading-bar" class="htmx-indicator"></div>
 
-  <!-- ─── Sidebar ──────────────────────────────────────────────────────── -->
-  <nav class="sidebar" id="sidebar">
-    <div class="sidebar-header">
-      <div class="sidebar-logo">
-        MyYahooEmails
-        <span>Email Analysis Platform</span>
-      </div>
+  <!-- ─── Top Bar ────────────────────────────────────────────────────────── -->
+  <header class="topbar">
+    <a href="/" class="topbar-brand">
+      <img src="/static/icons/icon-64.png" class="brand-icon-img" alt="Northline" width="28" height="28">
+      <span class="brand-name">Northline</span>
+    </a>
+
+    <nav class="ws-tabs" id="ws-tabs">
+      <button class="ws-tab {% if workspace == 'correspondence' %}active{% endif %}"
+              data-workspace="correspondence" data-default="/emails/" type="button">
+        <svg class="ws-icon" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+          <rect x="2" y="4" width="16" height="12" rx="2"/>
+          <path d="M2 6l8 5 8-5"/>
+        </svg>
+        <span class="ws-label">Correspondence</span>
+      </button>
+
+      <button class="ws-tab {% if workspace == 'case-analysis' %}active{% endif %}"
+              data-workspace="case-analysis" data-default="/" type="button">
+        <svg class="ws-icon" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M10 2v15M7 17h6"/>
+          <path d="M3 6h14"/>
+          <path d="M5 6l-2 5h6l-2-5"/>
+          <path d="M15 6l-2 5h6l-2-5"/>
+        </svg>
+        <span class="ws-label">Case Analysis</span>
+      </button>
+
+      <button class="ws-tab {% if workspace == 'legal-strategy' %}active{% endif %}"
+              data-workspace="legal-strategy" data-default="/procedures/" type="button">
+        <svg class="ws-icon" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M3 18h14"/>
+          <path d="M4 14v4M8 14v4M12 14v4M16 14v4"/>
+          <path d="M2 14h16"/>
+          <path d="M10 4l8 4H2l8-4z"/>
+          <path d="M10 2v2"/>
+        </svg>
+        <span class="ws-label">Legal Strategy</span>
+      </button>
+
+      <button class="ws-tab {% if workspace == 'book' %}active{% endif %}"
+              data-workspace="book" data-default="/narrative" type="button">
+        <svg class="ws-icon" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M15 3l-2 14"/>
+          <path d="M5 5c3-2 6 0 6 0"/>
+          <path d="M4 18c3-2 6-1 7 0"/>
+          <path d="M5 5l-1 13"/>
+          <path d="M11 5l-4 13"/>
+        </svg>
+        <span class="ws-label">Book</span>
+      </button>
+    </nav>
+
+    <div class="topbar-end">
+      <a href="/settings/" class="topbar-settings {% if page == 'settings' %}active{% endif %}"
+         title="Settings">
+        <svg viewBox="0 0 20 20" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="10" cy="10" r="3"/>
+          <path d="M10 1v2M10 17v2M18.36 5.64l-1.41 1.41M3.05 12.95l-1.41 1.41M19 10h-2M3 10H1M15.54 15.54l-1.41-1.41M5.88 5.88L4.46 4.46"/>
+        </svg>
+      </a>
     </div>
+  </header>
 
-    <!-- Perspective Toggle -->
-    <div class="perspective-toggle">
-      <span class="perspective-toggle-label">Perspective</span>
-      <form action="/set-perspective" method="post" class="perspective-buttons" id="perspective-form">
-        <button type="submit" name="perspective" value="legal"
-                class="perspective-btn {% if perspective == 'legal' %}active{% endif %}">
-          ⚖️ Legal
-        </button>
-        <button type="submit" name="perspective" value="book"
-                class="perspective-btn {% if perspective == 'book' %}active{% endif %}">
-          📖 Book
-        </button>
-      </form>
-    </div>
+  <!-- ─── App Body ───────────────────────────────────────────────────────── -->
+  <div class="app-body">
 
-    <!-- Corpus Selector -->
-    {# Read active corpus: URL query param > template var > cookie > default 'personal' #}
-    {% set _active_corpus = request.query_params.get('corpus')
-                            or (corpus if corpus is defined else none)
-                            or request.cookies.get('corpus', 'personal') %}
-    <div class="corpus-selector">
-      <span class="perspective-toggle-label">Corpus</span>
-      <form action="/set-corpus" method="post" class="corpus-buttons">
-        <input type="hidden" name="redirect_to"
-               value="{{ request.url.path }}{% if request.url.query %}?{{ request.url.query }}{% endif %}">
-        <button type="submit" name="corpus" value="personal"
-                class="corpus-btn {% if _active_corpus == 'personal' %}active{% endif %}"
-                title="Personal emails only">
-          👤 Personal
-        </button>
-        <button type="submit" name="corpus" value="legal"
-                class="corpus-btn {% if _active_corpus == 'legal' %}active{% endif %}"
-                title="Lawyer emails">
-          ⚖️ Legal
-        </button>
-        <button type="submit" name="corpus" value="all"
-                class="corpus-btn {% if _active_corpus == 'all' %}active{% endif %}"
-                title="All emails">
-          All
-        </button>
-      </form>
-    </div>
+    <!-- Contextual Sidebar -->
+    <nav class="sidebar" id="sidebar">
+      {% if workspace == 'correspondence' %}
+        <div class="subnav-section">
+          <span class="subnav-label">Mail</span>
+          <a href="/emails/" class="subnav-link {% if page == 'emails' %}active{% endif %}">
+            All Emails</a>
+          <a href="/reply/" class="subnav-link {% if page == 'reply' %}active{% endif %}">
+            Reply Center</a>
+          <a href="/sync/personal" class="subnav-link {% if page == 'sync_personal' %}active{% endif %}">
+            Sync Personal</a>
+          <a href="/sync/legal" class="subnav-link {% if page == 'sync_legal' %}active{% endif %}">
+            Sync Legal</a>
+          <a href="/contacts/" class="subnav-link {% if page == 'contacts' %}active{% endif %}">
+            Contacts</a>
+        </div>
 
-    <!-- Navigation -->
-    <div class="sidebar-nav">
-      <span class="nav-section-label">Navigation</span>
+      {% elif workspace == 'case-analysis' %}
+        <div class="subnav-section">
+          <span class="subnav-label">Overview</span>
+          <a href="/" class="subnav-link {% if page == 'dashboard' %}active{% endif %}">
+            Dashboard</a>
+          <a href="/timeline/" class="subnav-link {% if page == 'timeline' %}active{% endif %}">
+            Timeline</a>
+        </div>
+        <div class="subnav-section">
+          <span class="subnav-label">Deep Analysis</span>
+          <a href="/analysis/" class="subnav-link {% if page == 'analysis' %}active{% endif %}">
+            Tone & Topics</a>
+          <a href="/analysis/contradictions" class="subnav-link {% if page == 'contradictions' %}active{% endif %}">
+            Contradictions</a>
+          <a href="/analysis/manipulation" class="subnav-link {% if page == 'manipulation' %}active{% endif %}">
+            Manipulation</a>
+        </div>
+        <div class="subnav-section">
+          <span class="subnav-label">Output</span>
+          <a href="/reports/" class="subnav-link {% if page == 'reports' %}active{% endif %}">
+            Reports</a>
+        </div>
 
-      <a href="/" class="nav-link {% if page == 'dashboard' %}active{% endif %}">
-        <span class="nav-icon">📊</span>
-        Dashboard
-      </a>
+      {% elif workspace == 'legal-strategy' %}
+        <div class="subnav-section">
+          <span class="subnav-label">Case Management</span>
+          <a href="/procedures/" class="subnav-link {% if page == 'procedures' %}active{% endif %}">
+            Procedures</a>
+          <a href="/invoices/" class="subnav-link {% if page == 'invoices' %}active{% endif %}">
+            Invoices & Costs</a>
+        </div>
+        <div class="subnav-section">
+          <span class="subnav-label">Correspondence</span>
+          <a href="/emails/?corpus=legal" class="subnav-link {% if page == 'emails' %}active{% endif %}">
+            Lawyer Emails</a>
+        </div>
 
-      <a href="/emails/" class="nav-link {% if page == 'emails' %}active{% endif %}">
-        <span class="nav-icon">✉️</span>
-        Emails
-      </a>
+      {% elif workspace == 'book' %}
+        <div class="subnav-section">
+          <span class="subnav-label">Narrative</span>
+          <a href="/narrative" class="subnav-link {% if page == 'narrative' %}active{% endif %}">
+            Narrative Arc</a>
+          <a href="/chapters" class="subnav-link {% if page == 'chapters' %}active{% endif %}">
+            Chapters</a>
+          <a href="/themes" class="subnav-link {% if page == 'themes' %}active{% endif %}">
+            Thematic Threads</a>
+        </div>
+        <div class="subnav-section">
+          <span class="subnav-label">Evidence</span>
+          <a href="/quotes" class="subnav-link {% if page == 'quotes' %}active{% endif %}">
+            Quote Bank</a>
+          <a href="/pivotal-moments" class="subnav-link {% if page == 'pivotal' %}active{% endif %}">
+            Pivotal Moments</a>
+        </div>
 
-      <a href="/timeline/" class="nav-link {% if page == 'timeline' %}active{% endif %}">
-        <span class="nav-icon">📅</span>
-        Timeline
-      </a>
-
-      <a href="/analysis/" class="nav-link {% if page == 'analysis' %}active{% endif %}">
-        <span class="nav-icon">🔬</span>
-        Analysis
-      </a>
-
-      <a href="/contacts/" class="nav-link {% if page == 'contacts' %}active{% endif %}">
-        <span class="nav-icon">👥</span>
-        Contacts
-      </a>
-
-      <a href="/reports/" class="nav-link {% if page == 'reports' %}active{% endif %}">
-        <span class="nav-icon">📄</span>
-        Reports
-      </a>
-
-      <!-- Legal perspective only -->
-      {% if perspective == 'legal' %}
-      <span class="nav-section-label">Case Analysis</span>
-
-      <a href="/analysis/contradictions" class="nav-link {% if page == 'contradictions' %}active{% endif %}">
-        <span class="nav-icon">⚡</span>
-        Contradictions
-      </a>
-
-      <a href="/analysis/manipulation" class="nav-link {% if page == 'manipulation' %}active{% endif %}">
-        <span class="nav-icon">🎭</span>
-        Manipulation
-      </a>
-
-      <span class="nav-section-label">Legal Strategy</span>
-
-      <a href="/procedures/" class="nav-link {% if page == 'procedures' %}active{% endif %}">
-        <span class="nav-icon">🏛️</span>
-        Procedures
-      </a>
-
-      <a href="/invoices/" class="nav-link {% if page == 'invoices' %}active{% endif %}">
-        <span class="nav-icon">🧾</span>
-        Legal Costs
-      </a>
-
-      <a href="/emails/?corpus=legal" class="nav-link {% if page == 'emails' and (corpus | default('all')) == 'legal' %}active{% endif %}">
-        <span class="nav-icon">📂</span>
-        Lawyer Emails
-      </a>
+      {% else %}
+        {# Settings or unknown page — minimal sidebar #}
+        <div class="subnav-section">
+          <span class="subnav-label">System</span>
+          <a href="/settings/" class="subnav-link {% if page == 'settings' %}active{% endif %}">
+            Settings</a>
+        </div>
       {% endif %}
+    </nav>
 
-      <!-- Book perspective only -->
-      {% if perspective == 'book' %}
-      <span class="nav-section-label">Book Writing</span>
+    <!-- Main Content -->
+    <main class="main-content">
+      {% block content %}{% endblock %}
+    </main>
+  </div>
 
-      <a href="/narrative" class="nav-link {% if page == 'narrative' %}active{% endif %}">
-        <span class="nav-icon">🌊</span>
-        Narrative Arc
-      </a>
-
-      <a href="/chapters" class="nav-link {% if page == 'chapters' %}active{% endif %}">
-        <span class="nav-icon">📚</span>
-        Chapters
-      </a>
-
-      <a href="/themes" class="nav-link {% if page == 'themes' %}active{% endif %}">
-        <span class="nav-icon">🧵</span>
-        Thematic Threads
-      </a>
-
-      <a href="/quotes" class="nav-link {% if page == 'quotes' %}active{% endif %}">
-        <span class="nav-icon">💬</span>
-        Quote Bank
-      </a>
-
-      <a href="/pivotal-moments" class="nav-link {% if page == 'pivotal' %}active{% endif %}">
-        <span class="nav-icon">⭐</span>
-        Pivotal Moments
-      </a>
-      {% endif %}
-
-      <span class="nav-section-label">System</span>
-      <a href="/settings/" class="nav-link {% if page == 'settings' %}active{% endif %}">
-        <span class="nav-icon">⚙️</span>
-        Settings
-      </a>
-    </div>
-  </nav>
-
-  <!-- ─── Main Content ──────────────────────────────────────────────────── -->
-  <main class="main-content">
-    {% block content %}{% endblock %}
-  </main>
+  <!-- Mobile sidebar toggle -->
+  <button class="mobile-menu-btn" id="sidebar-toggle" type="button" aria-label="Toggle menu">
+    <svg viewBox="0 0 20 20" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round">
+      <path d="M3 5h14M3 10h14M3 15h14"/>
+    </svg>
+  </button>
 
   <script src="https://unpkg.com/htmx.org@1.9.12"></script>
-  <script src="/static/js/app.js?v=2"></script>
+  <script src="/static/js/app.js?v=3"></script>
 
   <!-- ─── Global info-icon tooltip (body-level: escapes card overflow:hidden) -->
   <div id="info-tooltip"></div>
@@ -208,22 +231,19 @@
 
       if (x < 8)           x = 8;
       if (x + tw > vw - 8) x = vw - tw - 8;
-      if (y < 8)           y = r.bottom + 10;   // flip below if no room above
+      if (y < 8)           y = r.bottom + 10;
 
-      // Position caret arrow relative to icon centre
       const arrowX = (r.left + r.width / 2) - x;
       tip.style.setProperty('--arrow-x', arrowX + 'px');
       tip.style.left = x + 'px';
       tip.style.top  = y + 'px';
     }
 
-    // Attach to icons already in DOM
     document.querySelectorAll('.info-icon').forEach(icon => {
       icon.dataset.tipBound = '1';
       attachTip(icon);
     });
 
-    // Re-attach after HTMX swaps (partials reloaded dynamically)
     document.body.addEventListener('htmx:afterSwap', () => {
       document.querySelectorAll('.info-icon:not([data-tip-bound])').forEach(icon => {
         icon.dataset.tipBound = '1';

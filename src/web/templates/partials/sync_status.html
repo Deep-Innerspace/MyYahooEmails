@@ -1,0 +1,69 @@
+{% set is_active = job.status in ('queued', 'running') %}
+
+{% if is_active %}
+{# ── Running: self-polling div ──────────────────────────────────────────── #}
+<div id="sync-poller"
+     hx-get="/sync/{{ corpus }}/status/{{ job_id }}"
+     hx-trigger="every 2s"
+     hx-swap="outerHTML">
+  <div class="sync-progress">
+    <span class="sync-spinner"></span>
+    <span class="sync-message">{{ job.message }}</span>
+  </div>
+</div>
+
+{% elif job.status == 'done' %}
+{# ── Done: success banner — no polling trigger ──────────────────────────── #}
+<div id="sync-poller">
+  <div class="sync-result sync-result--success">
+    <svg viewBox="0 0 20 20" width="16" height="16" fill="none" stroke="currentColor"
+         stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M4 10l4 4 8-8"/>
+    </svg>
+    <div>
+      <strong>{{ job.total_stored }} new email{{ 's' if job.total_stored != 1 else '' }} stored</strong>
+      {% if job.total_skipped %}
+        <span class="text-muted"> · {{ job.total_skipped }} duplicate{{ 's' if job.total_skipped != 1 else '' }} skipped</span>
+      {% endif %}
+      {% if job.finished %}
+        <span class="text-muted"> · finished {{ job.finished[11:16] }}</span>
+      {% endif %}
+    </div>
+  </div>
+</div>
+
+{# OOB: refresh the recent-emails table without a page reload #}
+{% if recent_emails is defined %}
+<div id="recent-emails" hx-swap-oob="innerHTML">
+  {% include "partials/sync_recent.html" %}
+</div>
+{% endif %}
+
+{% elif job.status == 'error' %}
+{# ── Error: no polling trigger ──────────────────────────────────────────── #}
+<div id="sync-poller">
+  <div class="sync-result sync-result--error">
+    <svg viewBox="0 0 20 20" width="16" height="16" fill="none" stroke="currentColor"
+         stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <circle cx="10" cy="10" r="8"/>
+      <path d="M10 6v4M10 14h.01"/>
+    </svg>
+    <div>
+      <strong>Sync failed</strong>
+      <span class="text-muted"> — {{ job.error }}</span>
+    </div>
+  </div>
+</div>
+
+{% else %}
+{# ── Queued fallback ──────────────────────────────────────────────────────── #}
+<div id="sync-poller"
+     hx-get="/sync/{{ corpus }}/status/{{ job_id }}"
+     hx-trigger="every 2s"
+     hx-swap="outerHTML">
+  <div class="sync-progress">
+    <span class="sync-spinner"></span>
+    <span class="sync-message">Queued…</span>
+  </div>
+</div>
+{% endif %}

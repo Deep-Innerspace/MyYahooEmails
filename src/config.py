@@ -131,6 +131,13 @@ def groq_request_rate_limit() -> int:
     """Max requests/min (RPM) — informational, rarely the binding constraint."""
     return int(_groq_cfg().get("rate_limit_requests_per_min", 30))
 
+def memories_dir() -> Path:
+    """Directory for reply memory markdown files."""
+    path = _ROOT / "data" / "memories"
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
 def groq_daily_limit_threshold_secs() -> int:
     """Retry-After seconds above which a 429 is treated as a daily-limit hit."""
     return int(_groq_cfg().get("daily_limit_threshold_secs", 300))

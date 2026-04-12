@@ -485,6 +485,65 @@ _MIGRATIONS = [
         CREATE INDEX IF NOT EXISTS idx_proc_docs_procedure
             ON procedure_documents(procedure_id);
     """),
+
+    # ── Reply Command Center (Phase 7) ──────────────────────────────────────
+    (20, "Add reply_status column to emails for triage tracking", """
+        ALTER TABLE emails ADD COLUMN reply_status TEXT NOT NULL DEFAULT 'unset';
+        CREATE INDEX IF NOT EXISTS idx_emails_reply_status ON emails(reply_status);
+    """),
+
+    (21, "Add reply_drafts table for LLM-generated reply drafts", """
+        CREATE TABLE IF NOT EXISTS reply_drafts (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            email_id        INTEGER NOT NULL REFERENCES emails(id) ON DELETE CASCADE,
+            version         INTEGER NOT NULL DEFAULT 1,
+            tone            TEXT NOT NULL DEFAULT 'factual',
+            guidelines      TEXT NOT NULL DEFAULT '',
+            memories_used   TEXT NOT NULL DEFAULT '[]',
+            thread_depth    INTEGER NOT NULL DEFAULT 5,
+            system_prompt   TEXT NOT NULL DEFAULT '',
+            user_prompt     TEXT NOT NULL DEFAULT '',
+            draft_text      TEXT NOT NULL DEFAULT '',
+            edited_text     TEXT NOT NULL DEFAULT '',
+            provider_name   TEXT NOT NULL DEFAULT '',
+            model_id        TEXT NOT NULL DEFAULT '',
+            input_tokens    INTEGER NOT NULL DEFAULT 0,
+            output_tokens   INTEGER NOT NULL DEFAULT 0,
+            latency_ms      INTEGER NOT NULL DEFAULT 0,
+            status          TEXT NOT NULL DEFAULT 'draft',
+            created_at      TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+        );
+        CREATE INDEX IF NOT EXISTS idx_reply_drafts_email ON reply_drafts(email_id);
+        CREATE INDEX IF NOT EXISTS idx_reply_drafts_status ON reply_drafts(status);
+    """),
+
+    (22, "Add pending_actions table for extracted questions/requests from emails", """
+        CREATE TABLE IF NOT EXISTS pending_actions (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            email_id        INTEGER NOT NULL REFERENCES emails(id) ON DELETE CASCADE,
+            action_type     TEXT NOT NULL DEFAULT 'question',
+            text            TEXT NOT NULL,
+            resolved        INTEGER NOT NULL DEFAULT 0,
+            resolved_by_draft_id INTEGER REFERENCES reply_drafts(id) ON DELETE SET NULL,
+            extracted_by    TEXT NOT NULL DEFAULT 'manual',
+            created_at      TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+        );
+        CREATE INDEX IF NOT EXISTS idx_pending_actions_email ON pending_actions(email_id);
+        CREATE INDEX IF NOT EXISTS idx_pending_actions_resolved ON pending_actions(resolved);
+    """),
+
+    (23, "Add reply_memories table for topic-specific context files", """
+        CREATE TABLE IF NOT EXISTS reply_memories (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            slug            TEXT NOT NULL UNIQUE,
+            display_name    TEXT NOT NULL,
+            file_path       TEXT NOT NULL,
+            topic_id        INTEGER REFERENCES topics(id),
+            description     TEXT NOT NULL DEFAULT '',
+            updated_at      TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            created_at      TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+        );
+    """),
 ]
 
 
@@ -522,6 +581,51 @@ def init_db() -> None:
         conn.executescript(_SCHEMA)
         _run_migrations(conn)
         conn.executescript(_INDEXES)
+    # Seed reply memories if tables are ready
+    try:
+        seed_memories()
+    except Exception:
+        pass  # Table may not exist on first-ever run before migration
+
+
+def seed_memories() -> None:
+    """Create reply_memories rows for default topic memory files if they don't exist."""
+    from src.config import memories_dir
+    mem_dir = memories_dir()
+
+    defaults = [
+        ("general", "General Guidelines", None, "Always-injected communication rules"),
+        ("enfants", "Enfants", "enfants", "Children: custody, school, vacations"),
+        ("finances", "Finances", "finances", "Financial obligations, pensions, division"),
+        ("ecole", "School", "ecole", "School enrollment, academic matters"),
+        ("logement", "Logement", "logement", "Housing arrangements"),
+        ("vacances", "Vacances", "vacances", "Holiday/vacation scheduling"),
+    ]
+
+    with get_db() as conn:
+        for slug, display_name, topic_name, description in defaults:
+            # Skip if already exists
+            existing = conn.execute(
+                "SELECT id FROM reply_memories WHERE slug = ?", (slug,)
+            ).fetchone()
+            if existing:
+                continue
+
+            fpath = mem_dir / "{}.md".format(slug)
+            topic_id = None
+            if topic_name:
+                row = conn.execute(
+                    "SELECT id FROM topics WHERE name = ?", (topic_name,)
+                ).fetchone()
+                if row:
+                    topic_id = row["id"]
+
+            conn.execute(
+                "INSERT OR IGNORE INTO reply_memories "
+                "(slug, display_name, file_path, topic_id, description) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (slug, display_name, str(fpath), topic_id, description),
+            )
 
 
 def seed_topics(topics_config: List[dict]) -> None:

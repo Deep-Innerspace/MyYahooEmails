@@ -1,0 +1,52 @@
+<div class="rw-draft-card {% if draft.status == 'approved' %}rw-draft--approved{% elif draft.status == 'discarded' %}rw-draft--discarded{% endif %}"
+     id="draft-card-{{ draft.id }}">
+  <div class="rw-draft-header">
+    <span class="rw-draft-version">v{{ draft.version }}</span>
+    <span class="badge badge-{% if draft.status == 'approved' %}success{% elif draft.status == 'discarded' %}neutral{% else %}info{% endif %}">
+      {{ draft.status }}
+    </span>
+    <span class="text-muted" style="font-size:0.72rem">
+      {{ draft.provider_name }}/{{ draft.model_id | truncate(20, true, '…') }}
+      · {{ draft.input_tokens + draft.output_tokens }} tokens
+      · {{ (draft.latency_ms / 1000) | round(1) }}s
+    </span>
+    <span class="badge badge-warning" style="font-size:0.65rem">{{ draft.tone }}</span>
+  </div>
+
+  {% if draft.status == 'draft' %}
+  {# ── Editable draft ─────────────────────────────────────────────── #}
+  <form hx-post="/reply/drafts/{{ draft.id }}/edit"
+        hx-target="#draft-card-{{ draft.id }}"
+        hx-swap="outerHTML">
+    <textarea class="rw-draft-text" name="edited_text" rows="12">{{ draft.edited_text or draft.draft_text }}</textarea>
+    <div class="rw-draft-actions">
+      <button type="submit" class="btn btn-secondary btn-sm">Save edits</button>
+      <button type="button" class="btn btn-primary btn-sm"
+              hx-post="/reply/drafts/{{ draft.id }}/approve"
+              hx-target="#draft-card-{{ draft.id }}"
+              hx-swap="outerHTML">
+        Approve</button>
+      <button type="button" class="btn btn-secondary btn-sm"
+              hx-post="/reply/drafts/{{ draft.id }}/discard"
+              hx-target="#draft-card-{{ draft.id }}"
+              hx-swap="outerHTML"
+              style="color:var(--text-muted)">
+        Discard</button>
+      <button type="button" class="btn btn-secondary btn-sm rw-copy-btn"
+              onclick="var ta=this.closest('.rw-draft-card').querySelector('textarea');navigator.clipboard.writeText(ta.value);this.textContent='Copied!';setTimeout(function(){this.textContent='Copy';}.bind(this),1500);">
+        Copy</button>
+    </div>
+  </form>
+
+  {% else %}
+  {# ── Read-only (approved or discarded) ──────────────────────────── #}
+  <div class="rw-draft-text rw-draft-readonly">{{ draft.edited_text or draft.draft_text }}</div>
+  {% if draft.status == 'approved' %}
+  <div class="rw-draft-actions">
+    <button type="button" class="btn btn-secondary btn-sm rw-copy-btn"
+            onclick="var el=this.closest('.rw-draft-card').querySelector('.rw-draft-readonly');navigator.clipboard.writeText(el.textContent);this.textContent='Copied!';setTimeout(function(){this.textContent='Copy';}.bind(this),1500);">
+      Copy</button>
+  </div>
+  {% endif %}
+  {% endif %}
+</div>

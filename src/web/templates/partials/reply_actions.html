@@ -1,0 +1,39 @@
+{% if actions %}
+<div class="rw-actions-list">
+  {% for a in actions %}
+  <div class="rw-action-item {% if a.resolved %}rw-action-resolved{% endif %}">
+    <button class="rw-action-check"
+            hx-post="/reply/actions/{{ a.id }}/resolve"
+            hx-target="#actions-panel"
+            hx-swap="innerHTML"
+            title="Toggle resolved">
+      {% if a.resolved %}&#10003;{% else %}&#9633;{% endif %}
+    </button>
+    <div class="rw-action-body">
+      <span class="rw-action-type">{{ a.action_type }}</span>
+      <span class="rw-action-text">{{ a.text }}</span>
+    </div>
+    <button class="rw-action-delete"
+            hx-delete="/reply/actions/{{ a.id }}"
+            hx-target="#actions-panel"
+            hx-swap="innerHTML"
+            title="Delete">&times;</button>
+  </div>
+  {% endfor %}
+</div>
+{% else %}
+<p class="text-muted" style="font-size:0.8rem;margin:var(--space-2) 0">No actions extracted yet. Click "Extract with AI" or add manually below.</p>
+{% endif %}
+
+{# ── Add action form ───────────────────────────────────────────────── #}
+<form class="rw-add-action" hx-post="/reply/actions/{{ email_id }}" hx-target="#actions-panel" hx-swap="innerHTML">
+  <select name="action_type" class="form-select" style="width:auto;font-size:0.78rem">
+    <option value="question">Question</option>
+    <option value="request">Request</option>
+    <option value="demand">Demand</option>
+    <option value="deadline">Deadline</option>
+    <option value="proposal">Proposal</option>
+  </select>
+  <input type="text" name="text" class="form-input" placeholder="Describe the action…" required style="flex:1;font-size:0.8rem">
+  <button type="submit" class="btn btn-secondary btn-sm" style="font-size:0.75rem">Add</button>
+</form>

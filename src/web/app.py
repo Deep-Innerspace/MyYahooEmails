@@ -1,4 +1,4 @@
-"""FastAPI application factory for the MyYahooEmails web dashboard."""
+"""FastAPI application factory for the Northline web dashboard."""
 from pathlib import Path
 
 from fastapi import FastAPI, Request
@@ -12,7 +12,7 @@ BASE_DIR = Path(__file__).parent
 
 
 def create_app() -> FastAPI:
-    app = FastAPI(title="MyYahooEmails Dashboard", docs_url=None, redoc_url=None)
+    app = FastAPI(title="Northline", docs_url=None, redoc_url=None)
 
     # Static files
     app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="static")

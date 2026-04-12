@@ -1,0 +1,18 @@
+<div class="rw-memory-editor-inner">
+  <div style="display:flex;align-items:center;gap:var(--space-3);margin-bottom:var(--space-3)">
+    <strong style="font-size:0.9rem">{{ memory.display_name }}</strong>
+    <span class="text-muted" style="font-size:0.72rem">{{ memory.slug }}.md</span>
+  </div>
+  <form hx-post="/reply/memories/{{ memory.slug }}"
+        hx-target="#memory-editor"
+        hx-swap="innerHTML">
+    <textarea class="form-input rw-memory-textarea" name="content" rows="15">{{ content }}</textarea>
+    <div style="display:flex;gap:var(--space-2);margin-top:var(--space-2)">
+      <button type="submit" class="btn btn-primary btn-sm" style="font-size:0.75rem">Save</button>
+      <button type="button" class="btn btn-secondary btn-sm" style="font-size:0.75rem"
+              hx-get="/reply/memories"
+              hx-target="#memories-panel"
+              hx-swap="innerHTML">Cancel</button>
+    </div>
+  </form>
+</div>

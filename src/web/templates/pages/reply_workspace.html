@@ -1,0 +1,103 @@
+{% extends "base.html" %}
+{% block title %}Reply Command Center · Northline{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <div>
+    <h1 class="page-title">Reply Command Center</h1>
+    <p class="page-subtitle">Triage, draft, and track every response.</p>
+  </div>
+  <div style="display:flex;gap:var(--space-3)">
+    <button class="btn btn-secondary btn-sm"
+            hx-post="/reply/bulk-triage"
+            hx-target="#triage-result"
+            hx-swap="innerHTML"
+            hx-confirm="Auto-classify all unset emails? This will mark older emails as N/A and recent ones as Pending.">
+      Auto-Triage
+    </button>
+    <button class="btn btn-secondary btn-sm"
+            onclick="document.getElementById('memories-panel').classList.toggle('rw-hidden')">
+      Memories
+    </button>
+  </div>
+</div>
+
+<div id="triage-result" class="mb-4"></div>
+
+<div class="page-body">
+  <!-- ─── Memories slide-out panel ─────────────────────────────────────── -->
+  <div id="memories-panel" class="rw-memories-panel rw-hidden"
+       hx-get="/reply/memories" hx-trigger="intersect once" hx-swap="innerHTML">
+  </div>
+
+  <!-- ─── Split panels ────────────────────────────────────────────────── -->
+  <div class="rw-panels">
+    <!-- Left: email list -->
+    <div class="rw-panel-list">
+      <div id="reply-list"
+           hx-get="/reply/list?tab={{ active_tab }}"
+           hx-trigger="load"
+           hx-swap="innerHTML">
+      </div>
+    </div>
+
+    <!-- Right: detail + composer -->
+    <div class="rw-panel-detail">
+      <div id="reply-detail">
+        <div class="empty-state" style="padding:var(--space-12) var(--space-8)">
+          <p class="empty-state-icon">&#9993;</p>
+          <p class="text-muted">Select an email to review and reply.</p>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+(function() {
+  // After list loads, auto-select first email
+  document.body.addEventListener('htmx:afterSwap', function(evt) {
+    if (evt.detail.elt.id === 'reply-list') {
+      var first = document.querySelector('.rw-row');
+      if (first && !document.querySelector('.rw-row.active')) {
+        first.click();
+      }
+    }
+  });
+
+  // Keyboard shortcuts
+  document.addEventListener('keydown', function(e) {
+    if (['INPUT','TEXTAREA','SELECT'].indexOf(e.target.tagName) !== -1) return;
+    var rows = document.querySelectorAll('.rw-row');
+    var active = document.querySelector('.rw-row.active');
+    var idx = active ? Array.prototype.indexOf.call(rows, active) : -1;
+
+    if ((e.key === 'j' || e.key === 'ArrowDown') && rows.length) {
+      e.preventDefault();
+      var next = rows[Math.min(idx + 1, rows.length - 1)];
+      if (next) next.click();
+    }
+    if ((e.key === 'k' || e.key === 'ArrowUp') && rows.length) {
+      e.preventDefault();
+      var prev = rows[Math.max(idx - 1, 0)];
+      if (prev) prev.click();
+    }
+    if (e.key === 'a' && active) {
+      // Mark answered
+      var btn = document.querySelector('.rw-btn-answered');
+      if (btn) btn.click();
+    }
+    if (e.key === 's' && active) {
+      // Skip (mark N/A)
+      var btn = document.querySelector('.rw-btn-skip');
+      if (btn) btn.click();
+    }
+    if (e.key === 'g' && active) {
+      // Generate draft
+      var btn = document.querySelector('.rw-btn-generate');
+      if (btn) btn.click();
+    }
+  });
+})();
+</script>
+{% endblock %}

@@ -195,6 +195,52 @@ class LawyerInvoice:
 
 
 @dataclass
+class ReplyDraft:
+    id: Optional[int]
+    email_id: int
+    version: int = 1
+    tone: str = "factual"
+    guidelines: str = ""
+    memories_used: str = "[]"      # JSON array of memory slugs
+    thread_depth: int = 5
+    system_prompt: str = ""
+    user_prompt: str = ""
+    draft_text: str = ""
+    edited_text: str = ""
+    provider_name: str = ""
+    model_id: str = ""
+    input_tokens: int = 0
+    output_tokens: int = 0
+    latency_ms: int = 0
+    status: str = "draft"          # 'draft', 'approved', 'sent', 'discarded'
+    created_at: Optional[datetime] = None
+
+
+@dataclass
+class PendingAction:
+    id: Optional[int]
+    email_id: int
+    action_type: str = "question"  # 'question', 'request', 'demand', 'deadline', 'proposal'
+    text: str = ""
+    resolved: bool = False
+    resolved_by_draft_id: Optional[int] = None
+    extracted_by: str = "manual"   # 'manual' or 'llm'
+    created_at: Optional[datetime] = None
+
+
+@dataclass
+class ReplyMemory:
+    id: Optional[int]
+    slug: str
+    display_name: str
+    file_path: str
+    topic_id: Optional[int] = None
+    description: str = ""
+    updated_at: Optional[datetime] = None
+    created_at: Optional[datetime] = None
+
+
+@dataclass
 class ExternalEvent:
     id: Optional[int]
     event_date: datetime

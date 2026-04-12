@@ -1,0 +1,78 @@
+{% extends "base.html" %}
+{% block title %}Sync {{ corpus_label }} Emails · Northline{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <div>
+    <h1 class="page-title">Sync {{ corpus_label }} Emails</h1>
+    <p class="page-subtitle">Download new emails from Yahoo since the last sync.</p>
+  </div>
+</div>
+
+<div class="page-body">
+
+  <!-- ─── Sync control card ─────────────────────────────────────────────── -->
+  <div class="card mb-6">
+    <div class="card-body" style="display:flex;align-items:center;gap:var(--space-6);flex-wrap:wrap">
+
+      <div style="display:flex;gap:var(--space-8);flex:1;min-width:0">
+        <div class="sync-stat">
+          <span class="sync-stat-label">Total emails</span>
+          <span class="sync-stat-value">{{ total_emails }}</span>
+        </div>
+        <div class="sync-stat">
+          <span class="sync-stat-label">Last sync</span>
+          <span class="sync-stat-value" style="font-size:0.85rem;font-weight:500">
+            {% if last_sync %}
+              {{ last_sync[:16].replace('T', ' ') }}
+            {% else %}
+              <span style="color:var(--text-muted)">Never</span>
+            {% endif %}
+          </span>
+        </div>
+        <div class="sync-stat">
+          <span class="sync-stat-label">Corpus</span>
+          <span class="sync-stat-value">
+            <span class="badge badge-{% if corpus == 'personal' %}info{% else %}warning{% endif %}">
+              {{ corpus }}
+            </span>
+          </span>
+        </div>
+      </div>
+
+      <button id="sync-btn"
+              class="btn btn-primary"
+              hx-post="/sync/{{ corpus }}/run"
+              hx-target="#sync-status"
+              hx-swap="innerHTML"
+              hx-disabled-elt="this"
+              hx-indicator="#sync-btn">
+        <svg viewBox="0 0 20 20" width="15" height="15" fill="none" stroke="currentColor"
+             stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"
+             style="display:inline;vertical-align:-2px;margin-right:6px">
+          <path d="M4 10a6 6 0 0 1 6-6 6 6 0 0 1 4.24 1.76L16 7"/>
+          <path d="M16 10a6 6 0 0 1-6 6 6 6 0 0 1-4.24-1.76L4 13"/>
+          <path d="M16 3v4h-4"/>
+          <path d="M4 17v-4h4"/>
+        </svg>
+        Sync Now
+      </button>
+    </div>
+  </div>
+
+  <!-- ─── Status area (HTMX target) ────────────────────────────────────── -->
+  <div id="sync-status" class="mb-6"></div>
+
+  <!-- ─── Recent emails ────────────────────────────────────────────────── -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-title">Last 10 {{ corpus_label }} Emails</span>
+      <a href="/emails/?corpus={{ corpus }}" class="btn btn-secondary btn-sm">View all →</a>
+    </div>
+    <div id="recent-emails">
+      {% include "partials/sync_recent.html" %}
+    </div>
+  </div>
+
+</div>
+{% endblock %}

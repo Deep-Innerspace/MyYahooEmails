@@ -1,6 +1,6 @@
 # MyYahooEmails — Architecture Reference
 
-> Last updated: 2026-03-27
+> Last updated: 2026-04-12
 
 ## High-Level Data Flow
 
@@ -76,7 +76,8 @@ Yahoo IMAP (read-only)
 | `src/analysis/contradictions.py` | Two-pass contradiction detection → `contradictions` |
 | `src/analysis/manipulation.py` | Per-email manipulation pattern detection → `analysis_results` |
 | `src/analysis/court_correlator.py` | Court event correlation (SQL + optional LLM narrative) |
-| `src/analysis/prompts/` | 7 French-legal prompt templates |
+| `src/analysis/reply_generator.py` | Reply draft generation: TONE_CONFIGS, prompt building, memory loading, LLM call, draft storage |
+| `src/analysis/prompts/` | 9 French-legal prompt templates (incl. reply_draft.txt, extract_actions.txt) |
 | `src/statistics/aggregator.py` | 10 SQL aggregation functions (shared by CLI + reports) |
 | `src/reports/charts.py` | matplotlib chart generators (5 chart types) |
 | `src/reports/builder.py` | Report dataclasses + 4 builder functions |
@@ -96,6 +97,8 @@ Yahoo IMAP (read-only)
 | `src/web/routes/settings.py` | Analysis runs overview, coverage stats, run deletion |
 | `src/web/routes/book.py` | Narrative Arc, Chapters CRUD, Quote Bank, Pivotal Moments |
 | `src/web/routes/court_events.py` | Court events list (to be replaced by procedures in Phase 6e) |
+| `src/web/routes/sync.py` | IMAP sync pages (/sync/personal, /sync/legal) with background thread + HTMX polling |
+| `src/web/routes/reply.py` | Reply Command Center: triage, LLM draft generation, action tracking, memories management |
 | `cli.py` | All CLI commands (click groups) + `web` command |
 
 ## Database Schema Summary
@@ -118,6 +121,11 @@ Yahoo IMAP (read-only)
 - **procedures** — legal proceedings: type, jurisdiction, case_number, initiated_by, party lawyers, status
 - **procedure_events** — events within procedures: filing, hearing, judgment, etc. with date_precision
 - **lawyer_invoices** — cost tracking: amount_ht/ttc, tva_rate, per-lawyer per-procedure
+
+### Reply Command Center tables (Phase 7)
+- **reply_drafts** — LLM-generated drafts: tone, guidelines, memories_used, full prompts, LLM metadata, status (draft/approved/discarded)
+- **pending_actions** — questions/requests/demands extracted from emails (manual or LLM); resolved flag
+- **reply_memories** — metadata for topic markdown files in `data/memories/`; linked to topics table
 
 ### Context tables
 - **external_events** — other key life dates

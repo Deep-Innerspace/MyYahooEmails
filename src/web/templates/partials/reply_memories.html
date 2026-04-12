@@ -1,0 +1,48 @@
+<div class="rw-memories-inner">
+  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:var(--space-4)">
+    <h3 style="margin:0;font-size:1rem">Memories</h3>
+    <button class="btn btn-secondary btn-sm"
+            onclick="document.getElementById('memories-panel').classList.add('rw-hidden')">
+      Close</button>
+  </div>
+
+  {% if memories %}
+  <div class="rw-memories-list">
+    {% for m in memories %}
+    <div class="rw-memory-item">
+      <div class="rw-memory-info">
+        <strong>{{ m.display_name }}</strong>
+        {% if m.topic_name %}<span class="badge badge-neutral" style="font-size:0.65rem">{{ m.topic_name }}</span>{% endif %}
+        {% if m.file_exists %}
+          <span class="text-muted" style="font-size:0.7rem">{{ (m.file_size / 1024) | round(1) }}kb</span>
+        {% else %}
+          <span style="color:var(--severity-high);font-size:0.7rem">file missing</span>
+        {% endif %}
+      </div>
+      <button class="btn btn-secondary btn-sm" style="font-size:0.7rem"
+              hx-get="/reply/memories/{{ m.slug }}"
+              hx-target="#memory-editor"
+              hx-swap="innerHTML">
+        Edit</button>
+    </div>
+    {% endfor %}
+  </div>
+  {% else %}
+  <p class="text-muted" style="font-size:0.85rem">No memories configured yet.</p>
+  {% endif %}
+
+  {# ── Add new memory ──────────────────────────────────────────────── #}
+  <details style="margin-top:var(--space-4)">
+    <summary style="font-size:0.8rem;cursor:pointer;color:var(--text-muted)">+ Create new memory</summary>
+    <form hx-post="/reply/memories/create" hx-target="closest .rw-memories-inner" hx-swap="outerHTML"
+          style="display:grid;gap:var(--space-2);margin-top:var(--space-3)">
+      <input class="form-input" name="slug" placeholder="slug (e.g. vacances)" required style="font-size:0.8rem">
+      <input class="form-input" name="display_name" placeholder="Display name" required style="font-size:0.8rem">
+      <input class="form-input" name="description" placeholder="Description (optional)" style="font-size:0.8rem">
+      <button type="submit" class="btn btn-primary btn-sm" style="font-size:0.75rem">Create</button>
+    </form>
+  </details>
+
+  {# ── Editor area ─────────────────────────────────────────────────── #}
+  <div id="memory-editor" style="margin-top:var(--space-4)"></div>
+</div>

@@ -510,7 +510,51 @@ Two-layer protection:
 - Systematic aggression delta across all procedure events
 - Pre-conclusion behavior detector: frequency spikes + manipulation scores before `conclusions_received` events
 
+### ✅ Phase 7 — Northline Branding + Reply Command Center (COMPLETE 2026-04-12)
+
+#### ✅ Phase 7a — Northline Branding (COMPLETE 2026-04-12)
+- **Brand**: "Northline — Clarity under pressure" — divorce intelligence platform; `docs/branding.md` (791 lines)
+- **Navigation redesign**: Workspace-based nav (4 tabs: Correspondence, Case Analysis, Legal Strategy, Book) replaces dual Perspective/Corpus toggles
+- **`base.html`**: Complete rewrite — `_ws_map` Jinja2 inference, contextual sidebar per workspace, `body.perspective-*` class preserved for CSS compat
+- **`style.css`** (v11): Northline color system — Navy `#1E3557`, Amber `#D6A14B` (sole focal accent), Ivory `#F5F2EA`, Deep Ink for Book (no green); navy topbar, amber active underline
+- **`app.js`**: Workspace tab click handler, 3-cookie management (workspace + perspective + corpus), on-load sync
+- **Icons**: `favicon.ico`, `apple-touch-icon.png`, `icon-32/64/128.png` in `/static/`; Northline eye-contour logo
+
+#### ✅ Phase 7b — Sync Pages (COMPLETE 2026-04-12)
+- `/sync/personal` and `/sync/legal` — IMAP fetch since last sync, background thread, HTMX polling
+- `src/web/routes/sync.py`: resumes from `fetch_state` per folder/contact, updates last_uid after each folder
+- Templates: `pages/sync.html`, `partials/sync_status.html`, `partials/sync_recent.html`
+- Last 10 emails OOB-refreshed on sync complete
+
+#### ✅ Phase 7c — Reply Command Center (COMPLETE 2026-04-12)
+**New page**: `/reply/` — split-panel triage workspace for drafting replies
+
+**DB Migrations**:
+- Migration 20: `reply_status` column on `emails` (`unset`/`pending`/`drafted`/`answered`/`not_applicable`) + index
+- Migration 21: `reply_drafts` table — tone, guidelines, memories_used, full prompts, LLM metadata (provider, model, tokens, latency), status, versioning
+- Migration 22: `pending_actions` table — action_type (`question`/`request`/`demand`/`deadline`/`proposal`), text, resolved, extracted_by
+- Migration 23: `reply_memories` table — slug, display_name, file_path, topic_id FK, description
+
+**New modules**:
+- `src/analysis/reply_generator.py`: `TONE_CONFIGS` (6 tones: factual/firm/conciliatory/neutral/defensive/jaf_producible), `generate_reply_draft()`, `extract_pending_actions()`, `build_system_prompt()`, `build_user_prompt()`, memory loading, analysis context injection
+- `src/analysis/prompts/reply_draft.txt`: French legal reply prompt with JAF-producibility rules
+- `src/analysis/prompts/extract_actions.txt`: Action extraction prompt
+- `src/web/routes/reply.py`: 18 routes — page, list/detail partials, status mgmt, background LLM generation + polling, draft CRUD, action CRUD + LLM extraction, memories CRUD, bulk auto-triage
+
+**Templates** (8 new files): `pages/reply_workspace.html`, `partials/reply_list.html`, `partials/reply_detail.html`, `partials/reply_draft_card.html`, `partials/reply_actions.html`, `partials/reply_generating.html`, `partials/reply_memories.html`, `partials/reply_memory_editor.html`
+
+**Memory files**: `data/memories/` with 6 seeded templates (general, enfants, finances, ecole, logement, vacances); `seed_memories()` in `database.py` called from `init_db()`
+
+**Key features**:
+- 5-tab triage strip (Pending/Drafted/Answered/N/A/All) with live counts
+- Auto-select topic memories based on email's `email_topics` assignments; General always injected
+- Keyboard shortcuts: j/k navigate, a=answered, s=skip, g=generate
+- Bulk auto-triage: SQL-based classification of all unset received emails (answered/na/pending)
+- Memories slide-out panel with inline markdown editor and file size display
+- Full prompt traceability — every draft stores exact system+user prompts sent to LLM
+
 ### Web Dashboard Bug Fixes
+- **2026-04-12 — `sqlite3.Row` has no `.get()`**: When a route fetches a row with `conn.execute(...).fetchone()`, the result is a `sqlite3.Row` — it supports bracket indexing `row["col"]` but NOT `.get("col")`. Always convert to `dict(row)` before calling `.get()`, or use `row["col"]` directly. Bug surfaced in `reply_detail` route: `email.get("thread_id")` raised `AttributeError`. Fix: `email_dict = dict(email)` then `email_dict.get("thread_id")`.
 - **2026-03-25 — "View email" modal on timeline**: `hx-on::after-swap` added directly to "View email" link in `partials/timeline_list.html`; `href` changed to `#` to prevent fallback navigation. The global `htmx:afterSwap` handler in `app.js` was not reliably firing when the link resided inside a dynamically-swapped HTMX partial.
 - **2026-04-07 — Procedures NOT NULL bug**: `update_procedure` and `create_procedure` routes used `field.strip() or None` which converts empty strings to NULL, violating NOT NULL DEFAULT '' columns. Fixed by removing `or None` for jurisdiction, description, outcome_summary, notes.
 - **2026-04-07 — Emails page row click (FIXED)**: clicking an email row after a search didn't display the detail. Root cause: CSS breakpoint at `max-width: 1200px` collapsed `.emails-layout` to 1-column; with the 240px sidebar, a 1440px laptop content area was right at the threshold, pushing `#detail-panel` below the fold. Fix: (1) raised breakpoint to `1400px` for `emails-layout` + `detail-panel`, splitting them from `dashboard-two-col` (remains at 1200px); (2) added `htmx:afterSwap` auto-scroll in `emails.html` for narrow-screen fallback. CSS version bumped to `?v=8`.

@@ -1,0 +1,8 @@
+<div hx-get="/reply/generate/{{ email_id }}/poll/{{ job_id }}?tab={{ tab }}"
+     hx-trigger="every 2s"
+     hx-swap="outerHTML">
+  <div class="sync-progress" style="margin:var(--space-4) 0">
+    <span class="sync-spinner"></span>
+    <span class="sync-message">Generating reply draft…</span>
+  </div>
+</div>

@@ -1,0 +1,64 @@
+{# ── Tab strip ──────────────────────────────────────────────────────────── #}
+<div class="rw-tabs">
+  <button class="rw-tab {% if active_tab == 'pending' %}active{% endif %}"
+          hx-get="/reply/list?tab=pending" hx-target="#reply-list" hx-swap="innerHTML">
+    Pending <span class="rw-tab-count">{{ tab_counts.pending }}</span>
+  </button>
+  <button class="rw-tab {% if active_tab == 'drafted' %}active{% endif %}"
+          hx-get="/reply/list?tab=drafted" hx-target="#reply-list" hx-swap="innerHTML">
+    Drafted <span class="rw-tab-count">{{ tab_counts.drafted }}</span>
+  </button>
+  <button class="rw-tab {% if active_tab == 'answered' %}active{% endif %}"
+          hx-get="/reply/list?tab=answered" hx-target="#reply-list" hx-swap="innerHTML">
+    Answered <span class="rw-tab-count">{{ tab_counts.answered }}</span>
+  </button>
+  <button class="rw-tab {% if active_tab == 'na' %}active{% endif %}"
+          hx-get="/reply/list?tab=na" hx-target="#reply-list" hx-swap="innerHTML">
+    N/A <span class="rw-tab-count">{{ tab_counts.na }}</span>
+  </button>
+  <button class="rw-tab {% if active_tab == 'all' %}active{% endif %}"
+          hx-get="/reply/list?tab=all" hx-target="#reply-list" hx-swap="innerHTML">
+    All <span class="rw-tab-count">{{ tab_counts.all }}</span>
+  </button>
+</div>
+
+{# ── Email rows ────────────────────────────────────────────────────────── #}
+<div class="rw-list-body">
+{% if candidates %}
+  {% for c in candidates %}
+  <div class="rw-row {% if c.id == active_id %}active{% endif %}"
+       data-id="{{ c.id }}"
+       hx-get="/reply/detail/{{ c.id }}?tab={{ active_tab }}"
+       hx-target="#reply-detail"
+       hx-swap="innerHTML"
+       onclick="document.querySelectorAll('.rw-row').forEach(r=>r.classList.remove('active'));this.classList.add('active')">
+    <div class="rw-row-top">
+      <span class="rw-row-contact">{{ c.contact_name | truncate(20, true, '…') }}</span>
+      <span class="rw-row-date">{{ c.date[:10] if c.date else '' }}</span>
+    </div>
+    <div class="rw-row-subject">{{ c.subject | truncate(50, true, '…') if c.subject else '(no subject)' }}</div>
+    <div class="rw-row-meta">
+      {% if c.reply_status == 'pending' or c.reply_status == 'unset' %}
+        <span class="rw-status-dot rw-status-pending" title="Pending"></span>
+      {% elif c.reply_status == 'drafted' %}
+        <span class="rw-status-dot rw-status-drafted" title="Drafted"></span>
+      {% elif c.reply_status == 'answered' %}
+        <span class="rw-status-dot rw-status-answered" title="Answered"></span>
+      {% else %}
+        <span class="rw-status-dot rw-status-na" title="N/A"></span>
+      {% endif %}
+      {% if c.action_count > 0 %}
+        <span class="rw-action-badge" title="{{ c.action_count }} pending action(s)">{{ c.action_count }}</span>
+      {% endif %}
+      {% if c.draft_count > 0 %}
+        <span class="rw-draft-badge" title="{{ c.draft_count }} draft(s)">D{{ c.draft_count }}</span>
+      {% endif %}
+    </div>
+  </div>
+  {% endfor %}
+{% else %}
+  <div class="empty-state" style="padding:var(--space-8) var(--space-4)">
+    <p class="text-muted" style="font-size:0.85rem">No emails in this tab.</p>
+  </div>
+{% endif %}
+</div>

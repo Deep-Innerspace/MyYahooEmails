@@ -1,0 +1,152 @@
+{# ── Email header ────────────────────────────────────────────────────── #}
+<div class="rw-detail-header">
+  <div class="rw-detail-subject">{{ email.subject or '(no subject)' }}</div>
+  <div class="rw-detail-meta">
+    <span>{{ email.contact_name or email.from_address }}</span>
+    <span class="text-muted"> · {{ email.date[:16] if email.date else '?' }}</span>
+    <span class="badge badge-{% if email.direction == 'sent' %}neutral{% else %}info{% endif %}" style="margin-left:var(--space-2)">
+      {{ email.direction }}
+    </span>
+  </div>
+
+  {# ── Status buttons ─────────────────────────────────────────────── #}
+  <div class="rw-status-bar">
+    <span class="text-muted" style="font-size:0.75rem;text-transform:uppercase;letter-spacing:0.06em">Status:</span>
+    <form style="display:inline" hx-post="/reply/status/{{ email.id }}" hx-target="#reply-detail" hx-swap="innerHTML">
+      <input type="hidden" name="tab" value="{{ active_tab }}">
+      <button type="submit" name="status" value="pending"
+              class="rw-status-btn {% if email.reply_status in ('pending','unset') %}active{% endif %}">
+        Pending</button>
+      <button type="submit" name="status" value="answered"
+              class="rw-status-btn rw-btn-answered {% if email.reply_status == 'answered' %}active{% endif %}">
+        Answered</button>
+      <button type="submit" name="status" value="not_applicable"
+              class="rw-status-btn rw-btn-skip {% if email.reply_status == 'not_applicable' %}active{% endif %}">
+        N/A</button>
+    </form>
+    <a href="/emails/{{ email.id }}" class="btn btn-secondary btn-sm" style="margin-left:auto;font-size:0.75rem" target="_blank">
+      Full email &#8599;</a>
+  </div>
+</div>
+
+{# ── Thread context (collapsible) ──────────────────────────────────── #}
+{% if thread_emails %}
+<details class="rw-section">
+  <summary class="rw-section-title">Thread context ({{ thread_emails | length }} earlier email{{ 's' if thread_emails | length != 1 else '' }})</summary>
+  <div class="rw-thread-list">
+    {% for te in thread_emails %}
+    <div class="rw-thread-item">
+      <div class="rw-thread-meta">
+        <span class="badge badge-{% if te.direction == 'sent' %}neutral{% else %}info{% endif %}">{{ te.direction }}</span>
+        {{ te.from_address }} · {{ te.date[:10] if te.date else '?' }}
+      </div>
+      <div class="rw-thread-body">{{ (te.delta_text or '')[:500] }}{% if (te.delta_text or '') | length > 500 %}…{% endif %}</div>
+    </div>
+    {% endfor %}
+  </div>
+</details>
+{% endif %}
+
+{# ── Email body ────────────────────────────────────────────────────── #}
+<div class="rw-section">
+  <div class="rw-section-title">Email content</div>
+  <div class="rw-email-body">{{ email.delta_text or email.body_text or '(empty)' }}</div>
+</div>
+
+{# ── Pending actions ───────────────────────────────────────────────── #}
+<div class="rw-section">
+  <div class="rw-section-title" style="display:flex;align-items:center;gap:var(--space-3)">
+    Pending Actions
+    <button class="btn btn-secondary btn-sm"
+            hx-post="/reply/actions/{{ email.id }}/extract"
+            hx-target="#actions-panel"
+            hx-swap="innerHTML"
+            hx-indicator="#extract-spinner"
+            style="font-size:0.7rem;padding:2px 8px">
+      Extract with AI
+      <span id="extract-spinner" class="htmx-indicator sync-spinner" style="width:12px;height:12px;margin-left:4px"></span>
+    </button>
+  </div>
+  <div id="actions-panel">
+    {% include "partials/reply_actions.html" %}
+  </div>
+</div>
+
+{# ── Reply composer ────────────────────────────────────────────────── #}
+<div class="rw-section rw-composer">
+  <div class="rw-section-title">Reply Composer</div>
+  <form hx-post="/reply/generate/{{ email.id }}"
+        hx-target="#draft-area"
+        hx-swap="innerHTML"
+        hx-indicator="#gen-spinner">
+
+    <input type="hidden" name="tab" value="{{ active_tab }}">
+
+    <div class="rw-composer-grid">
+      {# Tone selector #}
+      <div class="form-group">
+        <label class="form-label">Tone</label>
+        <select class="form-select" name="tone">
+          {% for value, label in tone_options %}
+          <option value="{{ value }}" {% if value == 'jaf_producible' %}selected{% endif %}>{{ label }}</option>
+          {% endfor %}
+        </select>
+      </div>
+
+      {# Thread depth #}
+      <div class="form-group">
+        <label class="form-label">Thread depth</label>
+        <select class="form-select" name="thread_depth">
+          <option value="0">No context</option>
+          <option value="3">3 emails</option>
+          <option value="5" selected>5 emails</option>
+          <option value="10">10 emails</option>
+        </select>
+      </div>
+    </div>
+
+    {# Memory checkboxes #}
+    {% if memories %}
+    <div class="form-group">
+      <label class="form-label">Memories (context to inject)</label>
+      <div class="rw-memory-grid">
+        {% for m in memories %}
+        <label class="rw-memory-check {% if not m.file_exists %}disabled{% endif %}">
+          <input type="checkbox" name="memory_check" value="{{ m.slug }}"
+                 {% if m.selected %}checked{% endif %}
+                 {% if not m.file_exists %}disabled{% endif %}>
+          <span>{{ m.display_name }}</span>
+          {% if m.file_size > 0 %}
+            <span class="text-muted" style="font-size:0.7rem">({{ (m.file_size / 1024) | round(1) }}kb)</span>
+          {% endif %}
+        </label>
+        {% endfor %}
+      </div>
+    </div>
+    {% endif %}
+    {# Hidden field assembled by JS from checkboxes #}
+    <input type="hidden" name="memory_slugs" id="memory-slugs-field" value="">
+
+    {# Guidelines textarea #}
+    <div class="form-group">
+      <label class="form-label">Specific guidelines for this reply</label>
+      <textarea class="form-input rw-guidelines" name="guidelines" rows="3"
+                placeholder="e.g. Focus on the school schedule contradiction from March 2019. Mention the agreement signed on…"></textarea>
+    </div>
+
+    <button type="submit" class="btn btn-primary rw-btn-generate"
+            onclick="var slugs=[];document.querySelectorAll('input[name=memory_check]:checked').forEach(function(c){slugs.push(c.value)});document.getElementById('memory-slugs-field').value=slugs.join(',');">
+      <span id="gen-spinner" class="htmx-indicator sync-spinner" style="width:14px;height:14px;margin-right:6px"></span>
+      Generate Draft
+    </button>
+  </form>
+</div>
+
+{# ── Draft display area ───────────────────────────────────────────── #}
+<div id="draft-area">
+{% if drafts %}
+  {% for draft in drafts %}
+    {% include "partials/reply_draft_card.html" %}
+  {% endfor %}
+{% endif %}
+</div>

@@ -35,6 +35,26 @@ async def dashboard(
     })
 
 
+@router.post("/set-workspace", response_class=HTMLResponse)
+async def set_workspace(
+    request: Request,
+    workspace: str = Form(...),
+):
+    """Set workspace + derived perspective/corpus cookies, redirect to workspace default."""
+    ws_config = {
+        "correspondence":  ("legal", "all",      "/emails/"),
+        "case-analysis":   ("legal", "personal", "/"),
+        "legal-strategy":  ("legal", "legal",    "/procedures/"),
+        "book":            ("book",  "personal", "/narrative"),
+    }
+    perspective, corpus, default_url = ws_config.get(workspace, ("legal", "personal", "/"))
+    resp = RedirectResponse(url=default_url, status_code=303)
+    resp.set_cookie("workspace", workspace, max_age=86400 * 30)
+    resp.set_cookie("perspective", perspective, max_age=86400 * 30)
+    resp.set_cookie("corpus", corpus, max_age=86400 * 30)
+    return resp
+
+
 @router.post("/set-perspective", response_class=HTMLResponse)
 async def set_perspective(
     request: Request,
