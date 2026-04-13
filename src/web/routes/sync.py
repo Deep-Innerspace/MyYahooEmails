@@ -1,25 +1,22 @@
 """Sync routes — IMAP fetch trigger (personal & legal) with HTMX polling."""
 import json
 import threading
-import uuid
+import traceback
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Dict, List, Optional
 
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
 
 from src.web.deps import get_conn
+from src.web.job_manager import create_job, get_job, update_job
 
 BASE_DIR = Path(__file__).parent.parent
 templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
 
 router = APIRouter()
-
-# ── In-memory job store ────────────────────────────────────────────────────────
-_jobs: Dict[str, Dict[str, Any]] = {}
-_jobs_lock = threading.Lock()
 
 _SKIP_FOLDERS = {
     "Trash", "Draft", "Drafts", "Bulk", "Bulk Mail",
@@ -28,22 +25,11 @@ _SKIP_FOLDERS = {
 _DEFAULT_FOLDERS = ["INBOX", "Sent", "Sent Messages"]
 
 
-def _get_job(job_id: str) -> Dict[str, Any]:
-    with _jobs_lock:
-        return dict(_jobs.get(job_id, {}))
-
-
-def _update_job(job_id: str, **kwargs):
-    with _jobs_lock:
-        if job_id in _jobs:
-            _jobs[job_id].update(kwargs)
-
-
 # ── Background sync worker ─────────────────────────────────────────────────────
 
 def _sync_worker(job_id: str, corpus: str) -> None:
     """Background thread: IMAP fetch since last sync for the given corpus."""
-    _update_job(job_id, status="running", started=datetime.now().isoformat())
+    update_job(job_id, status="running", started=datetime.now().isoformat())
     try:
         from src.extraction.imap_client import (
             imap_connection, search_uids_by_contact, fetch_raw_emails,
@@ -55,18 +41,18 @@ def _sync_worker(job_id: str, corpus: str) -> None:
 
         my_email = yahoo_email()
 
-        if corpus == "personal":
-            role_sql = (
-                "role NOT IN ('my_lawyer','her_lawyer','opposing_counsel','notaire')"
-                " AND role != 'me'"
-            )
-        else:
-            role_sql = "role IN ('my_lawyer','her_lawyer','opposing_counsel','notaire')"
-
         with get_db() as conn:
-            contacts = conn.execute(
-                f"SELECT id, name, email, aliases FROM contacts WHERE {role_sql}"
-            ).fetchall()
+            if corpus == "personal":
+                contacts = conn.execute(
+                    "SELECT id, name, email, aliases FROM contacts"
+                    " WHERE role NOT IN ('my_lawyer','her_lawyer','opposing_counsel','notaire')"
+                    "   AND role != 'me'"
+                ).fetchall()
+            else:
+                contacts = conn.execute(
+                    "SELECT id, name, email, aliases FROM contacts"
+                    " WHERE role IN ('my_lawyer','her_lawyer','opposing_counsel','notaire')"
+                ).fetchall()
             all_combos = conn.execute(
                 "SELECT DISTINCT folder, contact_email FROM fetch_state"
             ).fetchall()
@@ -79,7 +65,7 @@ def _sync_worker(job_id: str, corpus: str) -> None:
         total_stored = 0
         total_skipped = 0
 
-        _update_job(job_id, message="Connecting to Yahoo IMAP…")
+        update_job(job_id, message="Connecting to Yahoo IMAP…")
 
         with imap_connection() as client:
             # List all IMAP folders once for existence checks
@@ -143,7 +129,7 @@ def _sync_worker(job_id: str, corpus: str) -> None:
                     for addr, max_uid in addr_max_uid.items():
                         set_last_uid(folder, max_uid, addr)
 
-                _update_job(
+                update_job(
                     job_id,
                     message=(
                         f"({idx}/{len(contacts)}) {contact_row['name']} — "
@@ -151,7 +137,7 @@ def _sync_worker(job_id: str, corpus: str) -> None:
                     ),
                 )
 
-        _update_job(
+        update_job(
             job_id,
             status="done",
             total_stored=total_stored,
@@ -161,12 +147,11 @@ def _sync_worker(job_id: str, corpus: str) -> None:
         )
 
     except Exception as exc:
-        import traceback as tb
-        _update_job(
+        update_job(
             job_id,
             status="error",
             error=str(exc),
-            detail=tb.format_exc(),
+            detail=traceback.format_exc(),
             finished=datetime.now().isoformat(),
             message=f"Sync failed: {exc}",
         )
@@ -236,26 +221,23 @@ async def run_sync(request: Request, corpus: str):
     if corpus not in ("personal", "legal"):
         return HTMLResponse("<p>Invalid corpus.</p>", status_code=400)
 
-    job_id = str(uuid.uuid4())
-    with _jobs_lock:
-        _jobs[job_id] = {
-            "status": "queued",
-            "corpus": corpus,
-            "message": "Starting…",
-            "total_stored": 0,
-            "total_skipped": 0,
-            "error": None,
-            "started": None,
-            "finished": None,
-        }
-
+    job_id = create_job(
+        status="queued",
+        corpus=corpus,
+        message="Starting…",
+        total_stored=0,
+        total_skipped=0,
+        error=None,
+        started=None,
+        finished=None,
+    )
     threading.Thread(target=_sync_worker, args=(job_id, corpus), daemon=True).start()
 
     return templates.TemplateResponse("partials/sync_status.html", {
         "request": request,
         "job_id": job_id,
         "corpus": corpus,
-        "job": _get_job(job_id),
+        "job": get_job(job_id),
         "recent_emails": [],
     })
 
@@ -266,9 +248,14 @@ async def run_sync(request: Request, corpus: str):
 async def sync_status(
     request: Request, corpus: str, job_id: str, conn=Depends(get_conn)
 ):
-    job = _get_job(job_id)
+    job = get_job(job_id)
     if not job:
-        return HTMLResponse("<p class='text-muted'>Job not found.</p>")
+        return HTMLResponse(
+            "<div class='sync-result sync-result--error'>"
+            "Sync job not found — the server may have restarted. "
+            "Please start a new sync."
+            "</div>"
+        )
 
     recent_emails = []
     if job.get("status") == "done":

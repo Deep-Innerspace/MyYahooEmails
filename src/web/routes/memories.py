@@ -1,10 +1,8 @@
 """Knowledge Base — memory file management routes."""
 import re
 import sqlite3
-import threading
-import uuid
 from pathlib import Path
-from typing import Dict, Optional
+from typing import Optional
 
 from fastapi import APIRouter, Depends, Form, Request
 from fastapi.responses import HTMLResponse
@@ -12,15 +10,12 @@ from fastapi.templating import Jinja2Templates
 
 from src.config import memories_dir
 from src.web.deps import get_conn
+from src.web.job_manager import create_job, get_job, update_job
 
 BASE_DIR = Path(__file__).parent.parent
 templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
 
 router = APIRouter()
-
-# ── Background synthesis jobs ─────────────────────────────────────────────────
-_jobs: Dict[str, dict] = {}
-_jobs_lock = threading.Lock()
 
 # ── Section headings preserved in every memory file ──────────────────────────
 _CANONICAL_SECTIONS = [
@@ -239,40 +234,31 @@ async def synthesize_memory(
     if not row:
         return HTMLResponse("<p>Memory not found.</p>", status_code=404)
 
-    job_id = str(uuid.uuid4())
-    with _jobs_lock:
-        _jobs[job_id] = {"status": "running", "slug": slug, "result": None, "error": None}
+    job_id = create_job(
+        status="running",
+        slug=slug,
+        result=None,
+        error=None,
+    )
 
     since_val = since.strip() or None
 
     def _worker():
         try:
             from src.storage.database import get_db
-            from src.analysis.memory_synthesizer import (
-                synthesize_topic_memory, diff_sections,
-            )
-            from pathlib import Path as _Path
+            from src.analysis.memory_synthesizer import synthesize_topic_memory, diff_sections
 
             with get_db() as wconn:
-                proposed = synthesize_topic_memory(
-                    wconn, slug, since=since_val
-                )
+                proposed = synthesize_topic_memory(wconn, slug, since=since_val)
 
             fpath = _get_file_path(row)
             diffs = diff_sections(fpath, proposed)
-            with _jobs_lock:
-                _jobs[job_id]["status"] = "done"
-                _jobs[job_id]["result"] = {
-                    "diffs": [
-                        {"header": h, "old": o, "new": n}
-                        for h, o, n in diffs
-                    ],
-                    "slug": slug,
-                }
+            update_job(job_id, status="done", result={
+                "diffs": [{"header": h, "old": o, "new": n} for h, o, n in diffs],
+                "slug": slug,
+            })
         except Exception as exc:
-            with _jobs_lock:
-                _jobs[job_id]["status"] = "error"
-                _jobs[job_id]["error"] = str(exc)
+            update_job(job_id, status="error", error=str(exc))
 
     threading.Thread(target=_worker, daemon=True).start()
 
@@ -292,10 +278,16 @@ async def poll_synthesis(
     job_id: str,
     conn: sqlite3.Connection = Depends(get_conn),
 ):
-    with _jobs_lock:
-        job = _jobs.get(job_id, {})
+    job = get_job(job_id)
 
-    if not job or job["status"] == "running":
+    if not job:
+        return HTMLResponse(
+            '<div class="mem-save-feedback mem-save-err">'
+            '⚠ Synthesis job not found — the server may have restarted. '
+            'Please start a new synthesis.</div>'
+        )
+
+    if job["status"] == "running":
         return templates.TemplateResponse("partials/memory_synthesizing.html", {
             "request": request,
             "job_id": job_id,

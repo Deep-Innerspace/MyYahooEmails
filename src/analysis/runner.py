@@ -6,9 +6,17 @@ Handles:
 - Batching emails for LLM calls
 - Storing results with full traceability
 - Resuming interrupted runs (skip already-analyzed)
+
+All write helpers accept an optional ``conn`` parameter.  When provided, the
+caller is responsible for the transaction (commit/rollback) — no extra
+``get_db()`` context is opened, avoiding redundant round-trips during bulk
+analysis passes.  When ``conn`` is None, the helper opens its own short-lived
+connection (backward-compatible with CLI callers).
 """
 import hashlib
 import json
+import sqlite3
+from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable, Dict, Generator, List, Optional
@@ -33,6 +41,18 @@ def prompt_hash(prompt_text: str) -> str:
     return hashlib.sha256(prompt_text.encode()).hexdigest()[:16]
 
 
+# ─────────────────────────── CONNECTION HELPER ───────────────────────────────
+
+@contextmanager
+def _conn_or_new(conn: Optional[sqlite3.Connection]):
+    """Yield *conn* if provided, otherwise open a fresh get_db() context."""
+    if conn is not None:
+        yield conn
+    else:
+        with get_db() as fresh:
+            yield fresh
+
+
 # ─────────────────────────── RUN LIFECYCLE ───────────────────────────────────
 
 def create_run(
@@ -42,10 +62,11 @@ def create_run(
     prompt_text: str,
     prompt_version: str = "v1",
     notes: str = "",
+    conn: Optional[sqlite3.Connection] = None,
 ) -> int:
     """Insert a new analysis_run row and return its ID."""
-    with get_db() as conn:
-        cur = conn.execute(
+    with _conn_or_new(conn) as c:
+        cur = c.execute(
             """INSERT INTO analysis_runs
                (analysis_type, provider_name, model_id, prompt_hash, prompt_version, status, notes)
                VALUES (?, ?, ?, ?, ?, 'running', ?)""",
@@ -55,18 +76,27 @@ def create_run(
         return cur.lastrowid
 
 
-def finish_run(run_id: int, status: str = "complete", email_count: int = 0) -> None:
-    with get_db() as conn:
-        conn.execute(
+def finish_run(
+    run_id: int,
+    status: str = "complete",
+    email_count: int = 0,
+    conn: Optional[sqlite3.Connection] = None,
+) -> None:
+    with _conn_or_new(conn) as c:
+        c.execute(
             "UPDATE analysis_runs SET status=?, email_count=? WHERE id=?",
             (status, email_count, run_id),
         )
 
 
-def already_analyzed(run_id: int, email_id: int) -> bool:
+def already_analyzed(
+    run_id: int,
+    email_id: int,
+    conn: Optional[sqlite3.Connection] = None,
+) -> bool:
     """True if this email already has a result for this run."""
-    with get_db() as conn:
-        row = conn.execute(
+    with _conn_or_new(conn) as c:
+        row = c.execute(
             "SELECT id FROM analysis_results WHERE run_id=? AND email_id=?",
             (run_id, email_id),
         ).fetchone()
@@ -78,9 +108,10 @@ def store_result(
     email_id: int,
     result_json: str,
     sender_contact_id: Optional[int] = None,
+    conn: Optional[sqlite3.Connection] = None,
 ) -> None:
-    with get_db() as conn:
-        conn.execute(
+    with _conn_or_new(conn) as c:
+        c.execute(
             """INSERT OR REPLACE INTO analysis_results
                (run_id, email_id, sender_contact_id, result_json)
                VALUES (?, ?, ?, ?)""",
@@ -92,28 +123,29 @@ def store_topics_for_email(
     email_id: int,
     topics: List[Dict[str, Any]],
     run_id: int,
+    conn: Optional[sqlite3.Connection] = None,
 ) -> None:
     """Link email to topics after classification."""
-    with get_db() as conn:
+    with _conn_or_new(conn) as c:
         for t in topics:
             topic_name = t.get("name", "")
             confidence = float(t.get("confidence", 1.0))
-            row = conn.execute(
+            row = c.execute(
                 "SELECT id FROM topics WHERE name=?", (topic_name,)
             ).fetchone()
             if not row:
                 # Auto-create AI-discovered topic
-                cur = conn.execute(
+                cur = c.execute(
                     "INSERT OR IGNORE INTO topics (name, description, is_user_defined) VALUES (?,?,0)",
                     (topic_name, ""),
                 )
-                topic_id = cur.lastrowid or conn.execute(
+                topic_id = cur.lastrowid or c.execute(
                     "SELECT id FROM topics WHERE name=?", (topic_name,)
                 ).fetchone()["id"]
             else:
                 topic_id = row["id"]
 
-            conn.execute(
+            c.execute(
                 """INSERT OR REPLACE INTO email_topics (email_id, topic_id, confidence, run_id)
                    VALUES (?, ?, ?, ?)""",
                 (email_id, topic_id, confidence, run_id),
@@ -124,10 +156,11 @@ def store_timeline_events(
     run_id: int,
     email_id: int,
     events: List[Dict[str, Any]],
+    conn: Optional[sqlite3.Connection] = None,
 ) -> None:
-    with get_db() as conn:
+    with _conn_or_new(conn) as c:
         for ev in events:
-            conn.execute(
+            c.execute(
                 """INSERT INTO timeline_events
                    (run_id, email_id, event_date, event_type, description, significance)
                    VALUES (?, ?, ?, ?, ?, ?)""",
@@ -142,30 +175,34 @@ def store_timeline_events(
             )
 
 
-def store_contradictions(run_id: int, contradictions: List[Dict[str, Any]]) -> None:
-    with get_db() as conn:
-        for c in contradictions:
+def store_contradictions(
+    run_id: int,
+    contradictions: List[Dict[str, Any]],
+    conn: Optional[sqlite3.Connection] = None,
+) -> None:
+    with _conn_or_new(conn) as c:
+        for contradiction in contradictions:
             # Resolve topic ID if provided
             topic_id = None
-            if c.get("topic"):
-                row = conn.execute(
-                    "SELECT id FROM topics WHERE name=?", (c["topic"],)
+            if contradiction.get("topic"):
+                row = c.execute(
+                    "SELECT id FROM topics WHERE name=?", (contradiction["topic"],)
                 ).fetchone()
                 if row:
                     topic_id = row["id"]
 
-            conn.execute(
+            c.execute(
                 """INSERT INTO contradictions
                    (run_id, email_id_a, email_id_b, scope, topic_id, explanation, severity)
                    VALUES (?, ?, ?, ?, ?, ?, ?)""",
                 (
                     run_id,
-                    c["email_id_a"],
-                    c["email_id_b"],
-                    c.get("scope", "intra-sender"),
+                    contradiction["email_id_a"],
+                    contradiction["email_id_b"],
+                    contradiction.get("scope", "intra-sender"),
                     topic_id,
-                    c.get("explanation", ""),
-                    c.get("severity", "medium"),
+                    contradiction.get("explanation", ""),
+                    contradiction.get("severity", "medium"),
                 ),
             )
 
@@ -298,7 +335,6 @@ def get_classification_summaries(
         results = []
         for r in rows:
             data = json.loads(r["result_json"])
-            # Extract topic names from the classification result
             topic_names = [t.get("name", "") for t in data.get("topics", [])]
             results.append({
                 "id": r["id"],
@@ -321,7 +357,6 @@ def batch(items: list, size: int) -> Generator[list, None, None]:
 def parse_json_response(text: str) -> Any:
     """Extract JSON from LLM response, stripping any markdown fences."""
     text = text.strip()
-    # Remove ```json ... ``` fences if present
     if text.startswith("```"):
         lines = text.split("\n")
         text = "\n".join(

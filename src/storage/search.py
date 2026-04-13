@@ -3,25 +3,18 @@ import json
 from datetime import datetime
 from typing import List, Optional
 
-from src.storage.database import get_db
+from src.storage.database import expand_contact_addresses, get_db
+
+
+def _escape_like(value: str) -> str:
+    """Escape SQLite LIKE special characters (%, _, \\) so the value is matched literally."""
+    return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
 
 
 def all_addresses_for_contact(contact_email: str) -> List[str]:
     """Return the primary address + all aliases for a contact (for multi-address search)."""
     with get_db() as conn:
-        row = conn.execute(
-            "SELECT email, aliases FROM contacts WHERE email=?", (contact_email.lower(),)
-        ).fetchone()
-        if row:
-            aliases = json.loads(row["aliases"] or "[]")
-            return [row["email"]] + aliases
-        # Also check if it's an alias of another contact
-        all_contacts = conn.execute("SELECT email, aliases FROM contacts").fetchall()
-        for c in all_contacts:
-            aliases = json.loads(c["aliases"] or "[]")
-            if contact_email.lower() in [a.lower() for a in aliases]:
-                return [c["email"]] + aliases
-    return [contact_email.lower()]
+        return expand_contact_addresses(conn, contact_email)
 
 
 def search_emails(
@@ -57,8 +50,13 @@ def search_emails(
             addrs = all_addresses_for_contact(contact_email)
             addr_clauses = []
             for addr in addrs:
-                addr_clauses.append("(e.from_address = ? OR e.to_addresses LIKE ? OR e.cc_addresses LIKE ?)")
-                params += [addr, f"%{addr}%", f"%{addr}%"]
+                escaped = _escape_like(addr)
+                addr_clauses.append(
+                    "(e.from_address = ?"
+                    " OR e.to_addresses LIKE ? ESCAPE '\\'"
+                    " OR e.cc_addresses LIKE ? ESCAPE '\\')"
+                )
+                params += [addr, f"%{escaped}%", f"%{escaped}%"]
             wheres.append("(" + " OR ".join(addr_clauses) + ")")
 
         if direction:
@@ -121,8 +119,13 @@ def count_emails(
             addrs = all_addresses_for_contact(contact_email)
             addr_clauses = []
             for addr in addrs:
-                addr_clauses.append("(from_address = ? OR to_addresses LIKE ? OR cc_addresses LIKE ?)")
-                params += [addr, f"%{addr}%", f"%{addr}%"]
+                escaped = _escape_like(addr)
+                addr_clauses.append(
+                    "(from_address = ?"
+                    " OR to_addresses LIKE ? ESCAPE '\\'"
+                    " OR cc_addresses LIKE ? ESCAPE '\\')"
+                )
+                params += [addr, f"%{escaped}%", f"%{escaped}%"]
             wheres.append("(" + " OR ".join(addr_clauses) + ")")
         if direction:
             wheres.append("direction=?")

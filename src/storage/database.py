@@ -1,11 +1,20 @@
 """SQLite database setup, migrations, and connection management."""
 import json
+import logging
 import sqlite3
+import threading
+import warnings
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Generator, List, Optional
 
 from src.config import db_path
+
+logger = logging.getLogger(__name__)
+
+# Serialise concurrent migration runs within a single process (e.g. multi-threaded
+# uvicorn workers both calling init_db() at startup).
+_migration_lock = threading.Lock()
 
 
 def _connect(path: Path) -> sqlite3.Connection:
@@ -14,6 +23,9 @@ def _connect(path: Path) -> sqlite3.Connection:
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA foreign_keys=ON")
     conn.execute("PRAGMA temp_store=MEMORY")
+    # Cap WAL file size at 64 MB so it does not grow unboundedly under concurrent writes.
+    conn.execute("PRAGMA journal_size_limit=67108864")
+    conn.execute("PRAGMA wal_autocheckpoint=1000")
     return conn
 
 
@@ -550,32 +562,70 @@ _MIGRATIONS = [
 ]
 
 
+def _split_sql(sql: str) -> list:
+    """Split a SQL script into individual non-empty statements.
+
+    Uses simple semicolon splitting — sufficient for our migration scripts
+    which contain no semicolons inside string literals.
+    """
+    return [s.strip() for s in sql.split(";") if s.strip()]
+
+
 def _run_migrations(conn: sqlite3.Connection) -> None:
-    """Apply pending migrations. Safe to call repeatedly."""
-    conn.execute("""
-        CREATE TABLE IF NOT EXISTS schema_version (
-            migration_id  INTEGER PRIMARY KEY,
-            description   TEXT NOT NULL,
-            applied_at    TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
-        )
-    """)
-    applied = {r[0] for r in conn.execute("SELECT migration_id FROM schema_version").fetchall()}
-    for mid, desc, sql in _MIGRATIONS:
-        if mid in applied:
-            continue
-        try:
-            conn.executescript(sql)
-        except sqlite3.OperationalError as e:
-            # Skip "duplicate column" errors for idempotency
-            if "duplicate column" in str(e).lower():
-                pass
-            else:
+    """Apply pending migrations.
+
+    Each migration is executed atomically: the migration SQL *and* the
+    schema_version INSERT are wrapped in a SAVEPOINT so a partial failure
+    rolls back both.  A module-level lock prevents concurrent calls from
+    the same process from double-applying a migration.
+    """
+    with _migration_lock:
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS schema_version (
+                migration_id  INTEGER PRIMARY KEY,
+                description   TEXT NOT NULL,
+                applied_at    TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        conn.commit()
+
+        applied = {r[0] for r in conn.execute("SELECT migration_id FROM schema_version").fetchall()}
+
+        for mid, desc, sql in _MIGRATIONS:
+            if mid in applied:
+                continue
+
+            sp = f"mig_{mid}"
+            conn.execute(f"SAVEPOINT {sp}")
+            try:
+                for stmt in _split_sql(sql):
+                    conn.execute(stmt)
+                conn.execute(
+                    "INSERT INTO schema_version (migration_id, description) VALUES (?, ?)",
+                    (mid, desc),
+                )
+                conn.execute(f"RELEASE SAVEPOINT {sp}")
+                conn.commit()
+            except sqlite3.OperationalError as e:
+                conn.execute(f"ROLLBACK TO SAVEPOINT {sp}")
+                conn.execute(f"RELEASE SAVEPOINT {sp}")
+                if "duplicate column" in str(e).lower() or "already exists" in str(e).lower():
+                    warnings.warn(
+                        f"Migration {mid} '{desc}' skipped (already applied): {e}",
+                        stacklevel=2,
+                    )
+                    # Mark as applied so it is not retried on the next startup.
+                    conn.execute(
+                        "INSERT OR IGNORE INTO schema_version (migration_id, description) VALUES (?, ?)",
+                        (mid, desc),
+                    )
+                    conn.commit()
+                else:
+                    raise
+            except Exception:
+                conn.execute(f"ROLLBACK TO SAVEPOINT {sp}")
+                conn.execute(f"RELEASE SAVEPOINT {sp}")
                 raise
-        conn.execute(
-            "INSERT INTO schema_version (migration_id, description) VALUES (?, ?)",
-            (mid, desc),
-        )
-    conn.commit()
 
 
 def init_db() -> None:
@@ -587,8 +637,10 @@ def init_db() -> None:
     # Seed reply memories if tables are ready
     try:
         seed_memories()
-    except Exception:
-        pass  # Table may not exist on first-ever run before migration
+    except Exception as exc:
+        # Non-fatal on first-ever run (reply_memories table may not exist yet).
+        warnings.warn(f"seed_memories() skipped: {exc}", stacklevel=2)
+        logger.debug("seed_memories() skipped: %s", exc)
 
 
 def seed_memories() -> None:
@@ -662,6 +714,40 @@ def seed_contacts(contacts_config: List[dict]) -> None:
                        VALUES (?, ?, ?, ?)""",
                     (c["name"], c["email"], c.get("role", "other"), aliases),
                 )
+
+
+def expand_contact_addresses(conn: sqlite3.Connection, email_address: str) -> List[str]:
+    """Return all known email addresses for a contact (primary + aliases).
+
+    Looks up by primary email first; falls back to an alias search using
+    SQLite's json_each() — far faster than a full-table scan + Python loop.
+    Returns [email_address] (lowercased) when no contact is found.
+    """
+    email_lower = email_address.lower()
+
+    row = conn.execute(
+        "SELECT email, aliases FROM contacts WHERE LOWER(email) = ?",
+        (email_lower,),
+    ).fetchone()
+
+    if not row:
+        # Search alias array values via json_each instead of a Python loop scan
+        row = conn.execute(
+            """SELECT c.email, c.aliases
+               FROM contacts c, json_each(c.aliases) je
+               WHERE LOWER(je.value) = ?
+               LIMIT 1""",
+            (email_lower,),
+        ).fetchone()
+
+    if not row:
+        return [email_lower]
+
+    try:
+        aliases: List[str] = json.loads(row["aliases"] or "[]")
+    except (json.JSONDecodeError, TypeError):
+        aliases = []
+    return [row["email"]] + aliases
 
 
 def get_last_uid(folder: str, contact_email: str = "") -> int:

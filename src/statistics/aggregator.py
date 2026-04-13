@@ -29,24 +29,8 @@ def _period_expr(by: str) -> str:
 
 def _contact_addresses(conn: sqlite3.Connection, contact_email: str) -> List[str]:
     """Expand a contact email to all known addresses (primary + aliases)."""
-    row = conn.execute(
-        "SELECT email, aliases FROM contacts WHERE email = ?",
-        (contact_email,),
-    ).fetchone()
-    if not row:
-        # Try aliases
-        row = conn.execute(
-            "SELECT email, aliases FROM contacts WHERE aliases LIKE ?",
-            (f"%{contact_email}%",),
-        ).fetchone()
-    if not row:
-        return [contact_email]
-    addrs = [row["email"]]
-    try:
-        addrs.extend(json.loads(row["aliases"]))
-    except (json.JSONDecodeError, TypeError):
-        pass
-    return addrs
+    from src.storage.database import expand_contact_addresses
+    return expand_contact_addresses(conn, contact_email)
 
 
 def _contact_where(conn: sqlite3.Connection, contact_email: Optional[str],

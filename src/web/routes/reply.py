@@ -2,26 +2,21 @@
 import json
 import sqlite3
 import threading
-import uuid
-from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import List, Optional
 
 from fastapi import APIRouter, Depends, Form, Query, Request
 from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
 
 from src.web.deps import get_conn
+from src.web.job_manager import create_job, get_job, update_job
 from src.config import memories_dir
 
 BASE_DIR = Path(__file__).parent.parent
 templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
 
 router = APIRouter()
-
-# ── Background job store (same pattern as sync) ──────────────────────────────
-_jobs = {}  # type: Dict[str, Dict[str, Any]]
-_jobs_lock = threading.Lock()
 
 _VALID_TABS = ("pending", "drafted", "answered", "na", "all")
 
@@ -143,12 +138,17 @@ def _get_memories(conn: sqlite3.Connection, email_id: Optional[int] = None):
     for m in memories:
         d = dict(m)
         d["selected"] = m["slug"] in auto_selected
-        # Check file exists and get size
+        # Check file exists and get size — single stat() call
         fpath = Path(m["file_path"])
         if not fpath.is_absolute():
             fpath = memories_dir() / fpath.name
-        d["file_exists"] = fpath.exists()
-        d["file_size"] = fpath.stat().st_size if fpath.exists() else 0
+        try:
+            st = fpath.stat()
+            d["file_exists"] = True
+            d["file_size"] = st.st_size
+        except OSError:
+            d["file_exists"] = False
+            d["file_size"] = 0
         result.append(d)
 
     return result
@@ -332,14 +332,12 @@ async def generate_draft(
 ):
     slugs = [s.strip() for s in memory_slugs.split(",") if s.strip()]
 
-    job_id = str(uuid.uuid4())
-    with _jobs_lock:
-        _jobs[job_id] = {
-            "status": "running",
-            "email_id": email_id,
-            "result": None,
-            "error": None,
-        }
+    job_id = create_job(
+        status="running",
+        email_id=email_id,
+        result=None,
+        error=None,
+    )
 
     def _worker():
         try:
@@ -354,13 +352,9 @@ async def generate_draft(
                     memory_slugs=slugs,
                     thread_depth=thread_depth,
                 )
-            with _jobs_lock:
-                _jobs[job_id]["status"] = "done"
-                _jobs[job_id]["result"] = result
+            update_job(job_id, status="done", result=result)
         except Exception as exc:
-            with _jobs_lock:
-                _jobs[job_id]["status"] = "error"
-                _jobs[job_id]["error"] = str(exc)
+            update_job(job_id, status="error", error=str(exc))
 
     threading.Thread(target=_worker, daemon=True).start()
 
@@ -380,8 +374,14 @@ async def poll_generate(
     tab: Optional[str] = Query("pending"),
     conn: sqlite3.Connection = Depends(get_conn),
 ):
-    with _jobs_lock:
-        job = dict(_jobs.get(job_id, {"status": "unknown"}))
+    job = get_job(job_id)
+
+    if not job:
+        return HTMLResponse(
+            '<div class="sync-result sync-result--error" style="margin-bottom:var(--space-4)">'
+            '<strong>Generation job not found</strong> — the server may have restarted. '
+            'Please try generating again.</div>'
+        )
 
     if job["status"] == "running":
         return templates.TemplateResponse("partials/reply_generating.html", {

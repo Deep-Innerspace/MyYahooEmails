@@ -18,6 +18,7 @@ from src.analysis.runner import (
 from src.config import analysis_batch_size, analysis_skip_if_done, topics as cfg_topics
 from src.llm.groq_provider import GroqDailyLimitError
 from src.llm.router import get_provider
+from src.storage.database import get_db
 
 console = Console()
 
@@ -74,54 +75,56 @@ def run_classification(
 
     classified = skipped = errors = 0
 
-    with tqdm(total=total, desc="  Classifying", unit="email") as pbar:
-        for email_batch in batch(emails, bs):
-            # Build the user prompt
-            batch_input = json.dumps([
-                {
-                    "id": e["id"],
-                    "date": str(e["date"])[:10],
-                    "direction": e["direction"],
-                    "subject": e["subject"],
-                    "delta_text": e["delta_text"][:max_chars],  # Cap per email to control tokens
-                }
-                for e in email_batch
-            ], ensure_ascii=False)
+    # Hold one connection for the entire run — avoids opening/closing per batch.
+    with get_db() as conn:
+        with tqdm(total=total, desc="  Classifying", unit="email") as pbar:
+            for email_batch in batch(emails, bs):
+                # Build the user prompt
+                batch_input = json.dumps([
+                    {
+                        "id": e["id"],
+                        "date": str(e["date"])[:10],
+                        "direction": e["direction"],
+                        "subject": e["subject"],
+                        "delta_text": e["delta_text"][:max_chars],
+                    }
+                    for e in email_batch
+                ], ensure_ascii=False)
 
-            try:
-                response = provider.complete_with_retry(
-                    prompt=batch_input,
-                    system=system_prompt,
-                    max_tokens=1024 + (len(email_batch) * 200),
-                )
-                results = parse_json_response(response.content)
+                try:
+                    response = provider.complete_with_retry(
+                        prompt=batch_input,
+                        system=system_prompt,
+                        max_tokens=1024 + (len(email_batch) * 200),
+                    )
+                    results = parse_json_response(response.content)
 
-                for item in results:
-                    email_id = item["id"]
-                    # Store full result
-                    store_result(run_id, email_id, json.dumps(item))
-                    # Link topics
-                    store_topics_for_email(email_id, item.get("topics", []), run_id)
-                    classified += 1
+                    for item in results:
+                        email_id = item["id"]
+                        store_result(run_id, email_id, json.dumps(item), conn=conn)
+                        store_topics_for_email(email_id, item.get("topics", []), run_id, conn=conn)
+                        classified += 1
+                    conn.commit()
 
-            except GroqDailyLimitError as e:
-                mins = int(e.retry_after_secs // 60)
-                console.print(
-                    f"\n  [bold red]⛔ Groq daily token limit reached.[/bold red] "
-                    f"Retry in ~{mins} min. Run #{run_id} saved as partial "
-                    f"({classified} emails classified so far)."
-                )
-                finish_run(run_id, status="partial", email_count=classified)
-                return {"run_id": run_id, "total": total, "classified": classified,
-                        "skipped": skipped, "errors": errors, "aborted": True}
+                except GroqDailyLimitError as e:
+                    mins = int(e.retry_after_secs // 60)
+                    console.print(
+                        f"\n  [bold red]⛔ Groq daily token limit reached.[/bold red] "
+                        f"Retry in ~{mins} min. Run #{run_id} saved as partial "
+                        f"({classified} emails classified so far)."
+                    )
+                    finish_run(run_id, status="partial", email_count=classified, conn=conn)
+                    conn.commit()
+                    return {"run_id": run_id, "total": total, "classified": classified,
+                            "skipped": skipped, "errors": errors, "aborted": True}
 
-            except Exception as e:
-                console.print(f"\n  [red]Batch error: {e}[/red]")
-                errors += len(email_batch)
+                except Exception as e:
+                    console.print(f"\n  [red]Batch error: {e}[/red]")
+                    errors += len(email_batch)
 
-            pbar.update(len(email_batch))
+                pbar.update(len(email_batch))
 
-    finish_run(run_id, status="complete" if errors == 0 else "partial", email_count=classified)
+        finish_run(run_id, status="complete" if errors == 0 else "partial", email_count=classified, conn=conn)
 
     stats = {"run_id": run_id, "total": total, "classified": classified,
              "skipped": skipped, "errors": errors}

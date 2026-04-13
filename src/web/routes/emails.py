@@ -418,11 +418,29 @@ def _search_with_filters(conn, q, topics, topic_mode, direction, contact,
         LIMIT {PAGE_SIZE} OFFSET {offset}
     """, params).fetchall()
 
-    emails = []
-    for row in rows:
-        e = dict(row)
-        e["topics"] = _get_email_topics(conn, e["id"])
-        emails.append(e)
+    emails = [dict(row) for row in rows]
+
+    # Batch-fetch all topics for the returned page in a single query (avoids N+1).
+    if emails:
+        email_ids = [e["id"] for e in emails]
+        placeholders = ",".join("?" * len(email_ids))
+        topic_rows = conn.execute(
+            f"""SELECT et.email_id, t.name, t.color, et.confidence
+                FROM email_topics et JOIN topics t ON et.topic_id = t.id
+                WHERE et.email_id IN ({placeholders})
+                ORDER BY et.confidence DESC""",
+            email_ids,
+        ).fetchall()
+        topics_by_id: dict = {}
+        for tr in topic_rows:
+            topics_by_id.setdefault(tr["email_id"], []).append(
+                {"name": tr["name"], "color": tr["color"], "confidence": tr["confidence"]}
+            )
+        for e in emails:
+            e["topics"] = topics_by_id.get(e["id"], [])
+    else:
+        for e in emails:
+            e["topics"] = []
 
     return emails, count
 

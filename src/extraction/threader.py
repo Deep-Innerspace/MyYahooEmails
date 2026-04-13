@@ -7,9 +7,12 @@ Priority:
 3. Subject-based grouping (normalized subject)
 """
 import json
+import logging
 import sqlite3
 from datetime import datetime
 from typing import Dict, List, Optional
+
+logger = logging.getLogger(__name__)
 
 from src.storage.database import (
     delta_hash_exists,
@@ -71,19 +74,21 @@ def _update_thread_stats(conn: sqlite3.Connection, thread_id: int) -> None:
 
 
 def resolve_contact_id(conn: sqlite3.Connection, email_address: str) -> Optional[int]:
-    """Find contact ID for an email address (checking aliases too)."""
+    """Find contact ID for an email address (checking aliases via json_each)."""
+    email_lower = email_address.lower()
     row = conn.execute(
-        "SELECT id FROM contacts WHERE email=?", (email_address.lower(),)
+        "SELECT id FROM contacts WHERE LOWER(email) = ?", (email_lower,)
     ).fetchone()
     if row:
         return row["id"]
-    # Check aliases (stored as JSON)
-    all_contacts = conn.execute("SELECT id, aliases FROM contacts").fetchall()
-    for c in all_contacts:
-        aliases = json.loads(c["aliases"] or "[]")
-        if email_address.lower() in [a.lower() for a in aliases]:
-            return c["id"]
-    return None
+    # Alias search via json_each — avoids full-table scan + Python loop
+    row = conn.execute(
+        """SELECT c.id FROM contacts c, json_each(c.aliases) je
+           WHERE LOWER(je.value) = ?
+           LIMIT 1""",
+        (email_lower,),
+    ).fetchone()
+    return row["id"] if row else None
 
 
 def store_email(
@@ -224,7 +229,6 @@ def batch_store_emails(
     batch are tagged with the correct corpus ('personal' or 'legal').
     """
     stats = {"stored": 0, "skipped_duplicate": 0, "skipped_error": 0}
-    last_uid = 0
 
     with get_db() as conn:
         for parsed in parsed_emails:
@@ -234,10 +238,14 @@ def batch_store_emails(
                     stats["stored"] += 1
                 else:
                     stats["skipped_duplicate"] += 1
-                uid = parsed.get("uid", 0)
-                if uid > last_uid:
-                    last_uid = uid
             except Exception as e:
                 stats["skipped_error"] += 1
+                logger.warning(
+                    "Failed to store email uid=%s subject=%r: %s",
+                    parsed.get("uid"),
+                    parsed.get("subject", "")[:60],
+                    e,
+                    exc_info=True,
+                )
 
     return stats

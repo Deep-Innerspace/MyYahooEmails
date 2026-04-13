@@ -19,6 +19,7 @@ from src.analysis.runner import (
 from src.config import analysis_skip_if_done
 from src.llm.groq_provider import GroqDailyLimitError
 from src.llm.router import get_provider
+from src.storage.database import get_db
 
 console = Console()
 
@@ -63,54 +64,56 @@ def run_timeline_extraction(
     sig_levels = {"low": 0, "medium": 1, "high": 2}
     min_sig = sig_levels.get(min_significance, 0)
 
-    with tqdm(total=total, desc="  Extracting events", unit="email") as pbar:
-        for email in emails:
-            email_input = json.dumps({
-                "id": email["id"],
-                "date": str(email["date"])[:10],
-                "direction": email["direction"],
-                "subject": email["subject"],
-                "delta_text": email["delta_text"][:3000],
-            }, ensure_ascii=False)
+    with get_db() as conn:
+        with tqdm(total=total, desc="  Extracting events", unit="email") as pbar:
+            for email in emails:
+                email_input = json.dumps({
+                    "id": email["id"],
+                    "date": str(email["date"])[:10],
+                    "direction": email["direction"],
+                    "subject": email["subject"],
+                    "delta_text": email["delta_text"][:3000],
+                }, ensure_ascii=False)
 
-            try:
-                response = provider.complete_with_retry(
-                    prompt=email_input,
-                    system=system_prompt,
-                    max_tokens=1500,
-                )
-                result = parse_json_response(response.content)
+                try:
+                    response = provider.complete_with_retry(
+                        prompt=email_input,
+                        system=system_prompt,
+                        max_tokens=1500,
+                    )
+                    result = parse_json_response(response.content)
 
-                # Filter events by minimum significance
-                events = [
-                    ev for ev in result.get("events", [])
-                    if sig_levels.get(ev.get("significance", "low"), 0) >= min_sig
-                ]
-                result["events"] = events
+                    events = [
+                        ev for ev in result.get("events", [])
+                        if sig_levels.get(ev.get("significance", "low"), 0) >= min_sig
+                    ]
+                    result["events"] = events
 
-                store_result(run_id, email["id"], json.dumps(result))
-                store_timeline_events(run_id, email["id"], events)
-                events_found += len(events)
-                extracted += 1
+                    store_result(run_id, email["id"], json.dumps(result), conn=conn)
+                    store_timeline_events(run_id, email["id"], events, conn=conn)
+                    conn.commit()
+                    events_found += len(events)
+                    extracted += 1
 
-            except GroqDailyLimitError as e:
-                mins = int(e.retry_after_secs // 60)
-                console.print(
-                    f"\n  [bold red]⛔ Groq daily token limit reached.[/bold red] "
-                    f"Retry in ~{mins} min. Run #{run_id} saved as partial "
-                    f"({extracted} emails processed so far)."
-                )
-                finish_run(run_id, status="partial", email_count=extracted)
-                return {"run_id": run_id, "total": total, "extracted": extracted,
-                        "events_found": events_found, "errors": errors, "aborted": True}
+                except GroqDailyLimitError as e:
+                    mins = int(e.retry_after_secs // 60)
+                    console.print(
+                        f"\n  [bold red]⛔ Groq daily token limit reached.[/bold red] "
+                        f"Retry in ~{mins} min. Run #{run_id} saved as partial "
+                        f"({extracted} emails processed so far)."
+                    )
+                    finish_run(run_id, status="partial", email_count=extracted, conn=conn)
+                    conn.commit()
+                    return {"run_id": run_id, "total": total, "extracted": extracted,
+                            "events_found": events_found, "errors": errors, "aborted": True}
 
-            except Exception as e:
-                console.print(f"\n  [red]Error on email #{email['id']}: {e}[/red]")
-                errors += 1
+                except Exception as e:
+                    console.print(f"\n  [red]Error on email #{email['id']}: {e}[/red]")
+                    errors += 1
 
-            pbar.update(1)
+                pbar.update(1)
 
-    finish_run(run_id, status="complete" if errors == 0 else "partial", email_count=extracted)
+        finish_run(run_id, status="complete" if errors == 0 else "partial", email_count=extracted, conn=conn)
 
     console.print(
         f"\n[bold green]✓ Timeline extraction complete.[/bold green] "

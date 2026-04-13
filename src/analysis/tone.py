@@ -18,6 +18,7 @@ from src.analysis.runner import (
 from src.config import analysis_batch_size, analysis_skip_if_done
 from src.llm.groq_provider import GroqDailyLimitError
 from src.llm.router import get_provider
+from src.storage.database import get_db
 
 console = Console()
 
@@ -61,49 +62,52 @@ def run_tone_analysis(
 
     analyzed = errors = 0
 
-    with tqdm(total=total, desc="  Analysing tone", unit="email") as pbar:
-        for email_batch in batch(emails, bs):
-            batch_input = json.dumps([
-                {
-                    "id": e["id"],
-                    "date": str(e["date"])[:10],
-                    "direction": e["direction"],
-                    "subject": e["subject"],
-                    "delta_text": e["delta_text"][:2000],
-                }
-                for e in email_batch
-            ], ensure_ascii=False)
+    with get_db() as conn:
+        with tqdm(total=total, desc="  Analysing tone", unit="email") as pbar:
+            for email_batch in batch(emails, bs):
+                batch_input = json.dumps([
+                    {
+                        "id": e["id"],
+                        "date": str(e["date"])[:10],
+                        "direction": e["direction"],
+                        "subject": e["subject"],
+                        "delta_text": e["delta_text"][:2000],
+                    }
+                    for e in email_batch
+                ], ensure_ascii=False)
 
-            try:
-                response = provider.complete_with_retry(
-                    prompt=batch_input,
-                    system=system_prompt,
-                    max_tokens=1024 + (len(email_batch) * 150),
-                )
-                results = parse_json_response(response.content)
+                try:
+                    response = provider.complete_with_retry(
+                        prompt=batch_input,
+                        system=system_prompt,
+                        max_tokens=1024 + (len(email_batch) * 150),
+                    )
+                    results = parse_json_response(response.content)
 
-                for item in results:
-                    store_result(run_id, item["id"], json.dumps(item))
-                    analyzed += 1
+                    for item in results:
+                        store_result(run_id, item["id"], json.dumps(item), conn=conn)
+                        analyzed += 1
+                    conn.commit()
 
-            except GroqDailyLimitError as e:
-                mins = int(e.retry_after_secs // 60)
-                console.print(
-                    f"\n  [bold red]⛔ Groq daily token limit reached.[/bold red] "
-                    f"Retry in ~{mins} min. Run #{run_id} saved as partial "
-                    f"({analyzed} emails analysed so far)."
-                )
-                finish_run(run_id, status="partial", email_count=analyzed)
-                return {"run_id": run_id, "total": total, "analyzed": analyzed,
-                        "errors": errors, "aborted": True}
+                except GroqDailyLimitError as e:
+                    mins = int(e.retry_after_secs // 60)
+                    console.print(
+                        f"\n  [bold red]⛔ Groq daily token limit reached.[/bold red] "
+                        f"Retry in ~{mins} min. Run #{run_id} saved as partial "
+                        f"({analyzed} emails analysed so far)."
+                    )
+                    finish_run(run_id, status="partial", email_count=analyzed, conn=conn)
+                    conn.commit()
+                    return {"run_id": run_id, "total": total, "analyzed": analyzed,
+                            "errors": errors, "aborted": True}
 
-            except Exception as e:
-                console.print(f"\n  [red]Batch error: {e}[/red]")
-                errors += len(email_batch)
+                except Exception as e:
+                    console.print(f"\n  [red]Batch error: {e}[/red]")
+                    errors += len(email_batch)
 
-            pbar.update(len(email_batch))
+                pbar.update(len(email_batch))
 
-    finish_run(run_id, status="complete" if errors == 0 else "partial", email_count=analyzed)
+        finish_run(run_id, status="complete" if errors == 0 else "partial", email_count=analyzed, conn=conn)
 
     console.print(
         f"\n[bold green]✓ Tone analysis complete.[/bold green] "
