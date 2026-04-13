@@ -1,0 +1,8 @@
+<div class="mem-synth-running card-body"
+     hx-get="/memories/{{ slug }}/synthesize/poll/{{ job_id }}"
+     hx-trigger="every 3s"
+     hx-swap="outerHTML">
+  <span class="sync-spinner" style="width:14px;height:14px;display:inline-block;margin-right:8px;vertical-align:-3px"></span>
+  Querying corpus and calling LLM…
+  <span style="font-size:0.75rem;color:var(--text-muted);margin-left:8px">This may take 20–40 seconds.</span>
+</div>

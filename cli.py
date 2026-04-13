@@ -2510,6 +2510,156 @@ def analyze_import_results(excel_file, analysis_type, provider, model):
 
 
 # ═══════════════════════════════════════════════════════════════════════════
+#  MEMORIES — Knowledge base management & synthesis
+# ═══════════════════════════════════════════════════════════════════════════
+
+@cli.group()
+def memories():
+    """Manage memory files used by the Reply Command Center."""
+
+
+@memories.command("list")
+def memories_list():
+    """List all memory files with their size and last-updated date."""
+    from src.storage.database import get_db
+    with get_db() as conn:
+        rows = conn.execute(
+            "SELECT slug, display_name, file_path, description FROM reply_memories ORDER BY slug"
+        ).fetchall()
+
+    from pathlib import Path
+    import re
+    table = Table(show_header=True, header_style="bold")
+    table.add_column("Slug")
+    table.add_column("Name")
+    table.add_column("Size")
+    table.add_column("Updated")
+    table.add_column("Description")
+
+    for r in rows:
+        fpath = Path(r["file_path"])
+        if fpath.exists():
+            size = "{:.1f} kb".format(fpath.stat().st_size / 1024)
+            text = fpath.read_text(encoding="utf-8")
+            m = re.search(r"updated=(\S+)", text)
+            updated = m.group(1) if m else "—"
+        else:
+            size = "[red]missing[/red]"
+            updated = "—"
+        table.add_row(r["slug"], r["display_name"], size, updated, r["description"] or "")
+
+    console.print(table)
+
+
+@memories.command("synthesize")
+@click.option("--topic", required=True, help="Topic name to synthesize (e.g. enfants, vacances).")
+@click.option("--since", default=None, help="Only use emails since this date (YYYY-MM-DD).")
+@click.option("--provider", default=None, help="LLM provider override (claude, groq, openai).")
+@click.option("--auto-accept", is_flag=True, help="Accept all proposed changes without review.")
+def memories_synthesize(topic, since, provider, auto_accept):
+    """
+    Synthesize a memory file from existing corpus analysis.
+
+    Queries classification summaries, tone scores, manipulation patterns,
+    timeline events, and contradictions — then proposes structured updates
+    to the topic memory file. No raw emails are re-read.
+    """
+    from src.storage.database import get_db
+    from src.analysis.memory_synthesizer import (
+        synthesize_topic_memory, diff_sections, apply_section_updates,
+        _parse_sections_from_text,
+    )
+    from src.config import memories_dir
+    from pathlib import Path
+
+    # Resolve memory file path from DB
+    with get_db() as conn:
+        row = conn.execute(
+            "SELECT slug, display_name, file_path FROM reply_memories WHERE slug = ?",
+            (topic,)
+        ).fetchone()
+
+    if not row:
+        # Try to find by topic name match
+        console.print(f"[yellow]No memory entry found for slug '{topic}'. "
+                      f"Run 'python cli.py init' or check available slugs with 'memories list'.[/yellow]")
+        raise SystemExit(1)
+
+    mem_path = Path(row["file_path"])
+    if not mem_path.is_absolute():
+        mem_path = memories_dir() / mem_path.name
+
+    console.print(f"\n[bold]Synthesizing memory: {row['display_name']}[/bold]")
+    console.print(f"File: {mem_path}")
+    if since:
+        console.print(f"Using emails since: {since}")
+    console.print()
+
+    # Run synthesis
+    with get_db() as conn:
+        with console.status("[cyan]Querying corpus and calling LLM…[/cyan]"):
+            proposed_text = synthesize_topic_memory(
+                conn, topic, since=since, provider_override=provider
+            )
+
+    # Compute section diffs
+    diffs = diff_sections(mem_path, proposed_text)
+
+    if not diffs:
+        console.print("[green]✓ No changes proposed — memory file is already up to date.[/green]")
+        return
+
+    console.print(f"[bold]{len(diffs)} section(s) with proposed changes:[/bold]\n")
+
+    accepted_updates = {}
+
+    for header, old_body, new_body in diffs:
+        console.rule(f"[bold cyan]## {header}[/bold cyan]")
+
+        if old_body:
+            console.print("[dim]── CURRENT ──────────────────[/dim]")
+            console.print(old_body)
+            console.print()
+
+        console.print("[green]── PROPOSED ─────────────────[/green]")
+        console.print(new_body)
+        console.print()
+
+        if auto_accept:
+            accepted_updates[header] = new_body
+            console.print("[green]✓ Auto-accepted[/green]\n")
+            continue
+
+        choice = click.prompt(
+            "  [A]ccept  [E]dit  [S]kip",
+            default="A",
+            show_default=False,
+        ).strip().upper()
+
+        if choice == "A":
+            accepted_updates[header] = new_body
+            console.print("[green]✓ Accepted[/green]\n")
+        elif choice == "E":
+            edited = click.edit(new_body)
+            if edited and edited.strip():
+                accepted_updates[header] = edited.strip()
+                console.print("[green]✓ Edited and accepted[/green]\n")
+            else:
+                console.print("[yellow]No changes — skipped[/yellow]\n")
+        else:
+            console.print("[yellow]Skipped[/yellow]\n")
+
+    if accepted_updates:
+        apply_section_updates(mem_path, accepted_updates)
+        console.print(
+            f"\n[green bold]✓ Memory file updated:[/green bold] {mem_path.name} "
+            f"({len(accepted_updates)} section(s) written)"
+        )
+    else:
+        console.print("\n[yellow]No changes written.[/yellow]")
+
+
+# ═══════════════════════════════════════════════════════════════════════════
 #  WEB — Launch the FastAPI dashboard
 # ═══════════════════════════════════════════════════════════════════════════
 

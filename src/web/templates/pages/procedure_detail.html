@@ -7,6 +7,7 @@
     <a href="/procedures/" style="color:var(--text-muted);text-decoration:none;font-size:var(--font-size-sm)">&larr; Back to procedures</a>
     <h1 class="page-title" style="margin-top:var(--space-2)">{{ proc.name }}</h1>
     <p class="page-subtitle">
+      <span class="badge" style="background:var(--primary);color:#fff;font-weight:700;font-size:.85rem;padding:3px 10px;border-radius:var(--radius);margin-right:var(--space-2)">#{{ proc.id }}</span>
       <span class="status-badge status-{{ proc.status or 'unknown' }}">{{ (proc.status or 'unknown') | title }}</span>
       <span class="badge badge-primary" style="margin-left:var(--space-2)">{{ (proc.procedure_type or 'autre') | replace('_', ' ') | title }}</span>
     </p>
@@ -246,13 +247,17 @@
           <div style="font-size:var(--font-size-sm);color:var(--text-primary);margin-top:3px">{{ ev.custody_arrangement | replace('_',' ') }}</div>
         </div>
         {% endif %}
-        <!-- Obligations count + anchor -->
+        <!-- Obligations — full text -->
         {% if ev.obligations %}
-        <div>
+        <div style="width:100%;margin-top:var(--space-2)">
           <span style="font-size:.68rem;text-transform:uppercase;letter-spacing:.05em;color:var(--text-muted);font-weight:600">Obligations</span>
-          <div style="font-size:var(--font-size-sm);color:var(--text-primary);margin-top:3px">
-            {{ ev.obligations.split('\n') | select | list | length }} item(s)
-          </div>
+          <ul style="margin:var(--space-2) 0 0 var(--space-4);padding:0;font-size:var(--font-size-sm);color:var(--text-primary);line-height:1.6">
+            {% for line in ev.obligations.split('\n') %}
+              {% if line.strip() %}
+              <li>{{ line.strip().lstrip('-•* ') }}</li>
+              {% endif %}
+            {% endfor %}
+          </ul>
         </div>
         {% endif %}
       </div>

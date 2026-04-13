@@ -702,3 +702,43 @@ parsed = raw.parse()  # get the actual response content
 **Rationale**: Both were fully merged; no unmerged commits remained. Git history preserves all work. Future features will branch from main as needed.
 
 **Impact**: `origin/main` is now the only remote branch. Direct commits to main are acceptable for small fixes.
+
+---
+
+## 2026-04-13 — BM25 chunked retrieval for memory injection (not full-file dump)
+
+**Decision**: Split memory markdown files into `## `-bounded sections and use BM25 ranking to select the top-k most relevant sections against the incoming email text, rather than injecting entire memory files verbatim.
+
+**Rationale**: Memory files grow to several KB each. Injecting all files into every reply prompt would waste tokens on irrelevant context (e.g. injecting "Vacation passport dispute" details when composing a reply about a school enrollment email). BM25 selects the 8 most relevant chunks across all files; Quick Context sections (dense fact summaries at the top of each file) are always injected regardless of relevance score.
+
+**Impact**: `src/analysis/reply_generator.py` — `_parse_sections()`, `load_memories_content()`, `_tokenize()`. Requires `rank_bm25` dependency.
+
+---
+
+## 2026-04-13 — party_b_profile always injected regardless of user selection
+
+**Decision**: The adversarial dossier file `party_b_profile.md` is prepended to every reply prompt unconditionally, even when the user hasn't selected it in the memories panel.
+
+**Rationale**: Understanding who you're replying to (manipulation patterns, rhetorical fingerprint, pre-hearing behavior) is relevant to every single email regardless of topic. Making it optional would let users accidentally omit it and get naive replies. The file is kept lean (Quick Context section is the densest part) so the token cost is justified.
+
+**Impact**: `_ALWAYS_INJECT_SLUG = "party_b_profile"` constant in `reply_generator.py`; `load_memories_content()` prepends it before BM25 ranking runs.
+
+---
+
+## 2026-04-13 — Server-side markdown rendering for memory preview (security constraint)
+
+**Decision**: Memory section preview uses a server-side Python renderer (`POST /memories/_preview`) instead of client-side marked.js with `innerHTML`.
+
+**Rationale**: A pre-commit security hook explicitly blocked `innerHTML = marked.parse(body)` as an XSS vector. Memory files contain user-written content (case facts, names, dates) that could include characters that, if rendered client-side unsanitized, would be an injection risk. Server-side rendering with `html.escape()` + a minimal subset renderer eliminates this risk entirely.
+
+**Impact**: `src/web/routes/memories.py` `preview_markdown()` endpoint; `memory_edit.html` uses `fetch('/memories/_preview')` then sets `insertAdjacentHTML` on the server-sanitized response.
+
+---
+
+## 2026-04-13 — Strategic intent as hard LLM constraint (not just guideline)
+
+**Decision**: The "Strategic intent" field in the reply composer is injected into the system prompt as "OBJECTIF STRATÉGIQUE DE CETTE RÉPONSE (contrainte absolue)" — marked as an absolute constraint, placed before tone instructions.
+
+**Rationale**: Intent must override tone if they conflict (e.g. "document a refusal in writing" takes priority over "conciliatory tone"). Placing it after tone would let the model soften the intent. Labelling it `contrainte absolue` signals to the LLM that this overrides everything else.
+
+**Impact**: `build_system_prompt()` in `reply_generator.py`; `intent` column in `reply_drafts` table (Migration 24); `intent` input field in `reply_detail.html` partial.

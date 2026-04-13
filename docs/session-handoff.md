@@ -4,77 +4,107 @@
 
 ---
 
-**Last Updated: 2026-04-12**
+**Last Updated: 2026-04-13**
 
 ## What Was Accomplished This Session
 
-### 1. Northline branding — full interface adaptation
+### 1. SaaS productization architecture
 
-Replaced all old branding and dual Perspective/Corpus toggles with the Northline brand system:
+Designed full multi-tenant architecture for extending Northline to hundreds of paying users:
+- PostgreSQL schema-per-tenant, FastAPI-Users auth, Celery + Redis job queue
+- Encrypted IMAP credentials, Stripe billing, 3-tier pricing (Free / Pro €19 / Premium €39)
+- Hetzner deployment plan (VPS + managed DB + Redis)
+- Stored in `productization.md` (root of project, gitignored)
 
-- **Navigation redesign**: 4 workspace tabs (Correspondence, Case Analysis, Legal Strategy, Book) replace the old Perspective + Corpus toggles. Each workspace implies a corpus and perspective automatically.
-- **`src/web/templates/base.html`**: Complete rewrite — Northline brand mark, icon, workspace tabs with SVG icons, contextual sidebar per workspace, Jinja2 `_ws_map` inference, `body.perspective-*` class, settings icon.
-- **`src/web/static/css/style.css`** (v11): Full CSS variable replacement — Northline Navy `#1E3557`, Signal Amber `#D6A14B` as sole focal accent, Soft Ivory `#F5F2EA` background, Deep Ink for Book workspace (no more green).
-- **`src/web/static/js/app.js`**: Workspace tab click handler, cookie management (workspace + perspective + corpus), on-load sync.
-- **`src/web/app.py`**: `FastAPI(title="Northline")`.
-- **Icons**: Copied `favicon.ico`, `apple-touch-icon.png`, `icon-32.png`, `icon-64.png`, `icon-128.png` to `/static/`.
-- **`docs/branding.md`**: User-written 791-line brand guide.
+### 2. Knowledge base memory enhancement (BM25 retrieval)
 
-### 2. Workspace icon size fix
+Rewrote `src/analysis/reply_generator.py` to use BM25 chunked retrieval based on Karpathy's markdown-as-knowledge-base principle:
 
-Bumped `.ws-icon` from 15px → 18px to match the `1.15rem` Northline brand name height.
+- **`_parse_sections()`**: splits memory files at `## ` boundaries into chunks with `{header, body, is_quick_context, source_name}`
+- **`load_memories_content()`**: Quick Context sections always injected; remaining sections BM25-ranked against incoming email text; `top_k=8` best sections selected
+- **`party_b_profile` always-inject**: prepended to every prompt regardless of user selection
+- **Strategic intent field**: new `intent` input in the reply composer — injected as "OBJECTIF STRATÉGIQUE DE CETTE RÉPONSE (contrainte absolue)" before tone
+- **Migration 24**: `ALTER TABLE reply_drafts ADD COLUMN intent TEXT NOT NULL DEFAULT ''`
 
-### 3. Sync pages — personal and legal IMAP fetch
+### 3. Memory files — real data rewrite
 
-New pages at `/sync/personal` and `/sync/legal` (Correspondence sidebar):
-- **`src/web/routes/sync.py`**: Background-thread IMAP fetch, per-corpus, resumes from `fetch_state` last_uid. HTMX polling for live progress.
-- **`src/web/templates/pages/sync.html`**: Control card with total count + last sync + corpus badge + Sync Now button.
-- **`src/web/templates/partials/sync_status.html`**: HTMX polling partial with spinner → success/error banner.
-- **`src/web/templates/partials/sync_recent.html`**: Last 10 emails table, OOB-refreshed on sync complete.
-- **Bug fixed**: Python 3.9 doesn't support `str | None` union syntax → changed to `Optional[str]`.
+Rewrote all 6 topic memory files with actual corpus data (not template placeholders):
+- `data/memories/general.md` — Quick Context with dense facts, Communication Rules, Legal Awareness, Tone Calibration
+- `data/memories/enfants.md` — 2,225 emails, 3 active procedures (#14 #15), passport blockages
+- `data/memories/finances.md` — Liquidation #12 active, ESSEC 75% judgment, contradiction documented
+- `data/memories/ecole.md` — Jean-Mermoz Dubai blocked without judgment, ESSEC frais
+- `data/memories/logement.md` — 11-year contradiction (email 160 vs email 748), mediation with Sanson
+- `data/memories/vacances.md` — highest aggression topic (avg 0.31), 12 contradiction pairs, 3 passport refusals
 
-### 4. Reply Command Center — full implementation (Phase 7)
+### 4. `party_b_profile.md` adversarial dossier (new file)
 
-New page at `/reply/` (Correspondence sidebar, between All Emails and Sync Personal).
+Created `data/memories/party_b_profile.md` with:
+- 10 manipulation patterns ranked by frequency (children_instrumentalization #1: 142 emails avg 0.53)
+- Pre-hearing behavior: aggression spikes documented
+- Known contradictions by severity
+- Rhetorical fingerprint + what has/hasn't worked
+- Always injected into every reply prompt
 
-#### Database (4 new migrations)
-- **Migration 20**: `reply_status` column on `emails` (`unset`/`pending`/`drafted`/`answered`/`not_applicable`) + index
-- **Migration 21**: `reply_drafts` table — full draft storage with tone, guidelines, memories_used, prompts, LLM metadata
-- **Migration 22**: `pending_actions` table — extracted questions/requests/demands/deadlines/proposals per email
-- **Migration 23**: `reply_memories` table — metadata for topic memory markdown files
+### 5. Corpus synthesis pipeline
 
-#### New Python modules
-- **`src/analysis/reply_generator.py`**: `generate_reply_draft()`, `extract_pending_actions()`, `TONE_CONFIGS` (6 tones: factual, firm, conciliatory, neutral, defensive, jaf_producible), dynamic system/user prompt builders, memory file loading, analysis context injection.
-- **`src/analysis/prompts/reply_draft.txt`**: French legal reply system prompt with JAF-awareness rules.
-- **`src/analysis/prompts/extract_actions.txt`**: LLM prompt to extract pending actions from emails.
+New module `src/analysis/memory_synthesizer.py`:
+- `synthesize_topic_memory()` — gathers summaries, aggression stats, manipulation patterns, timeline events, contradictions, procedures from DB; calls LLM to propose updated memory sections
+- `diff_sections()` — returns `[(header, old_body, new_body)]` for review
+- `apply_section_updates()` — writes approved sections back
 
-#### New web route
-- **`src/web/routes/reply.py`**: 18 routes covering: workspace page, list/detail partials, status management, background LLM generation + polling, draft CRUD (edit/approve/discard), pending actions CRUD + LLM extraction, memories list/read/save/create, bulk auto-triage.
+New prompt: `src/analysis/prompts/memory_synthesis.txt`
 
-#### New templates (8 files)
-- `pages/reply_workspace.html` — split-panel shell, keyboard shortcuts (j/k navigate, a=answered, s=skip, g=generate)
-- `partials/reply_list.html` — left panel with 5-tab strip + status dots + action/draft count badges
-- `partials/reply_detail.html` — right panel: email header, status buttons, collapsible thread context, email body, pending actions, reply composer, draft area
-- `partials/reply_draft_card.html` — versioned draft card with edit/approve/discard/copy
-- `partials/reply_actions.html` — action list with resolve toggle and delete, add form
-- `partials/reply_generating.html` — HTMX polling spinner for LLM generation
-- `partials/reply_memories.html` — memories panel with create form and editor slot
-- `partials/reply_memory_editor.html` — inline markdown editor for a memory file
+New CLI commands (`python cli.py memories`):
+- `memories list` — table with slug, name, file size, updated, description
+- `memories synthesize --topic <slug> [--since DATE] [--provider X] [--auto-accept]` — interactive section-by-section review
 
-#### Memory files seeded
-- `data/memories/general.md` — always-injected communication rules (auto-selected)
-- `data/memories/enfants.md` — children context
-- `data/memories/finances.md` — financial obligations
-- `data/memories/ecole.md` — school matters
-- `data/memories/logement.md` — housing
-- `data/memories/vacances.md` — vacation scheduling
-- `seed_memories()` function in `database.py`, called from `init_db()`
+### 6. Dedicated Knowledge Base web page (`/memories/`)
 
-#### CSS additions
-~150 lines added to `style.css`: `.rw-panels`, `.rw-tab*`, `.rw-row*`, `.rw-status-*`, `.rw-draft-*`, `.rw-composer*`, `.rw-memory*`, `.rw-memories-panel` (fixed slide-out), responsive 900px breakpoint.
+New web page and routes in `src/web/routes/memories.py` (registered in `__init__.py`):
 
-#### Bug fixed during testing
-`sqlite3.Row` doesn't support `.get()` — `email.get("thread_id")` failed in `reply_detail` route. Fixed: `email_dict = dict(email)` then `email_dict.get("thread_id")`.
+**List page** (`GET /memories/`):
+- Card grid: name, slug badge, file size, section count, last-updated, description
+- Edit → and Synthesize buttons per card
+- Inline synthesis result panel (HTMX)
+
+**Edit page** (`GET /memories/{slug}`):
+- Left: sticky section nav (click to switch active section)
+- Right: per-section editor with Edit/Preview tabs
+- Preview POSTs to `/memories/_preview` (server-side rendering — no XSS risk)
+- Raw file editor at bottom
+- Synthesize button with `since` date input
+
+**New routes**:
+- `POST /memories/{slug}/section` — save single section
+- `POST /memories/{slug}/raw` — save full file
+- `POST /memories/{slug}/synthesize` — start background LLM synthesis job
+- `GET /memories/{slug}/synthesize/poll/{job_id}` — HTMX polling
+- `POST /memories/_preview` — server-side markdown renderer
+- `POST /memories/{slug}/synthesize/accept` — accept one diff section
+
+**New templates**:
+- `src/web/templates/pages/memories.html`
+- `src/web/templates/pages/memory_edit.html`
+- `src/web/templates/partials/memory_synthesizing.html`
+- `src/web/templates/partials/memory_diff.html`
+
+`base.html` updated: `'memories': 'correspondence'` in `_ws_map`; "Knowledge Base" nav link added to Correspondence sidebar.
+
+### 7. Procedures page bug fixes
+
+- **Obligations in "Rulings at a Glance"**: was rendering `N item(s)` count; fixed to full bullet list by iterating `ev.obligations.split('\n')` and stripping bullet prefixes
+- **Procedure ID badge**: `#{{ proc.id }}` now visible in both detail header (navy/white, prominent) and list card (subtle navy, next to status badge)
+
+---
+
+## Errors Encountered and Resolutions
+
+| Error | Resolution |
+|---|---|
+| `Write` tool "File has not been read yet" for memory files | Used `Bash cat` to read all files first |
+| Security hook blocked `innerHTML = marked.parse(body)` (XSS) | Created server-side `/memories/_preview` endpoint with Python HTML escaping |
+| `SQLite LEFT() function not found` | SQLite has no `LEFT()` — used Python string slicing `str(r['explanation'])[:120]` |
+| `rich.table.Table` reference error in CLI | `Table` was already imported directly — used `Table(...)` not `rich.table.Table(...)` |
 
 ---
 
@@ -84,7 +114,6 @@ New page at `/reply/` (Correspondence sidebar, between All Emails and Sync Perso
 |---|---|
 | Personal emails | 3,791 |
 | Legal emails | 2,743 |
-| Emails with `reply_status = 'unset'` | 7,301 (all, awaiting first triage) |
 | Personal: classify/tone/manipulation | 100% ✅ |
 | Personal: timeline events | 902 events |
 | Legal: legal_analysis | 2,743/2,743 (100%) ✅ |
@@ -93,60 +122,44 @@ New page at `/reply/` (Correspondence sidebar, between All Emails and Sync Perso
 | MULLER conclusions downloaded | 33/33 ✅ |
 | Lawyer invoices | 37 |
 | Contradictions | 45 pairs |
-| Reply memories | 6 seeded |
-
----
-
-## Current Git State
-
-- Branch: `main`
-- Uncommitted changes: all Phase 7 (Reply Command Center) + branding + sync pages
-- Previous latest commit: `2a31b5c` — docs: session handoff 2026-04-11
+| Reply memories | 7 (6 topic + party_b_profile) |
+| DB migrations applied | 24 |
 
 ---
 
 ## Resume Point for Next Session
 
-### First action: populate the memory files
+### First action: run corpus synthesis for each topic
 
-The 6 memory files in `data/memories/` are seeded with template headers only. Fill them in with actual case facts before generating reply drafts — the quality of LLM replies depends entirely on the accuracy of these memories.
+The memory files have been manually populated with real data. The synthesis pipeline is ready to propose further improvements from the full corpus:
 
-```
-data/memories/general.md       ← already has sensible rules, review/refine
-data/memories/enfants.md       ← fill custody arrangement, key dates, legal position
-data/memories/finances.md      ← fill pension amounts, court rulings, disputed items
-data/memories/ecole.md         ← fill school name, enrollment, transport
-data/memories/logement.md      ← fill current housing situation
-data/memories/vacances.md      ← fill court-ordered holiday schedule
-```
-
-### Second action: run Auto-Triage
-
-On `/reply/`, click **Auto-Triage** to classify the 7,301 unset received emails:
-- Has a later sent email in same thread → **answered**
-- Older than 30 days, no reply → **not_applicable**
-- Recent with no reply → **pending**
-
-### Third action: configure `reply_draft` provider in config.yaml
-
-Ensure `config.yaml` has:
-```yaml
-llm:
-  task_providers:
-    reply_draft: claude   # Claude preferred for reply quality
+```bash
+.venv/bin/python cli.py memories synthesize --topic enfants
+.venv/bin/python cli.py memories synthesize --topic vacances
+.venv/bin/python cli.py memories synthesize --topic finances
+.venv/bin/python cli.py memories synthesize --topic ecole
+.venv/bin/python cli.py memories synthesize --topic logement
+.venv/bin/python cli.py memories synthesize --topic general
 ```
 
-### Then: generate first reply drafts
+Or use the web UI: `/memories/` → Synthesize button per card.
 
-1. Go to Reply Center → pick a pending email
-2. Memories auto-selected based on email topics (General always injected)
-3. Add specific guidelines in the textarea
-4. Click **Generate Draft** → LLM generates in background
-5. Edit in the textarea → **Approve** → **Copy** → send manually
+### Second action: test reply draft quality
+
+1. Go to `/reply/` → pick a pending email (after Auto-Triage if not yet run)
+2. Fill "Strategic intent" field (e.g. "Document passeport refusal, demand 10-day deadline")
+3. Generate draft — verify memory sections are being retrieved correctly
+4. Check that `party_b_profile` content appears in generated prompts
+
+### Third action: productization planning
+
+`productization.md` at project root contains the full SaaS architecture plan. Next step when ready: start a new branch for PostgreSQL migration + auth layer.
 
 ### Quick Start
+
 ```bash
-git status              # verify state
-.venv/bin/python cli.py init    # runs seed_memories() if not yet done
+git log --oneline -5      # verify last commit
 .venv/bin/python cli.py web     # http://127.0.0.1:8000
+# Navigate to /memories/ to review and edit knowledge base
+# Navigate to /reply/ to test reply generation
 ```

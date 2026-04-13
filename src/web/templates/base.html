@@ -16,7 +16,7 @@
 {% set _ws_map = {
   'emails': 'correspondence', 'contacts': 'correspondence',
   'sync_personal': 'correspondence', 'sync_legal': 'correspondence',
-  'reply': 'correspondence',
+  'reply': 'correspondence', 'memories': 'correspondence',
   'dashboard': 'case-analysis', 'timeline': 'case-analysis',
   'analysis': 'case-analysis', 'contradictions': 'case-analysis',
   'manipulation': 'case-analysis', 'reports': 'case-analysis',
@@ -111,6 +111,8 @@
             All Emails</a>
           <a href="/reply/" class="subnav-link {% if page == 'reply' %}active{% endif %}">
             Reply Center</a>
+          <a href="/memories/" class="subnav-link {% if page == 'memories' %}active{% endif %}">
+            Knowledge Base</a>
           <a href="/sync/personal" class="subnav-link {% if page == 'sync_personal' %}active{% endif %}">
             Sync Personal</a>
           <a href="/sync/legal" class="subnav-link {% if page == 'sync_legal' %}active{% endif %}">

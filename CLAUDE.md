@@ -553,7 +553,50 @@ Two-layer protection:
 - Memories slide-out panel with inline markdown editor and file size display
 - Full prompt traceability — every draft stores exact system+user prompts sent to LLM
 
+### ✅ Phase 8 — Knowledge Base Enhancement + Memories Web UI (COMPLETE 2026-04-13)
+
+#### ✅ Phase 8a — BM25 Memory Retrieval (COMPLETE 2026-04-13)
+- **`src/analysis/reply_generator.py`** rewritten with chunked BM25 retrieval (Karpathy markdown-as-knowledge-base principle)
+- Memory files split at `## ` boundaries; Quick Context sections always injected; remaining sections BM25-ranked against incoming email text (`top_k=8`)
+- `party_b_profile.md` always prepended to every prompt via `_ALWAYS_INJECT_SLUG` constant
+- **Strategic intent field**: new `intent` parameter in reply generator — injected as `OBJECTIF STRATÉGIQUE DE CETTE RÉPONSE (contrainte absolue)` before tone instructions
+- **Migration 24**: `ALTER TABLE reply_drafts ADD COLUMN intent TEXT NOT NULL DEFAULT ''`
+- Dependency: `rank_bm25`
+
+#### ✅ Phase 8b — Real Memory Files (COMPLETE 2026-04-13)
+All 6 topic memory files rewritten with actual corpus data:
+- `data/memories/general.md` — dense Quick Context facts, Communication Rules, Legal Awareness, Tone Calibration
+- `data/memories/enfants.md` — 2,225 emails, 3 active procedures (#14 #15), passport blockage history
+- `data/memories/finances.md` — Liquidation #12 active, ESSEC 75% judgment, documented contradiction
+- `data/memories/ecole.md` — Jean-Mermoz Dubai blocked without judgment, ESSEC frais pattern
+- `data/memories/logement.md` — 11-year contradiction (email 160 vs 748), mediation with Sanson active
+- `data/memories/vacances.md` — highest aggression topic (avg 0.31), 12 contradiction pairs, 3 passport refusals
+- **`data/memories/party_b_profile.md`** — new adversarial dossier: 10 manipulation patterns ranked by frequency, pre-hearing behavior, rhetorical fingerprint, what has/hasn't worked
+
+#### ✅ Phase 8c — Corpus Synthesis Pipeline (COMPLETE 2026-04-13)
+- **`src/analysis/memory_synthesizer.py`**: `synthesize_topic_memory()` gathers summaries/aggression/manipulation/events/contradictions/procedures from DB; calls LLM to propose updated memory sections; `diff_sections()` returns `[(header, old, new)]`; `apply_section_updates()` writes approved sections
+- **`src/analysis/prompts/memory_synthesis.txt`**: Synthesis prompt (writes canonical section bodies from structured DB data)
+- **CLI** (`python cli.py memories`):
+  - `memories list` — table with slug, name, size, updated, description
+  - `memories synthesize --topic <slug> [--since DATE] [--provider X] [--auto-accept]` — interactive section-level review
+
+#### ✅ Phase 8d — Knowledge Base Web Page (COMPLETE 2026-04-13)
+- **`src/web/routes/memories.py`**: 8 routes — list, edit, save section, save raw, synthesize (background job), poll, preview markdown, accept diff section
+- **`src/web/templates/pages/memories.html`**: card grid with per-card stats (size, sections, last updated) + Edit/Synthesize actions
+- **`src/web/templates/pages/memory_edit.html`**: 2-column section editor (sticky nav left, Edit/Preview tabs right), raw editor, synthesis trigger
+- **`src/web/templates/partials/memory_synthesizing.html`**: HTMX polling spinner
+- **`src/web/templates/partials/memory_diff.html`**: side-by-side diff with editable proposed textarea; Accept/Skip per section
+- **`src/web/routes/__init__.py`**: registered `memories_router`
+- **`base.html`**: `'memories': 'correspondence'` in `_ws_map`; "Knowledge Base" nav link added to Correspondence sidebar
+- Preview uses server-side Python renderer (security constraint — no client-side innerHTML with user content)
+
+#### ✅ Procedures Page Fixes (2026-04-13)
+- **Obligations in "Rulings at a Glance"**: was rendering item count `N item(s)` — fixed to full bullet list iterating `ev.obligations.split('\n')`
+- **Procedure ID badge**: `#{{ proc.id }}` now visible in both detail header (navy/white prominent) and list cards (subtle navy next to status badge)
+
 ### Web Dashboard Bug Fixes
+- **2026-04-13 — SQLite has no `LEFT()` function**: Query used `LEFT(c.explanation, 120)` for contradiction previews. SQLite doesn't support `LEFT()`. Fix: Python string slicing `str(r['explanation'])[:120]` in the route layer.
+- **2026-04-13 — Server-side markdown render enforced**: Client-side `innerHTML = marked.parse(body)` was blocked by security hook (XSS risk). Created `POST /memories/_preview` endpoint using Python `html.escape()` + minimal subset renderer. Memory preview now uses `fetch('/memories/_preview')` → `insertAdjacentHTML`.
 - **2026-04-12 — `sqlite3.Row` has no `.get()`**: When a route fetches a row with `conn.execute(...).fetchone()`, the result is a `sqlite3.Row` — it supports bracket indexing `row["col"]` but NOT `.get("col")`. Always convert to `dict(row)` before calling `.get()`, or use `row["col"]` directly. Bug surfaced in `reply_detail` route: `email.get("thread_id")` raised `AttributeError`. Fix: `email_dict = dict(email)` then `email_dict.get("thread_id")`.
 - **2026-03-25 — "View email" modal on timeline**: `hx-on::after-swap` added directly to "View email" link in `partials/timeline_list.html`; `href` changed to `#` to prevent fallback navigation. The global `htmx:afterSwap` handler in `app.js` was not reliably firing when the link resided inside a dynamically-swapped HTMX partial.
 - **2026-04-07 — Procedures NOT NULL bug**: `update_procedure` and `create_procedure` routes used `field.strip() or None` which converts empty strings to NULL, violating NOT NULL DEFAULT '' columns. Fixed by removing `or None` for jurisdiction, description, outcome_summary, notes.

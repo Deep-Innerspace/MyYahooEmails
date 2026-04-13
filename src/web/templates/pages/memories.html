@@ -1,0 +1,146 @@
+{% extends "base.html" %}
+{% block title %}Knowledge Base · Northline{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <div>
+    <h1 class="page-title">Knowledge Base</h1>
+    <p class="page-subtitle">Memory files that inform every reply draft. Edit sections or synthesize from the corpus.</p>
+  </div>
+</div>
+
+<div class="page-body">
+  <div class="mem-grid">
+    {% for m in memories %}
+    <div class="mem-card">
+      <div class="mem-card-header">
+        <div>
+          <div class="mem-card-name">{{ m.display_name }}</div>
+          <div class="mem-card-meta">
+            {% if m.topic_name %}
+              <span class="badge badge-neutral" style="font-size:0.65rem">{{ m.topic_name }}</span>
+            {% endif %}
+            {% if m.file_exists %}
+              <span class="text-muted">{{ m.file_size_kb }} kb · {{ m.section_count }} sections · updated {{ m.updated }}</span>
+            {% else %}
+              <span style="color:var(--severity-high);font-size:0.8rem">⚠ file missing</span>
+            {% endif %}
+          </div>
+        </div>
+        <div class="mem-card-badges">
+          {% if m.slug == 'party_b_profile' %}
+            <span class="badge badge-warning" style="font-size:0.65rem">Always injected</span>
+          {% elif m.slug == 'general' %}
+            <span class="badge badge-info" style="font-size:0.65rem">Global</span>
+          {% endif %}
+        </div>
+      </div>
+
+      <div class="mem-card-desc">{{ m.description or '' }}</div>
+
+      <div class="mem-card-actions">
+        <a href="/memories/{{ m.slug }}" class="btn btn-primary btn-sm">
+          Edit sections →
+        </a>
+        <form hx-post="/memories/{{ m.slug }}/synthesize"
+              hx-target="#synth-panel-{{ m.slug }}"
+              hx-swap="innerHTML"
+              hx-indicator="#synth-spinner-{{ m.slug }}"
+              style="display:inline">
+          <button type="submit" class="btn btn-secondary btn-sm">
+            <span id="synth-spinner-{{ m.slug }}" class="htmx-indicator sync-spinner"
+                  style="width:12px;height:12px;margin-right:4px"></span>
+            Synthesize from corpus
+          </button>
+        </form>
+      </div>
+
+      {# Synthesis result panel #}
+      <div id="synth-panel-{{ m.slug }}" style="margin-top:var(--space-3)"></div>
+    </div>
+    {% endfor %}
+  </div>
+
+  {# ── Create new memory ──────────────────────────────────────────────────── #}
+  <div class="card" style="margin-top:var(--space-8)">
+    <div class="card-header">
+      <span class="card-title">Create New Memory File</span>
+    </div>
+    <div class="card-body">
+      <form hx-post="/reply/memories/create"
+            hx-target="#create-result"
+            hx-swap="innerHTML"
+            style="display:grid;grid-template-columns:1fr 1fr 2fr auto;gap:var(--space-3);align-items:end">
+        <div class="form-group" style="margin:0">
+          <label class="form-label">Slug</label>
+          <input class="form-input" name="slug" placeholder="e.g. sante" required>
+        </div>
+        <div class="form-group" style="margin:0">
+          <label class="form-label">Display name</label>
+          <input class="form-input" name="display_name" placeholder="e.g. Santé" required>
+        </div>
+        <div class="form-group" style="margin:0">
+          <label class="form-label">Description</label>
+          <input class="form-input" name="description" placeholder="Medical, health decisions…">
+        </div>
+        <button type="submit" class="btn btn-primary" style="align-self:end">Create</button>
+      </form>
+      <div id="create-result" style="margin-top:var(--space-3)"></div>
+    </div>
+  </div>
+</div>
+
+<style>
+.mem-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(360px, 1fr));
+  gap: var(--space-5);
+}
+.mem-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: var(--space-5);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+.mem-card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: var(--space-3);
+}
+.mem-card-name {
+  font-weight: 600;
+  font-size: 1rem;
+  color: var(--text-primary);
+}
+.mem-card-meta {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  margin-top: 3px;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+.mem-card-badges {
+  flex-shrink: 0;
+}
+.mem-card-desc {
+  font-size: 0.82rem;
+  color: var(--text-muted);
+  line-height: 1.4;
+  min-height: 1em;
+}
+.mem-card-actions {
+  display: flex;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+  margin-top: auto;
+  padding-top: var(--space-2);
+  border-top: 1px solid var(--border);
+}
+</style>
+{% endblock %}

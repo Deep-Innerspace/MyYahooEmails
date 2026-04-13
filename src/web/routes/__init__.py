@@ -16,6 +16,7 @@ from src.web.routes.attachments import router as attachments_router
 from src.web.routes.invoices import router as invoices_router
 from src.web.routes.sync import router as sync_router
 from src.web.routes.reply import router as reply_router
+from src.web.routes.memories import router as memories_router
 
 router = APIRouter()
 router.include_router(dashboard_router)
@@ -33,3 +34,4 @@ router.include_router(attachments_router, prefix="/attachments")
 router.include_router(invoices_router, prefix="/invoices")
 router.include_router(sync_router)
 router.include_router(reply_router)
+router.include_router(memories_router)

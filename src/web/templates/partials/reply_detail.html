@@ -127,11 +127,21 @@
     {# Hidden field assembled by JS from checkboxes #}
     <input type="hidden" name="memory_slugs" id="memory-slugs-field" value="">
 
+    {# Strategic intent — hard constraint injected before tone #}
+    <div class="form-group">
+      <label class="form-label" style="display:flex;align-items:center;gap:6px">
+        Strategic intent
+        <span class="text-muted" style="font-size:0.72rem;font-weight:400">(what must this reply accomplish?)</span>
+      </label>
+      <input type="text" class="form-input" name="intent"
+             placeholder="e.g. Document refusal on passeports, set 10-day deadline for written justification">
+    </div>
+
     {# Guidelines textarea #}
     <div class="form-group">
-      <label class="form-label">Specific guidelines for this reply</label>
-      <textarea class="form-input rw-guidelines" name="guidelines" rows="3"
-                placeholder="e.g. Focus on the school schedule contradiction from March 2019. Mention the agreement signed on…"></textarea>
+      <label class="form-label">Additional guidelines</label>
+      <textarea class="form-input rw-guidelines" name="guidelines" rows="2"
+                placeholder="e.g. Mention the agreement signed on 2023-04-12. Reference ONC ordonnance."></textarea>
     </div>
 
     <button type="submit" class="btn btn-primary rw-btn-generate"

@@ -544,6 +544,9 @@ _MIGRATIONS = [
             created_at      TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
         );
     """),
+    (24, "Add intent column to reply_drafts for strategic per-email objective", """
+        ALTER TABLE reply_drafts ADD COLUMN intent TEXT NOT NULL DEFAULT '';
+    """),
 ]
 
 
@@ -595,6 +598,7 @@ def seed_memories() -> None:
 
     defaults = [
         ("general", "General Guidelines", None, "Always-injected communication rules"),
+        ("party_b_profile", "Partie adverse — Profil", None, "Adversarial profile: manipulation patterns, rhetorical fingerprint, known contradictions"),
         ("enfants", "Enfants", "enfants", "Children: custody, school, vacations"),
         ("finances", "Finances", "finances", "Financial obligations, pensions, division"),
         ("ecole", "School", "ecole", "School enrollment, academic matters"),

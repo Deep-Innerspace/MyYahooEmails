@@ -325,6 +325,7 @@ async def generate_draft(
     email_id: int,
     tone: str = Form("factual"),
     guidelines: str = Form(""),
+    intent: str = Form(""),
     memory_slugs: str = Form(""),
     thread_depth: int = Form(5),
     tab: Optional[str] = Form("pending"),
@@ -349,6 +350,7 @@ async def generate_draft(
                     conn, email_id,
                     tone=tone,
                     guidelines=guidelines,
+                    intent=intent,
                     memory_slugs=slugs,
                     thread_depth=thread_depth,
                 )

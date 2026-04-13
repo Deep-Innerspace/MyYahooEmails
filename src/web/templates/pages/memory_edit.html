@@ -1,0 +1,278 @@
+{% extends "base.html" %}
+{% block title %}{{ memory.display_name }} · Knowledge Base · Northline{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <div style="display:flex;align-items:center;gap:var(--space-3)">
+    <a href="/memories/" class="btn btn-secondary btn-sm">← All memories</a>
+    <div>
+      <h1 class="page-title" style="margin:0">{{ memory.display_name }}</h1>
+      <div style="font-size:0.78rem;color:var(--text-muted);margin-top:2px">
+        {{ memory.slug }}.md
+        {% if memory.file_size_kb %} · {{ memory.file_size_kb }} kb{% endif %}
+        {% if memory.updated != '—' %} · updated {{ memory.updated }}{% endif %}
+      </div>
+    </div>
+  </div>
+
+  {# Synthesize button #}
+  <div style="display:flex;gap:var(--space-3);align-items:center">
+    <form hx-post="/memories/{{ memory.slug }}/synthesize"
+          hx-target="#synth-area"
+          hx-swap="innerHTML"
+          hx-indicator="#synth-spinner"
+          style="display:flex;gap:var(--space-2);align-items:center">
+      <input class="form-input" name="since" placeholder="since (YYYY-MM-DD, optional)"
+             style="width:200px;font-size:0.8rem">
+      <button type="submit" class="btn btn-primary">
+        <span id="synth-spinner" class="htmx-indicator sync-spinner"
+              style="width:14px;height:14px;margin-right:6px"></span>
+        Synthesize from corpus
+      </button>
+    </form>
+  </div>
+</div>
+
+<div class="page-body">
+  {# ── Synthesis result area ────────────────────────────────────────────── #}
+  <div id="synth-area" style="margin-bottom:var(--space-6)"></div>
+
+  {# ── Two-column editor ────────────────────────────────────────────────── #}
+  <div class="mem-edit-layout">
+
+    {# Left: section list #}
+    <div class="mem-section-nav">
+      <div class="mem-section-nav-title">Sections</div>
+      {% for s in sections %}
+      <a class="mem-section-nav-link" href="#section-{{ loop.index }}"
+         onclick="showSection({{ loop.index - 1 }});return false;">
+        {{ s.header }}
+      </a>
+      {% endfor %}
+      <div style="margin-top:var(--space-4);padding-top:var(--space-4);border-top:1px solid var(--border)">
+        <div class="mem-section-nav-title">Raw file</div>
+        <a class="mem-section-nav-link" href="#raw-editor"
+           onclick="showRaw();return false;">
+          Edit raw markdown
+        </a>
+      </div>
+    </div>
+
+    {# Right: editors (only one visible at a time) #}
+    <div class="mem-editors">
+
+      {# Section editors #}
+      {% for s in sections %}
+      <div class="mem-section-panel" id="section-panel-{{ loop.index - 1 }}"
+           style="{% if not loop.first %}display:none{% endif %}">
+        <div class="mem-section-panel-header">
+          <h2 class="mem-section-title">{{ s.header }}</h2>
+          <div id="save-feedback-{{ loop.index - 1 }}" style="font-size:0.8rem"></div>
+        </div>
+
+        {# Preview / Edit toggle #}
+        <div class="mem-tab-bar">
+          <button class="mem-tab active" onclick="switchTab(this,'edit',{{ loop.index - 1 }})">Edit</button>
+          <button class="mem-tab" onclick="switchTab(this,'preview',{{ loop.index - 1 }})">Preview</button>
+        </div>
+
+        {# Edit mode #}
+        <div class="mem-tab-content" id="edit-{{ loop.index - 1 }}">
+          <form hx-post="/memories/{{ memory.slug }}/section"
+                hx-target="#save-feedback-{{ loop.index - 1 }}"
+                hx-swap="innerHTML">
+            <input type="hidden" name="header" value="{{ s.header }}">
+            <textarea class="form-input mem-textarea"
+                      name="body"
+                      rows="18"
+                      id="textarea-{{ loop.index - 1 }}">{{ s.body }}</textarea>
+            <div style="display:flex;gap:var(--space-2);margin-top:var(--space-2)">
+              <button type="submit" class="btn btn-primary btn-sm">Save section</button>
+            </div>
+          </form>
+        </div>
+
+        {# Preview mode — rendered server-side to avoid XSS #}
+        <div class="mem-tab-content" id="preview-{{ loop.index - 1 }}" style="display:none">
+          <div class="mem-preview card-body" id="preview-content-{{ loop.index - 1 }}"></div>
+        </div>
+      </div>
+      {% endfor %}
+
+      {# Raw file editor #}
+      <div class="mem-section-panel" id="raw-panel" style="display:none">
+        <div class="mem-section-panel-header">
+          <h2 class="mem-section-title">Raw Markdown</h2>
+          <div id="raw-save-feedback" style="font-size:0.8rem"></div>
+        </div>
+        <form hx-post="/memories/{{ memory.slug }}/raw"
+              hx-target="#raw-save-feedback"
+              hx-swap="innerHTML">
+          <textarea class="form-input mem-textarea"
+                    name="content"
+                    rows="30">{{ raw_content }}</textarea>
+          <div style="margin-top:var(--space-2)">
+            <button type="submit" class="btn btn-primary btn-sm">Save file</button>
+          </div>
+        </form>
+      </div>
+
+    </div>{# /mem-editors #}
+  </div>{# /mem-edit-layout #}
+</div>
+
+<script>
+var totalSections = {{ sections | length }};
+
+function showSection(idx) {
+  for (var i = 0; i < totalSections; i++) {
+    var p = document.getElementById('section-panel-' + i);
+    if (p) p.style.display = (i === idx) ? '' : 'none';
+  }
+  document.getElementById('raw-panel').style.display = 'none';
+  document.querySelectorAll('.mem-section-nav-link').forEach(function(a, i) {
+    a.classList.toggle('active', i === idx);
+  });
+}
+
+function showRaw() {
+  for (var i = 0; i < totalSections; i++) {
+    var p = document.getElementById('section-panel-' + i);
+    if (p) p.style.display = 'none';
+  }
+  document.getElementById('raw-panel').style.display = '';
+  document.querySelectorAll('.mem-section-nav-link').forEach(function(a, i) {
+    a.classList.remove('active');
+  });
+}
+
+function switchTab(btn, mode, idx) {
+  var tabBar = btn.closest('.mem-tab-bar');
+  tabBar.querySelectorAll('.mem-tab').forEach(function(t) { t.classList.remove('active'); });
+  btn.classList.add('active');
+  document.getElementById('edit-' + idx).style.display = (mode === 'edit') ? '' : 'none';
+  var previewEl = document.getElementById('preview-' + idx);
+  previewEl.style.display = (mode === 'preview') ? '' : 'none';
+
+  if (mode === 'preview') {
+    var body = document.getElementById('textarea-' + idx).value;
+    var target = document.getElementById('preview-content-' + idx);
+    renderMarkdown(body, target);
+  }
+}
+
+function renderMarkdown(src, target) {
+  // Fetch rendered HTML from server to avoid client-side XSS
+  fetch('/memories/_preview', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/x-www-form-urlencoded'},
+    body: 'content=' + encodeURIComponent(src)
+  }).then(function(r) { return r.text(); })
+    .then(function(html) { target.textContent = ''; target.insertAdjacentHTML('afterbegin', html); });
+}
+
+showSection(0);
+</script>
+
+<style>
+.mem-edit-layout {
+  display: grid;
+  grid-template-columns: 220px 1fr;
+  gap: var(--space-6);
+  align-items: start;
+}
+.mem-section-nav {
+  position: sticky;
+  top: var(--space-6);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: var(--space-4);
+}
+.mem-section-nav-title {
+  font-size: 0.7rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-muted);
+  margin-bottom: var(--space-2);
+}
+.mem-section-nav-link {
+  display: block;
+  padding: 5px var(--space-2);
+  font-size: 0.82rem;
+  color: var(--text-secondary);
+  border-radius: var(--radius);
+  text-decoration: none;
+  line-height: 1.35;
+  margin-bottom: 2px;
+  cursor: pointer;
+  transition: background 0.1s, color 0.1s;
+}
+.mem-section-nav-link:hover,
+.mem-section-nav-link.active {
+  background: var(--primary-subtle, rgba(30,53,87,0.08));
+  color: var(--primary);
+}
+.mem-editors { min-width: 0; }
+.mem-section-panel {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: var(--space-5);
+}
+.mem-section-panel-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: var(--space-4);
+}
+.mem-section-title {
+  font-size: 1.05rem;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin: 0;
+}
+.mem-tab-bar {
+  display: flex;
+  gap: var(--space-1);
+  margin-bottom: var(--space-3);
+  border-bottom: 1px solid var(--border);
+  padding-bottom: var(--space-2);
+}
+.mem-tab {
+  background: none;
+  border: none;
+  padding: 4px 12px;
+  font-size: 0.82rem;
+  color: var(--text-muted);
+  cursor: pointer;
+  border-radius: var(--radius);
+  font-weight: 500;
+}
+.mem-tab.active {
+  background: var(--primary-subtle, rgba(30,53,87,0.1));
+  color: var(--primary);
+}
+.mem-textarea {
+  width: 100%;
+  font-family: 'JetBrains Mono', 'Fira Code', ui-monospace, monospace;
+  font-size: 0.82rem;
+  line-height: 1.6;
+  resize: vertical;
+}
+.mem-preview {
+  min-height: 200px;
+  font-size: 0.88rem;
+  line-height: 1.7;
+}
+.mem-preview h2 { font-size: 1rem; font-weight: 600; margin: var(--space-4) 0 var(--space-2); }
+.mem-preview ul { padding-left: var(--space-5); }
+.mem-preview li { margin-bottom: 4px; }
+.mem-preview table { border-collapse: collapse; width: 100%; font-size: 0.82rem; }
+.mem-preview th, .mem-preview td { border: 1px solid var(--border); padding: 4px 8px; text-align: left; }
+.mem-save-feedback { padding: 4px 0; }
+.mem-save-ok { color: #2e7d32; font-weight: 500; }
+.mem-save-err { color: var(--severity-high); }
+</style>
+{% endblock %}
