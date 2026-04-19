@@ -77,6 +77,12 @@
         </div>
       </div>
 
+      <!-- Evidence quick-tag -->
+      <div hx-get="/evidence/widget/{{ email.id }}"
+           hx-trigger="load"
+           hx-swap="outerHTML"
+           class="evidence-widget__placeholder">Loading evidence candidates…</div>
+
       <!-- Body -->
       <div class="card" style="margin-bottom:var(--space-4)">
         <div class="card-header">

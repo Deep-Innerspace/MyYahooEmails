@@ -5,8 +5,11 @@ from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
 from pathlib import Path
 
+from fastapi import Form
+
 from src.web.deps import get_conn, get_perspective
 from src.statistics.aggregator import overview_stats, analysis_methodology
+from src.web.settings_store import get_bool, set_bool
 
 BASE_DIR = Path(__file__).parent.parent
 templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
@@ -53,6 +56,11 @@ async def settings_page(
         },
     }
 
+    prefs = {
+        "auto_sync_on_open": get_bool(conn, "auto_sync_on_open", False),
+        "notify_new_emails": get_bool(conn, "notify_new_emails", True),
+    }
+
     ctx = {
         "request": request,
         "perspective": perspective,
@@ -61,8 +69,25 @@ async def settings_page(
         "runs": runs,
         "methodology": methodology,
         "coverage": coverage,
+        "prefs": prefs,
     }
     return templates.TemplateResponse("pages/settings.html", ctx)
+
+
+@router.post("/prefs", response_class=HTMLResponse)
+async def save_prefs(
+    request: Request,
+    auto_sync_on_open: str = Form(""),
+    notify_new_emails: str = Form(""),
+    conn: sqlite3.Connection = Depends(get_conn),
+):
+    """Persist user preference toggles (HTMX form submit)."""
+    set_bool(conn, "auto_sync_on_open", auto_sync_on_open == "on")
+    set_bool(conn, "notify_new_emails", notify_new_emails == "on")
+    conn.commit()
+    return HTMLResponse(
+        '<span class="pref-saved" role="status">Preferences saved.</span>'
+    )
 
 
 @router.post("/runs/{run_id}/delete", response_class=HTMLResponse)

@@ -742,3 +742,42 @@ parsed = raw.parse()  # get the actual response content
 **Rationale**: Intent must override tone if they conflict (e.g. "document a refusal in writing" takes priority over "conciliatory tone"). Placing it after tone would let the model soften the intent. Labelling it `contrainte absolue` signals to the LLM that this overrides everything else.
 
 **Impact**: `build_system_prompt()` in `reply_generator.py`; `intent` column in `reply_drafts` table (Migration 24); `intent` input field in `reply_detail.html` partial.
+
+---
+
+## 2026-04-13 — Migration atomicity via SAVEPOINT + threading lock
+
+**Decision**: Each migration in `_run_migrations()` is wrapped in its own `SAVEPOINT mig_{id}` (not a top-level transaction). A module-level `threading.Lock` (`_migration_lock`) prevents concurrent startup races.
+
+**Rationale**: The previous implementation used `executescript()` which auto-commits before executing, making it impossible to atomically roll back both the schema change and the `schema_version` INSERT on failure. Using `SAVEPOINT` + per-statement `conn.execute()` lets us roll back either without affecting previously applied migrations.
+
+**Design choices**:
+- `_split_sql(sql)` splits multi-statement SQL on `;` for per-statement execution within the savepoint
+- "duplicate column" / "already exists" errors are tolerated: rollback savepoint, then `INSERT OR IGNORE INTO schema_version` to mark as applied — prevents infinite retry on restart
+- All other errors propagate and abort startup (hard fail is safer than silent partial schema)
+
+**Impact**: `src/storage/database.py` — `_migration_lock`, `_split_sql()`, rewritten `_run_migrations()`.
+
+---
+
+## 2026-04-13 — Centralized job store with TTL cleanup
+
+**Decision**: All background-job state moved to `src/web/job_manager.py`. Routes (`sync.py`, `reply.py`, `memories.py`) no longer maintain their own `_jobs` dicts.
+
+**Rationale**: Each route module had copy-pasted `_jobs: Dict`, `_jobs_lock`, and `_cleanup_jobs()` with slightly different TTL logic. This caused stale-poll bugs: if a job was cleaned up in one module's store, another module's poll would fall through to the "done" branch and render incorrect results.
+
+**Design**: `_JOB_TTL_SECS = 1800` (30 min); cleanup runs on every `create_job()` call; stale-poll now returns explicit error HTML instead of silently misrendering.
+
+**Impact**: New `src/web/job_manager.py`; three route modules simplified.
+
+---
+
+## 2026-04-13 — Analysis runner connection sharing
+
+**Decision**: All `runner.py` write helpers (`create_run`, `finish_run`, `store_result`, `store_topics_for_email`, `store_timeline_events`, `store_contradictions`) accept an optional `conn: Optional[sqlite3.Connection] = None`. Callers that hold a long-lived connection pass it in; CLI/standalone callers omit it and get a short-lived auto-managed connection.
+
+**Rationale**: Previously, each write helper opened its own `get_db()` connection. An analysis pass of 230 emails in a single batch loop opened/closed ~690 connections (create_run + N × store_result + N × store_topics + finish_run). Under concurrent web use this causes WAL lock contention. One connection per run eliminates this.
+
+**Pattern**: `_conn_or_new(conn)` context manager yields the passed connection as-is (no close on exit) or opens a new one (closes on exit). This is backward-compatible — existing CLI callers pass nothing and still work.
+
+**Impact**: `src/analysis/runner.py`, `src/analysis/classifier.py`, `src/analysis/tone.py`, `src/analysis/timeline.py`.

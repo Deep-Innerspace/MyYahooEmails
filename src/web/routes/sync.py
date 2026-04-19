@@ -2,7 +2,7 @@
 import json
 import threading
 import traceback
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Dict, List, Optional
 
@@ -12,11 +12,19 @@ from fastapi.templating import Jinja2Templates
 
 from src.web.deps import get_conn
 from src.web.job_manager import create_job, get_job, update_job
+from src.web.settings_store import (
+    get_bool, get_setting, get_timestamp, set_setting, set_timestamp_now,
+)
 
 BASE_DIR = Path(__file__).parent.parent
 templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
 
 router = APIRouter()
+
+# Track active sync jobs per corpus so auto-sync doesn't pile up duplicates.
+_active_sync_lock = threading.Lock()
+_active_sync_by_corpus: Dict[str, str] = {}
+_AUTO_SYNC_MIN_INTERVAL_SECS = 300  # 5 min throttle between auto-triggered syncs
 
 _SKIP_FOLDERS = {
     "Trash", "Draft", "Drafts", "Bulk", "Bulk Mail",
@@ -29,6 +37,8 @@ _DEFAULT_FOLDERS = ["INBOX", "Sent", "Sent Messages"]
 
 def _sync_worker(job_id: str, corpus: str) -> None:
     """Background thread: IMAP fetch since last sync for the given corpus."""
+    with _active_sync_lock:
+        _active_sync_by_corpus[corpus] = job_id
     update_job(job_id, status="running", started=datetime.now().isoformat())
     try:
         from src.extraction.imap_client import (
@@ -155,6 +165,10 @@ def _sync_worker(job_id: str, corpus: str) -> None:
             finished=datetime.now().isoformat(),
             message=f"Sync failed: {exc}",
         )
+    finally:
+        with _active_sync_lock:
+            if _active_sync_by_corpus.get(corpus) == job_id:
+                del _active_sync_by_corpus[corpus]
 
 
 # ── DB helpers ─────────────────────────────────────────────────────────────────
@@ -268,3 +282,93 @@ async def sync_status(
         "job": job,
         "recent_emails": recent_emails,
     })
+
+
+# ── Auto-sync & notification endpoints ────────────────────────────────────────
+
+def _should_auto_sync(conn) -> bool:
+    """True iff setting is on, no personal sync active, and throttle elapsed."""
+    if not get_bool(conn, "auto_sync_on_open", False):
+        return False
+    with _active_sync_lock:
+        if "personal" in _active_sync_by_corpus:
+            return False
+    last = get_timestamp(conn, "last_auto_sync_at")
+    if last:
+        try:
+            last_dt = datetime.fromisoformat(last)
+        except ValueError:
+            last_dt = None
+        if last_dt and (datetime.now() - last_dt) < timedelta(seconds=_AUTO_SYNC_MIN_INTERVAL_SECS):
+            return False
+    return True
+
+
+@router.get("/sync/auto-check", response_class=HTMLResponse)
+async def sync_auto_check(request: Request, conn=Depends(get_conn)):
+    """Fire-and-forget auto-sync trigger from base.html on page load.
+
+    Returns an empty HTML fragment. If conditions are met, spawns a personal
+    sync in the background so the badge endpoint will reflect new mail shortly.
+    """
+    if not _should_auto_sync(conn):
+        return HTMLResponse("")
+
+    set_timestamp_now(conn, "last_auto_sync_at")
+    conn.commit()
+
+    job_id = create_job(
+        status="queued",
+        corpus="personal",
+        message="Auto-sync…",
+        total_stored=0,
+        total_skipped=0,
+        error=None,
+        started=None,
+        finished=None,
+        auto=True,
+    )
+    threading.Thread(
+        target=_sync_worker, args=(job_id, "personal"), daemon=True
+    ).start()
+    return HTMLResponse("")
+
+
+@router.get("/sync/badge", response_class=HTMLResponse)
+async def sync_badge(request: Request, conn=Depends(get_conn)):
+    """HTMX-polled badge: count of emails fetched since last_seen_emails_at."""
+    last_seen = get_timestamp(conn, "last_seen_emails_at")
+    if not last_seen:
+        # First run: treat the existing corpus as already seen.
+        set_timestamp_now(conn, "last_seen_emails_at")
+        conn.commit()
+        count = 0
+    else:
+        row = conn.execute(
+            "SELECT COUNT(*) AS n FROM emails WHERE fetched_at > ?",
+            (last_seen,),
+        ).fetchone()
+        count = row["n"] if row else 0
+
+    if count <= 0:
+        return HTMLResponse(
+            '<span id="new-mail-badge" class="new-mail-badge new-mail-badge--empty"></span>'
+        )
+    label = "99+" if count > 99 else str(count)
+    return HTMLResponse(
+        f'<span id="new-mail-badge" class="new-mail-badge" '
+        f'title="{count} new email(s) since last visit" '
+        f'hx-post="/sync/mark-seen" hx-trigger="click" '
+        f'hx-target="#new-mail-badge" hx-swap="outerHTML">'
+        f'{label}</span>'
+    )
+
+
+@router.post("/sync/mark-seen", response_class=HTMLResponse)
+async def sync_mark_seen(request: Request, conn=Depends(get_conn)):
+    """Reset the new-mail counter (clicked badge)."""
+    set_timestamp_now(conn, "last_seen_emails_at")
+    conn.commit()
+    return HTMLResponse(
+        '<span id="new-mail-badge" class="new-mail-badge new-mail-badge--empty"></span>'
+    )

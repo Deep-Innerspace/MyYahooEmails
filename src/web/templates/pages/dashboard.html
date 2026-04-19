@@ -51,13 +51,21 @@
     </div>
 
     <div class="stat-card">
-      <div class="stat-label">Personal / Legal</div>
-      <div class="stat-value" style="font-size:var(--font-size-xl)">
-        <a href="/emails/?corpus=personal" style="color:var(--text);text-decoration:none">{{ "{:,}".format(overview.personal_count) }}</a>
-        <span style="color:var(--text-muted);font-size:var(--font-size-base)"> / </span>
-        <a href="/emails/?corpus=legal" style="color:#1e3a5f;text-decoration:none">{{ "{:,}".format(overview.legal_count) }}</a>
+      <div class="stat-label">Email Categories</div>
+      <div style="display:flex;flex-direction:column;gap:.35rem;margin-top:.4rem">
+        <div style="display:flex;justify-content:space-between;align-items:center">
+          <span style="font-size:var(--font-size-sm);color:var(--text-muted)">Personal (bilateral)</span>
+          <a href="/emails/?corpus=personal" style="font-size:var(--font-size-lg);font-weight:700;color:var(--text);text-decoration:none">{{ "{:,}".format(overview.personal_count) }}</a>
+        </div>
+        <div style="display:flex;justify-content:space-between;align-items:center">
+          <span style="font-size:var(--font-size-sm);color:var(--text-muted)">Lawyers &amp; Notary</span>
+          <a href="/emails/?corpus=legal" style="font-size:var(--font-size-lg);font-weight:700;color:#1e3a5f;text-decoration:none">{{ "{:,}".format(overview.legal_count) }}</a>
+        </div>
+        <div style="display:flex;justify-content:space-between;align-items:center">
+          <span style="font-size:var(--font-size-sm);color:var(--text-muted)">Other personal</span>
+          <span style="font-size:var(--font-size-lg);font-weight:700;color:var(--text-muted)">{{ "{:,}".format(overview.other_count) }}</span>
+        </div>
       </div>
-      <div class="stat-sub">personal · legal corpus</div>
     </div>
 
     <div class="stat-card">
@@ -88,7 +96,7 @@
       <!-- Coverage progress bars -->
       <div class="card">
         <div class="card-header">
-          <span class="card-title">📊 Analysis Coverage <span class="corpus-tag personal">Personal</span></span>
+          <span class="card-title">📊 Analysis Coverage <span class="corpus-tag personal">Bilateral</span></span>
         </div>
         <div class="card-body">
           {# Analysis coverage is measured against personal corpus only —
@@ -135,7 +143,7 @@
           <div class="mt-4 text-sm text-muted">
             <strong>{{ overview.contradiction_count }}</strong> contradiction pairs detected<br>
             <strong>{{ overview.timeline_events_count }}</strong> events on the timeline<br>
-            <span style="font-size:var(--font-size-xs);opacity:.7">Coverage % over {{ "{:,}".format(overview.personal_count) }} personal emails</span>
+            <span style="font-size:var(--font-size-xs);opacity:.7">Coverage % over {{ "{:,}".format(overview.personal_count) }} bilateral emails</span>
           </div>
         </div>
       </div>
@@ -194,7 +202,7 @@
       <!-- Top aggressive emails -->
       <div class="card">
         <div class="card-header">
-          <span class="card-title">⚡ Most Aggressive Emails <span class="corpus-tag personal">Personal</span></span>
+          <span class="card-title">⚡ Most Aggressive Emails <span class="corpus-tag personal">Bilateral</span></span>
           <a href="/emails/?direction=received" class="btn btn-secondary btn-sm">View all</a>
         </div>
         {% if top_aggressive %}
@@ -257,7 +265,7 @@
 
       <div class="card">
         <div class="card-header">
-          <span class="card-title">🌊 Emotional Arc <span class="corpus-tag personal">Personal</span></span>
+          <span class="card-title">🌊 Emotional Arc <span class="corpus-tag personal">Bilateral</span></span>
           <span class="info-icon" data-tip="Monthly aggression and manipulation scores over time. Rising peaks indicate periods of heightened emotional intensity in the correspondence.">i</span>
         </div>
         <div class="card-body" style="padding:0">
@@ -287,7 +295,7 @@
     <h2 class="section-title">
       <span class="section-title-icon">📈</span>
       Email Volume by Quarter
-      <span class="corpus-tag personal">Personal</span>
+      <span class="corpus-tag personal">Bilateral</span>
       <span class="info-icon" data-tip="Total emails sent and received per quarter. Blue bars = received, green bars = sent. Gaps or spikes correlate with key periods in the proceedings.">i</span>
     </h2>
     <div class="chart-container">
@@ -300,7 +308,7 @@
     <h2 class="section-title">
       <span class="section-title-icon">⚡</span>
       Daily Communication Intensity by Year
-      <span class="corpus-tag personal">Personal</span>
+      <span class="corpus-tag personal">Bilateral</span>
       <span class="info-icon" data-tip="Average number of emails exchanged per day in each calendar year, split by sent (blue) and received (red). The amber line shows the sent÷received ratio — values above 1 mean you initiated more than you received that year.">i</span>
       <span style="font-size:var(--font-size-sm);font-weight:400;color:var(--text-muted);margin-left:8px">
         bars = avg emails/day · amber line = sent÷received ratio (>1 you initiated more)
@@ -316,7 +324,7 @@
     <h2 class="section-title">
       <span class="section-title-icon">🎭</span>
       Tone Evolution
-      <span class="corpus-tag personal">Personal</span>
+      <span class="corpus-tag personal">Bilateral</span>
       <span class="info-icon" data-tip="Rolling monthly averages of aggression and manipulation scores. Helps identify when the tone of the correspondence escalated — useful for correlating with court filings or custody decisions.">i</span>
     </h2>
     <div class="chart-container">

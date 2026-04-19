@@ -1,0 +1,66 @@
+{#
+  Evidence quick-tag widget — mark this email as candidate for one or more procedures.
+  Loaded via HTMX from /evidence/widget/{email_id} and fully self-refreshing.
+#}
+<div id="evidence-widget-{{ email_id }}" class="evidence-widget">
+  <div class="evidence-widget__head">
+    <span class="evidence-widget__title">Evidence candidates</span>
+    <span class="evidence-widget__hint">Tag this email against procedures for later lawyer review.</span>
+  </div>
+
+  {% if not procedures %}
+    <div class="evidence-widget__empty">No active procedures — create one from the Procedures page.</div>
+  {% else %}
+    <ul class="evidence-widget__list">
+      {% for p in procedures %}
+        {% set existing = tag_map.get(p.id) %}
+        <li class="evidence-row {% if existing %}evidence-row--tagged{% endif %}">
+          <div class="evidence-row__meta">
+            <span class="evidence-row__name">{{ p.name or p.procedure_type }}</span>
+            {% if p.case_number %}<span class="evidence-row__case">{{ p.case_number }}</span>{% endif %}
+            <span class="badge badge-{{ 'success' if existing else 'secondary' }}">
+              {{ 'tagged' if existing else 'not tagged' }}
+            </span>
+          </div>
+
+          {% if existing %}
+            {% if existing.rationale %}
+              <div class="evidence-row__rationale">{{ existing.rationale }}</div>
+            {% endif %}
+            <button type="button"
+                    class="btn btn-secondary btn-xs"
+                    hx-post="/evidence/untag/{{ email_id }}/{{ p.id }}"
+                    hx-target="#evidence-widget-{{ email_id }}"
+                    hx-swap="outerHTML"
+                    hx-confirm="Remove this email from {{ p.name or p.procedure_type }}?">
+              Untag
+            </button>
+          {% else %}
+            <form class="evidence-row__form"
+                  hx-post="/evidence/tag/{{ email_id }}/{{ p.id }}"
+                  hx-target="#evidence-widget-{{ email_id }}"
+                  hx-swap="outerHTML">
+              <input type="text"
+                     name="rationale"
+                     class="input input-sm"
+                     placeholder="Why is this relevant? (optional)"
+                     maxlength="300">
+              <details class="evidence-row__topics">
+                <summary>Topics ({{ topics | length }})</summary>
+                <div class="evidence-row__topic-list">
+                  {% for t in topics %}
+                    <label class="evidence-topic">
+                      <input type="checkbox" name="topic_ids" value="{{ t.id }}">
+                      <span>{{ t.name }}</span>
+                    </label>
+                  {% endfor %}
+                </div>
+              </details>
+              <button type="submit" class="btn btn-primary btn-xs">Tag</button>
+            </form>
+          {% endif %}
+        </li>
+      {% endfor %}
+    </ul>
+  {% endif %}
+</div>

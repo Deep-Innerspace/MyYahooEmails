@@ -559,6 +559,37 @@ _MIGRATIONS = [
     (24, "Add intent column to reply_drafts for strategic per-email objective", """
         ALTER TABLE reply_drafts ADD COLUMN intent TEXT NOT NULL DEFAULT '';
     """),
+    (25, "Add is_bilateral flag: emails exclusively between me and ex-wife (from+to+cc)", """
+        ALTER TABLE emails ADD COLUMN is_bilateral INTEGER NOT NULL DEFAULT 0;
+    """),
+    (26, "Add app_settings (key-value) and evidence_tags (email↔procedure candidates)", """
+        CREATE TABLE IF NOT EXISTS app_settings (
+            key         TEXT NOT NULL PRIMARY KEY,
+            value       TEXT NOT NULL DEFAULT '',
+            updated_at  TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+        );
+        INSERT OR IGNORE INTO app_settings(key, value) VALUES ('auto_sync_on_open', '0');
+        INSERT OR IGNORE INTO app_settings(key, value) VALUES ('notify_new_emails', '1');
+        INSERT OR IGNORE INTO app_settings(key, value) VALUES ('last_seen_emails_at', '');
+        INSERT OR IGNORE INTO app_settings(key, value) VALUES ('last_auto_sync_at', '');
+
+        CREATE TABLE IF NOT EXISTS evidence_tags (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            email_id        INTEGER NOT NULL REFERENCES emails(id) ON DELETE CASCADE,
+            procedure_id    INTEGER NOT NULL REFERENCES procedures(id) ON DELETE CASCADE,
+            tagged_by       TEXT NOT NULL DEFAULT 'client',
+            tagged_at       TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            status          TEXT NOT NULL DEFAULT 'candidate',
+            rationale       TEXT NOT NULL DEFAULT '',
+            topic_ids       TEXT NOT NULL DEFAULT '[]',
+            lawyer_notes    TEXT NOT NULL DEFAULT '',
+            piece_number    TEXT NOT NULL DEFAULT '',
+            redaction_zones TEXT NOT NULL DEFAULT '[]',
+            UNIQUE(email_id, procedure_id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_evidence_tags_email ON evidence_tags(email_id);
+        CREATE INDEX IF NOT EXISTS idx_evidence_tags_procedure ON evidence_tags(procedure_id);
+    """),
 ]
 
 
@@ -628,12 +659,67 @@ def _run_migrations(conn: sqlite3.Connection) -> None:
                 raise
 
 
+def backfill_bilateral_flags(conn: sqlite3.Connection) -> int:
+    """Set is_bilateral=1 on every email whose from+to+cc are exclusively the
+    user ('me') and the ex-wife (primary + aliases).  All other emails get 0.
+
+    Returns the number of emails marked as bilateral.
+    """
+    me_row = conn.execute("SELECT email FROM contacts WHERE role='me'").fetchone()
+    ex_row = conn.execute(
+        "SELECT email, aliases FROM contacts WHERE role='ex-wife'"
+    ).fetchone()
+    if not me_row or not ex_row:
+        logger.warning("backfill_bilateral_flags: 'me' or 'ex-wife' contact not found — skipping")
+        return 0
+
+    allowed: set = {me_row["email"].lower()}
+    allowed.add(ex_row["email"].lower())
+    try:
+        for alias in json.loads(ex_row["aliases"] or "[]"):
+            allowed.add(alias.lower())
+    except (json.JSONDecodeError, TypeError):
+        pass
+
+    rows = conn.execute(
+        "SELECT id, from_address, to_addresses, cc_addresses FROM emails"
+    ).fetchall()
+
+    bilateral_ids = []
+    for row in rows:
+        def _parse(raw) -> set:
+            if not raw:
+                return set()
+            try:
+                addrs = json.loads(raw)
+                return {a.lower() for a in addrs if a}
+            except (json.JSONDecodeError, TypeError):
+                return {raw.lower()} if raw else set()
+
+        parties = {row["from_address"].lower()} | _parse(row["to_addresses"]) | _parse(row["cc_addresses"])
+        parties.discard("")
+        if parties and parties.issubset(allowed):
+            bilateral_ids.append(row["id"])
+
+    # Reset all, then set bilateral ones
+    conn.execute("UPDATE emails SET is_bilateral = 0")
+    if bilateral_ids:
+        conn.executemany(
+            "UPDATE emails SET is_bilateral = 1 WHERE id = ?",
+            [(eid,) for eid in bilateral_ids],
+        )
+
+    logger.info("backfill_bilateral_flags: %d/%d emails marked bilateral", len(bilateral_ids), len(rows))
+    return len(bilateral_ids)
+
+
 def init_db() -> None:
     """Create all tables and indexes if they don't exist, then run pending migrations."""
     with get_db() as conn:
         conn.executescript(_SCHEMA)
         _run_migrations(conn)
         conn.executescript(_INDEXES)
+        backfill_bilateral_flags(conn)
     # Seed reply memories if tables are ready
     try:
         seed_memories()

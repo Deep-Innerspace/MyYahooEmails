@@ -46,9 +46,15 @@ def _contact_where(conn: sqlite3.Connection, contact_email: Optional[str],
 
 def corpus_clause(corpus: Optional[str], table_alias: str = "e") -> Tuple[str, list]:
     """Build WHERE fragment for corpus filtering. Returns (clause, params).
-    corpus='all' or None → no filter. corpus='personal'|'legal' → filter."""
+    corpus='all' or None → no filter. corpus='legal' → filter by corpus only.
+    corpus='personal' → filter by corpus AND is_bilateral=1 (pure bilateral only)."""
     if not corpus or corpus == "all":
         return "", []
+    if corpus == "personal":
+        return (
+            f"AND {table_alias}.corpus = ? AND {table_alias}.is_bilateral = 1",
+            [corpus],
+        )
     return f"AND {table_alias}.corpus = ?", [corpus]
 
 
@@ -73,9 +79,16 @@ def overview_stats(conn: sqlite3.Connection,
     r["topics_count"] = conn.execute("SELECT COUNT(*) FROM topics").fetchone()[0]
     r["runs_count"] = conn.execute("SELECT COUNT(*) FROM analysis_runs").fetchone()[0]
 
-    # Corpus breakdown (always show both for context)
-    r["personal_count"] = conn.execute("SELECT COUNT(*) FROM emails WHERE corpus='personal'").fetchone()[0]
-    r["legal_count"] = conn.execute("SELECT COUNT(*) FROM emails WHERE corpus='legal'").fetchone()[0]
+    # Corpus breakdown — three categories
+    r["personal_count"] = conn.execute(
+        "SELECT COUNT(*) FROM emails WHERE corpus='personal' AND is_bilateral=1"
+    ).fetchone()[0]
+    r["other_count"] = conn.execute(
+        "SELECT COUNT(*) FROM emails WHERE corpus='personal' AND is_bilateral=0"
+    ).fetchone()[0]
+    r["legal_count"] = conn.execute(
+        "SELECT COUNT(*) FROM emails WHERE corpus='legal'"
+    ).fetchone()[0]
 
     # Phase 2+3 analysis coverage — always scoped to personal corpus
     # (legal emails are professional correspondence; their tone/manipulation analysis
@@ -85,7 +98,7 @@ def overview_stats(conn: sqlite3.Connection,
             """SELECT COUNT(DISTINCT ar.email_id) FROM analysis_results ar
                JOIN analysis_runs ru ON ru.id=ar.run_id
                JOIN emails e ON e.id=ar.email_id
-               WHERE ru.analysis_type=? AND e.corpus='personal'""",
+               WHERE ru.analysis_type=? AND e.corpus='personal' AND e.is_bilateral=1""",
             (atype,),
         ).fetchone()[0]
     r["contradiction_count"] = conn.execute("SELECT COUNT(*) FROM contradictions").fetchone()[0]
@@ -363,7 +376,7 @@ def contact_summary(conn: sqlite3.Connection,
                    COUNT(e.id) AS total_emails,
                    SUM(CASE WHEN e.direction='sent' THEN 1 ELSE 0 END) AS sent,
                    SUM(CASE WHEN e.direction='received' THEN 1 ELSE 0 END) AS received,
-                   SUM(CASE WHEN e.corpus='personal' THEN 1 ELSE 0 END) AS personal_emails,
+                   SUM(CASE WHEN e.corpus='personal' AND e.is_bilateral=1 THEN 1 ELSE 0 END) AS personal_emails,
                    SUM(CASE WHEN e.corpus='legal' THEN 1 ELSE 0 END) AS legal_emails,
                    MIN(e.date) AS first_email,
                    MAX(e.date) AS last_email
@@ -621,7 +634,7 @@ def dossier_timeline(conn: sqlite3.Connection,
                      JOIN analysis_runs ru ON ru.id = ar.run_id
                      JOIN emails e ON e.id = ar.email_id
                     WHERE ru.analysis_type = 'tone'
-                      AND e.corpus = 'personal'
+                      AND e.corpus = 'personal' AND e.is_bilateral = 1
                       AND e.date >= ? AND e.date <= ?""",
                 (p["date_start"], date_end),
             ).fetchone()[0]
@@ -645,7 +658,7 @@ def court_event_window_aggression(conn: sqlite3.Connection,
              JOIN analysis_runs ru ON ru.id = ar.run_id
              JOIN emails e ON e.id = ar.email_id
             WHERE ru.analysis_type = 'tone'
-              AND e.corpus = 'personal'
+              AND e.corpus = 'personal' AND e.is_bilateral = 1
               AND e.date >= DATE(?, '-' || ? || ' days')
               AND e.date < ?""",
         (event_date, window_days, event_date),
@@ -657,7 +670,7 @@ def court_event_window_aggression(conn: sqlite3.Connection,
              JOIN analysis_runs ru ON ru.id = ar.run_id
              JOIN emails e ON e.id = ar.email_id
             WHERE ru.analysis_type = 'tone'
-              AND e.corpus = 'personal'
+              AND e.corpus = 'personal' AND e.is_bilateral = 1
               AND e.date > ?
               AND e.date <= DATE(?, '+' || ? || ' days')""",
         (event_date, event_date, window_days),
@@ -667,7 +680,7 @@ def court_event_window_aggression(conn: sqlite3.Connection,
              FROM analysis_results ar
              JOIN analysis_runs ru ON ru.id = ar.run_id
              JOIN emails e ON e.id = ar.email_id
-            WHERE ru.analysis_type = 'tone' AND e.corpus = 'personal'""",
+            WHERE ru.analysis_type = 'tone' AND e.corpus = 'personal' AND e.is_bilateral = 1""",
     ).fetchone()[0]
 
     def _fmt(row):
@@ -710,7 +723,7 @@ def all_procedure_event_correlations(
              FROM analysis_results ar
              JOIN analysis_runs ru ON ru.id = ar.run_id
              JOIN emails e ON e.id = ar.email_id
-            WHERE ru.analysis_type = 'tone' AND e.corpus = 'personal'"""
+            WHERE ru.analysis_type = 'tone' AND e.corpus = 'personal' AND e.is_bilateral = 1"""
     ).fetchone()
     baseline_agg   = round(base[0], 3) if base[0] is not None else None
     baseline_manip = round(base[1], 3) if base[1] is not None else None
@@ -750,7 +763,7 @@ def all_procedure_event_correlations(
                  FROM analysis_results ar
                  JOIN analysis_runs ru ON ru.id = ar.run_id
                  JOIN emails e ON e.id = ar.email_id
-                WHERE ru.analysis_type = 'tone' AND e.corpus = 'personal'
+                WHERE ru.analysis_type = 'tone' AND e.corpus = 'personal' AND e.is_bilateral = 1
                   AND e.date >= DATE(?, '-' || ? || ' days') AND e.date < ?""",
             (ed, window_days, ed),
         ).fetchone()
@@ -762,7 +775,7 @@ def all_procedure_event_correlations(
                  FROM analysis_results ar
                  JOIN analysis_runs ru ON ru.id = ar.run_id
                  JOIN emails e ON e.id = ar.email_id
-                WHERE ru.analysis_type = 'tone' AND e.corpus = 'personal'
+                WHERE ru.analysis_type = 'tone' AND e.corpus = 'personal' AND e.is_bilateral = 1
                   AND e.date > ? AND e.date <= DATE(?, '+' || ? || ' days')""",
             (ed, ed, window_days),
         ).fetchone()
@@ -857,7 +870,7 @@ def pre_conclusion_behavior(
              FROM analysis_results ar
              JOIN analysis_runs ru ON ru.id = ar.run_id
              JOIN emails e ON e.id = ar.email_id
-            WHERE ru.analysis_type = 'tone' AND e.corpus = 'personal'"""
+            WHERE ru.analysis_type = 'tone' AND e.corpus = 'personal' AND e.is_bilateral = 1"""
     ).fetchone()
     baseline_agg   = round(base[0], 3) if base[0] is not None else None
     baseline_manip = round(base[1], 3) if base[1] is not None else None
@@ -875,7 +888,7 @@ def pre_conclusion_behavior(
                  FROM analysis_results ar
                  JOIN analysis_runs ru ON ru.id = ar.run_id
                  JOIN emails e ON e.id = ar.email_id
-                WHERE ru.analysis_type = 'tone' AND e.corpus = 'personal'
+                WHERE ru.analysis_type = 'tone' AND e.corpus = 'personal' AND e.is_bilateral = 1
                   AND e.date >= DATE(?, '-' || ? || ' days') AND e.date < ?""",
             (ed, window_days, ed),
         ).fetchone()
@@ -886,7 +899,7 @@ def pre_conclusion_behavior(
                  FROM analysis_results ar
                  JOIN analysis_runs ru ON ru.id = ar.run_id
                  JOIN emails e ON e.id = ar.email_id
-                WHERE ru.analysis_type = 'tone' AND e.corpus = 'personal'
+                WHERE ru.analysis_type = 'tone' AND e.corpus = 'personal' AND e.is_bilateral = 1
                   AND e.date >= DATE(?, '-7 days') AND e.date < ?""",
             (ed, ed),
         ).fetchone()

@@ -4,6 +4,8 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import Optional
 
+from src import telemetry
+
 
 @dataclass
 class LLMResponse:
@@ -44,18 +46,47 @@ class LLMProvider(ABC):
         last_exc = None
         for attempt in range(max_retries):
             try:
-                return self.complete(prompt, system, max_tokens, temperature)
+                response = self.complete(prompt, system, max_tokens, temperature)
+                telemetry.record("prompt_result", {
+                    "provider": response.provider_name,
+                    "model_id": response.model_id,
+                    "latency_ms": response.latency_ms,
+                    "input_tokens": response.input_tokens,
+                    "output_tokens": response.output_tokens,
+                    "retry_count": attempt,
+                    "success": True,
+                })
+                return response
             except Exception as e:
                 last_exc = e
                 # Don't retry on clear auth/config errors
                 msg = str(e).lower()
                 if any(k in msg for k in ("auth", "api key", "invalid", "403", "401")):
+                    telemetry.record("prompt_result", {
+                        "provider": self.name,
+                        "retry_count": attempt,
+                        "success": False,
+                        "error_class": type(e).__name__,
+                    })
                     raise
                 # Don't retry on daily limit exhaustion (retry_after_secs signals
                 # GroqDailyLimitError); caller must abort the run and wait for reset
                 if hasattr(e, "retry_after_secs"):
+                    telemetry.record("prompt_result", {
+                        "provider": self.name,
+                        "retry_count": attempt,
+                        "success": False,
+                        "error_class": type(e).__name__,
+                        "rate_limited_tpd": True,
+                    })
                     raise
                 if attempt < max_retries - 1:
                     wait = retry_delay * (2 ** attempt)
                     time.sleep(wait)
+        telemetry.record("prompt_result", {
+            "provider": self.name,
+            "retry_count": max_retries,
+            "success": False,
+            "error_class": type(last_exc).__name__ if last_exc else "Unknown",
+        })
         raise last_exc

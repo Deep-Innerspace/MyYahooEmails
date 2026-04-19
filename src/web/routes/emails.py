@@ -438,9 +438,22 @@ def _search_with_filters(conn, q, topics, topic_mode, direction, contact,
             )
         for e in emails:
             e["topics"] = topics_by_id.get(e["id"], [])
+
+        # Batch: how many procedures each email is tagged against
+        evidence_rows = conn.execute(
+            f"""SELECT email_id, COUNT(*) AS n
+                  FROM evidence_tags
+                 WHERE email_id IN ({placeholders})
+              GROUP BY email_id""",
+            email_ids,
+        ).fetchall()
+        evidence_by_id = {r["email_id"]: r["n"] for r in evidence_rows}
+        for e in emails:
+            e["evidence_count"] = evidence_by_id.get(e["id"], 0)
     else:
         for e in emails:
             e["topics"] = []
+            e["evidence_count"] = 0
 
     return emails, count
 

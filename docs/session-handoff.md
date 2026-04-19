@@ -8,92 +8,35 @@
 
 ## What Was Accomplished This Session
 
-### 1. SaaS productization architecture
+### 1. Critical bug fixes (7 issues)
 
-Designed full multi-tenant architecture for extending Northline to hundreds of paying users:
-- PostgreSQL schema-per-tenant, FastAPI-Users auth, Celery + Redis job queue
-- Encrypted IMAP credentials, Stripe billing, 3-tier pricing (Free / Pro €19 / Premium €39)
-- Hetzner deployment plan (VPS + managed DB + Redis)
-- Stored in `productization.md` (root of project, gitignored)
+- **Migration atomicity**: `_run_migrations()` now wraps each migration in `SAVEPOINT mig_{id}` + uses `_migration_lock` (threading.Lock) to prevent concurrent startup races. `_split_sql()` helper splits multi-statement SQL for per-statement `execute()`.
+- **WAL unbounded growth**: `_connect()` now sets `PRAGMA journal_size_limit=67108864` (64 MB cap) and `PRAGMA wal_autocheckpoint=1000`.
+- **LIKE injection fix**: `_escape_like()` added to `search.py`; all LIKE patterns use `ESCAPE '\\'` for `%`, `_`, `\` in email addresses.
+- **Silent `seed_memories()` failure**: replaced bare `except Exception: pass` with `warnings.warn()` + `logger.debug`.
+- **Silent batch-store errors**: `threader.py` now logs `logger.warning(..., exc_info=True)` per failed email instead of silently incrementing a counter.
+- **Stale-poll job store**: All three route modules (`sync.py`, `reply.py`, `memories.py`) now return user-friendly error HTML instead of falling through when a job_id is not found.
+- **SQL f-string injection**: `sync.py` replaced `f"SELECT ... WHERE {role_sql}"` with two static hardcoded queries in if/else.
 
-### 2. Knowledge base memory enhancement (BM25 retrieval)
+### 2. Dead code removal and optimizations
 
-Rewrote `src/analysis/reply_generator.py` to use BM25 chunked retrieval based on Karpathy's markdown-as-knowledge-base principle:
+- **Shared `job_manager.py`**: `src/web/job_manager.py` centralises all background-job state with 30-min TTL cleanup. All three route modules (`sync.py`, `reply.py`, `memories.py`) removed their local `_jobs`/`_jobs_lock`/`_cleanup_jobs()` boilerplate and import from `job_manager`.
+- **Alias resolution centralized**: `expand_contact_addresses()` via `json_each()` used everywhere — `threader.py`, `search.py`, `aggregator.py`. No more full-table scan + Python loop.
+- **Analysis runner connection sharing**: `runner.py` gained `_conn_or_new()` context manager and optional `conn=` parameter on all write helpers. `classifier.py`, `tone.py`, `timeline.py` now each hold one SQLite connection for the entire analysis run, committing after each batch instead of opening/closing per call.
 
-- **`_parse_sections()`**: splits memory files at `## ` boundaries into chunks with `{header, body, is_quick_context, source_name}`
-- **`load_memories_content()`**: Quick Context sections always injected; remaining sections BM25-ranked against incoming email text; `top_k=8` best sections selected
-- **`party_b_profile` always-inject**: prepended to every prompt regardless of user selection
-- **Strategic intent field**: new `intent` input in the reply composer — injected as "OBJECTIF STRATÉGIQUE DE CETTE RÉPONSE (contrainte absolue)" before tone
-- **Migration 24**: `ALTER TABLE reply_drafts ADD COLUMN intent TEXT NOT NULL DEFAULT ''`
+### 3. CLAUDE.md improvements
 
-### 3. Memory files — real data rewrite
+- Added `job_manager.py` entry to Project Structure section.
+- Updated Multi-Address Contacts constraint to reference `expand_contact_addresses()` with "DO NOT re-implement alias lookup inline" warning.
+- Added **Migration authoring** gotcha (SAVEPOINT pattern, `_split_sql()`, ID gap rule, error handling).
+- Added **WAL connection settings** gotcha.
+- Replaced ~320-line verbose phase history with compact ~50-line "Implementation Status" summary (actionable facts only).
 
-Rewrote all 6 topic memory files with actual corpus data (not template placeholders):
-- `data/memories/general.md` — Quick Context with dense facts, Communication Rules, Legal Awareness, Tone Calibration
-- `data/memories/enfants.md` — 2,225 emails, 3 active procedures (#14 #15), passport blockages
-- `data/memories/finances.md` — Liquidation #12 active, ESSEC 75% judgment, contradiction documented
-- `data/memories/ecole.md` — Jean-Mermoz Dubai blocked without judgment, ESSEC frais
-- `data/memories/logement.md` — 11-year contradiction (email 160 vs email 748), mediation with Sanson
-- `data/memories/vacances.md` — highest aggression topic (avg 0.31), 12 contradiction pairs, 3 passport refusals
+### Commit
 
-### 4. `party_b_profile.md` adversarial dossier (new file)
-
-Created `data/memories/party_b_profile.md` with:
-- 10 manipulation patterns ranked by frequency (children_instrumentalization #1: 142 emails avg 0.53)
-- Pre-hearing behavior: aggression spikes documented
-- Known contradictions by severity
-- Rhetorical fingerprint + what has/hasn't worked
-- Always injected into every reply prompt
-
-### 5. Corpus synthesis pipeline
-
-New module `src/analysis/memory_synthesizer.py`:
-- `synthesize_topic_memory()` — gathers summaries, aggression stats, manipulation patterns, timeline events, contradictions, procedures from DB; calls LLM to propose updated memory sections
-- `diff_sections()` — returns `[(header, old_body, new_body)]` for review
-- `apply_section_updates()` — writes approved sections back
-
-New prompt: `src/analysis/prompts/memory_synthesis.txt`
-
-New CLI commands (`python cli.py memories`):
-- `memories list` — table with slug, name, file size, updated, description
-- `memories synthesize --topic <slug> [--since DATE] [--provider X] [--auto-accept]` — interactive section-by-section review
-
-### 6. Dedicated Knowledge Base web page (`/memories/`)
-
-New web page and routes in `src/web/routes/memories.py` (registered in `__init__.py`):
-
-**List page** (`GET /memories/`):
-- Card grid: name, slug badge, file size, section count, last-updated, description
-- Edit → and Synthesize buttons per card
-- Inline synthesis result panel (HTMX)
-
-**Edit page** (`GET /memories/{slug}`):
-- Left: sticky section nav (click to switch active section)
-- Right: per-section editor with Edit/Preview tabs
-- Preview POSTs to `/memories/_preview` (server-side rendering — no XSS risk)
-- Raw file editor at bottom
-- Synthesize button with `since` date input
-
-**New routes**:
-- `POST /memories/{slug}/section` — save single section
-- `POST /memories/{slug}/raw` — save full file
-- `POST /memories/{slug}/synthesize` — start background LLM synthesis job
-- `GET /memories/{slug}/synthesize/poll/{job_id}` — HTMX polling
-- `POST /memories/_preview` — server-side markdown renderer
-- `POST /memories/{slug}/synthesize/accept` — accept one diff section
-
-**New templates**:
-- `src/web/templates/pages/memories.html`
-- `src/web/templates/pages/memory_edit.html`
-- `src/web/templates/partials/memory_synthesizing.html`
-- `src/web/templates/partials/memory_diff.html`
-
-`base.html` updated: `'memories': 'correspondence'` in `_ws_map`; "Knowledge Base" nav link added to Correspondence sidebar.
-
-### 7. Procedures page bug fixes
-
-- **Obligations in "Rulings at a Glance"**: was rendering `N item(s)` count; fixed to full bullet list by iterating `ev.obligations.split('\n')` and stripping bullet prefixes
-- **Procedure ID badge**: `#{{ proc.id }}` now visible in both detail header (navy/white, prominent) and list card (subtle navy, next to status badge)
+```
+e681c06 refactor: harden storage, analysis, and web layers
+```
 
 ---
 
@@ -101,10 +44,10 @@ New web page and routes in `src/web/routes/memories.py` (registered in `__init__
 
 | Error | Resolution |
 |---|---|
-| `Write` tool "File has not been read yet" for memory files | Used `Bash cat` to read all files first |
-| Security hook blocked `innerHTML = marked.parse(body)` (XSS) | Created server-side `/memories/_preview` endpoint with Python HTML escaping |
-| `SQLite LEFT() function not found` | SQLite has no `LEFT()` — used Python string slicing `str(r['explanation'])[:120]` |
-| `rich.table.Table` reference error in CLI | `Table` was already imported directly — used `Table(...)` not `rich.table.Table(...)` |
+| `executescript` auto-commits, defeating SAVEPOINT | Switched to `_split_sql()` + per-statement `conn.execute()` within SAVEPOINT |
+| `INSERT OR IGNORE` after rollback on "duplicate column" | Rollback savepoint, then `INSERT OR IGNORE INTO schema_version` to mark applied |
+| Agent reported `last_uid` in threader.py as dead code | Confirmed already removed in prior session — Edit tool correctly failed |
+| Agent reported `traceback` import in sync.py as dead | `traceback.format_exc()` is live at line 154 — left intact |
 
 ---
 
@@ -123,7 +66,7 @@ New web page and routes in `src/web/routes/memories.py` (registered in `__init__
 | Lawyer invoices | 37 |
 | Contradictions | 45 pairs |
 | Reply memories | 7 (6 topic + party_b_profile) |
-| DB migrations applied | 24 |
+| DB migrations applied | 24 (next ID = 25) |
 
 ---
 
@@ -131,7 +74,7 @@ New web page and routes in `src/web/routes/memories.py` (registered in `__init__
 
 ### First action: run corpus synthesis for each topic
 
-The memory files have been manually populated with real data. The synthesis pipeline is ready to propose further improvements from the full corpus:
+Memory files have been manually populated. The synthesis pipeline can propose further improvements:
 
 ```bash
 .venv/bin/python cli.py memories synthesize --topic enfants
@@ -146,9 +89,9 @@ Or use the web UI: `/memories/` → Synthesize button per card.
 
 ### Second action: test reply draft quality
 
-1. Go to `/reply/` → pick a pending email (after Auto-Triage if not yet run)
-2. Fill "Strategic intent" field (e.g. "Document passeport refusal, demand 10-day deadline")
-3. Generate draft — verify memory sections are being retrieved correctly
+1. Go to `/reply/` → pick a pending email
+2. Fill "Strategic intent" field
+3. Generate draft — verify BM25 memory retrieval is working correctly
 4. Check that `party_b_profile` content appears in generated prompts
 
 ### Third action: productization planning
@@ -158,8 +101,8 @@ Or use the web UI: `/memories/` → Synthesize button per card.
 ### Quick Start
 
 ```bash
-git log --oneline -5      # verify last commit
+git log --oneline -5      # verify last commit (e681c06)
 .venv/bin/python cli.py web     # http://127.0.0.1:8000
-# Navigate to /memories/ to review and edit knowledge base
+# Navigate to /memories/ to review and synthesize knowledge base
 # Navigate to /reply/ to test reply generation
 ```

@@ -38,6 +38,12 @@
     </div>
     {% endif %}
 
+    <!-- Evidence quick-tag (lazy-loaded) -->
+    <div hx-get="/evidence/widget/{{ email.id }}"
+         hx-trigger="load"
+         hx-swap="outerHTML"
+         class="evidence-widget__placeholder">Evidence…</div>
+
     <!-- Actions -->
     <div style="margin-top:var(--space-3);display:flex;gap:var(--space-2);flex-wrap:wrap">
       <a href="/emails/{{ email.id }}"

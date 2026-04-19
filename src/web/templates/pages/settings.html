@@ -11,12 +11,37 @@
 
 <div class="page-body">
 
+  <!-- Preferences -->
+  <div class="card mb-6">
+    <div class="card-header">
+      <span class="card-title">Preferences</span>
+    </div>
+    <div class="card-body">
+      <form hx-post="/settings/prefs" hx-target="#prefs-status" hx-swap="innerHTML">
+        <label class="pref-row">
+          <input type="checkbox" name="auto_sync_on_open" {% if prefs.auto_sync_on_open %}checked{% endif %}>
+          <span class="pref-label">Auto-sync new emails when the app opens</span>
+          <span class="pref-hint">Triggers a personal-corpus IMAP fetch on page load (throttled to once every 5 min).</span>
+        </label>
+        <label class="pref-row">
+          <input type="checkbox" name="notify_new_emails" {% if prefs.notify_new_emails %}checked{% endif %}>
+          <span class="pref-label">Show new-email badge in the header</span>
+          <span class="pref-hint">Displays a count of unseen emails; click the badge to mark as seen.</span>
+        </label>
+        <div class="pref-actions">
+          <button type="submit" class="btn btn-primary btn-sm">Save preferences</button>
+          <span id="prefs-status" class="text-sm text-muted"></span>
+        </div>
+      </form>
+    </div>
+  </div>
+
   <!-- Overview stats -->
   <div class="stat-grid mb-6">
     <div class="stat-card">
       <div class="stat-label">Total Emails <span class="corpus-tag all-emails">All</span></div>
       <div class="stat-value">{{ "{:,}".format(overview.total) }}</div>
-      <div class="stat-sub">{{ "{:,}".format(overview.personal_count) }} personal · {{ "{:,}".format(overview.legal_count) }} legal</div>
+      <div class="stat-sub">{{ "{:,}".format(overview.personal_count) }} bilateral · {{ "{:,}".format(overview.legal_count) }} lawyers · {{ "{:,}".format(overview.other_count) }} other</div>
     </div>
     <div class="stat-card">
       <div class="stat-label">Threads <span class="corpus-tag all-emails">All</span></div>
@@ -29,7 +54,7 @@
       <div class="stat-sub">across all corpora</div>
     </div>
     <div class="stat-card">
-      <div class="stat-label">Contradictions <span class="corpus-tag personal">Personal</span></div>
+      <div class="stat-label">Contradictions <span class="corpus-tag personal">Bilateral</span></div>
       <div class="stat-value">{{ overview.contradiction_count }}</div>
       <div class="stat-sub">detected pairs</div>
     </div>
@@ -48,8 +73,8 @@
   <!-- Analysis coverage -->
   <div class="card mb-6">
     <div class="card-header">
-      <span class="card-title">Analysis Coverage <span class="corpus-tag personal">Personal</span></span>
-      <span class="info-icon" data-tip="Coverage is calculated over personal emails only ({{ overview.personal_count }} emails). Lawyer emails (legal corpus, {{ overview.legal_count }} emails) are excluded — their professional tone and topic data is not relevant to the personal relationship analysis.">i</span>
+      <span class="card-title">Analysis Coverage <span class="corpus-tag personal">Bilateral</span></span>
+      <span class="info-icon" data-tip="Coverage is calculated over pure bilateral emails only ({{ overview.personal_count }} emails — exclusively between you and your ex-wife). {{ overview.other_count }} other personal emails and {{ overview.legal_count }} legal (lawyer) emails are excluded from evidence analysis metrics.">i</span>
     </div>
     <div class="card-body">
       {% for key, cov in coverage.items() %}
@@ -62,8 +87,8 @@
       </div>
       {% endfor %}
       <div class="mt-4 text-sm text-muted">
-        Coverage % is over the <strong>{{ "{:,}".format(overview.personal_count) }} personal emails</strong>.
-        The {{ overview.legal_count }} legal (lawyer) emails are tracked separately and excluded from evidence analysis metrics.
+        Coverage % is over the <strong>{{ "{:,}".format(overview.personal_count) }} bilateral emails</strong> (exclusively between you and your ex-wife).
+        {{ "{:,}".format(overview.other_count) }} other personal emails and {{ "{:,}".format(overview.legal_count) }} legal (lawyer) emails are excluded from evidence analysis metrics.
       </div>
     </div>
   </div>

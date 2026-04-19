@@ -191,7 +191,8 @@ async def manipulation_page(
     wheres = [
         "ru.analysis_type = 'manipulation'",
         "ru.status IN ('complete', 'partial')",
-        "e.corpus = 'personal'",   # exclude lawyer emails — professional tone ≠ personal manipulation
+        "e.corpus = 'personal'",          # exclude lawyer emails
+        "e.is_bilateral = 1",             # pure bilateral only (me ↔ ex-wife)
     ]
     params: list = []
 
