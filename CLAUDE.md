@@ -289,7 +289,7 @@ All phases are complete. Key facts for new sessions:
 - **Personal corpus**: ~3,791 emails; 100% classified, tone-analyzed, manipulation-analyzed
 - **Legal corpus**: ~2,743 emails; 100% legal_analysis; 15 procedures tracked; 33 MULLER conclusions downloaded
 - **Analysis coverage**: classify/tone/manipulation = personal only; legal_analysis = legal only; timeline_events = personal only (legal events → procedure_events)
-- **Migrations**: 24 applied (schema_version table); next ID = 25
+- **Migrations**: 27 applied (schema_version table); next ID = 28
 - **Procedures**: 15 total, all with date ranges; #14 Révision Pensions Appel + #15 Procédure Lounys Dubai are active
 
 ### Excel round-trip pipeline (analyze export/import)
@@ -300,9 +300,18 @@ All phases are complete. Key facts for new sessions:
 - `analyze mark-uncovered` tags residual unclassified personal emails as "trop_court" or "non_classifiable"
 
 ### Reply Command Center (`/reply/`)
-- Memory files: `data/memories/*.md` — BM25 chunked retrieval; `party_b_profile.md` always injected
+- Memory files: `data/memories/*.md` — BM25 chunked retrieval; `party_b_profile.md` always injected (hardcoded `_ALWAYS_INJECT_SLUG` in `reply_generator.py`)
+- Memory auto-selection (migration 27): `reply_memories.default_selected` flag; `_auto_slugs(conn, email_id)` in `reply.py` combines `default_selected=1` + topic-matched slugs — no client-side checkboxes
+- `POST /reply/prompt/{email_id}`: exports full LLM prompt (system + user) without an API call, for manual paste into any LLM interface
 - Background jobs (generate draft, synthesize memory) use `src/web/job_manager.py`
 - `reply_memories` table seeded by `seed_memories()` on `init_db()`
+- `data/memories/style.md`: writing-style profile built from analysis of 2,201 sent emails; `default_selected=0` (topic-specific, not global)
+
+### Knowledge Base page (`/memories/`)
+- Three visual sections: "Toujours injectée" (party_b_profile only) / "Sélectionnées par défaut" / "Non sélectionnées par défaut"
+- Compact list-row layout: `partials/memory_row.html` shared across all sections
+- Toggle pills: `partials/memory_default_badge.html` — OFF=outlined ghost, ON=solid navy, Always=amber non-interactive
+- `POST /memories/{slug}/toggle-default` flips `default_selected` and returns the badge partial via HTMX outerHTML swap
 
 ### Analysis runner connection pattern
 `runner.py` write helpers (`create_run`, `finish_run`, `store_result`, `store_topics_for_email`, `store_timeline_events`, `store_contradictions`) accept an optional `conn` parameter. Pass a connection to share one transaction across a full analysis pass — avoids opening/closing per batch. Omit for standalone/CLI use.

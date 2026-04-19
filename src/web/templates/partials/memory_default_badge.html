@@ -1,0 +1,9 @@
+<div id="default-badge-{{ m.slug }}">
+  <button class="kb-pill {% if m.default_selected %}kb-pill--on{% endif %}"
+          hx-post="/memories/{{ m.slug }}/toggle-default"
+          hx-target="#default-badge-{{ m.slug }}"
+          hx-swap="outerHTML"
+          title="{% if m.default_selected %}Retirer de la sélection par défaut{% else %}Ajouter à la sélection par défaut{% endif %}">
+    {% if m.default_selected %}✓ Défaut{% else %}＋ Défaut{% endif %}
+  </button>
+</div>

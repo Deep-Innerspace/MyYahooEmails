@@ -5,142 +5,329 @@
 <div class="page-header">
   <div>
     <h1 class="page-title">Knowledge Base</h1>
-    <p class="page-subtitle">Memory files that inform every reply draft. Edit sections or synthesize from the corpus.</p>
+    <p class="page-subtitle">Memory files that inform every reply draft.</p>
   </div>
 </div>
 
 <div class="page-body">
-  <div class="mem-grid">
-    {% for m in memories %}
-    <div class="mem-card">
-      <div class="mem-card-header">
-        <div>
-          <div class="mem-card-name">{{ m.display_name }}</div>
-          <div class="mem-card-meta">
-            {% if m.topic_name %}
-              <span class="badge badge-neutral" style="font-size:0.65rem">{{ m.topic_name }}</span>
-            {% endif %}
-            {% if m.file_exists %}
-              <span class="text-muted">{{ m.file_size_kb }} kb · {{ m.section_count }} sections · updated {{ m.updated }}</span>
-            {% else %}
-              <span style="color:var(--severity-high);font-size:0.8rem">⚠ file missing</span>
-            {% endif %}
-          </div>
-        </div>
-        <div class="mem-card-badges">
-          {% if m.slug == 'party_b_profile' %}
-            <span class="badge badge-warning" style="font-size:0.65rem">Always injected</span>
-          {% elif m.slug == 'general' %}
-            <span class="badge badge-info" style="font-size:0.65rem">Global</span>
-          {% endif %}
-        </div>
-      </div>
 
-      <div class="mem-card-desc">{{ m.description or '' }}</div>
+  {# ── Split memories into buckets ─────────────────────────────────────── #}
+  {% set always_on    = memories | selectattr("slug", "eq", "party_b_profile") | list %}
+  {% set defaults_on  = memories | selectattr("default_selected") | rejectattr("slug", "eq", "party_b_profile") | list %}
+  {% set defaults_off = memories | rejectattr("default_selected") | rejectattr("slug", "eq", "party_b_profile") | list %}
 
-      <div class="mem-card-actions">
-        <a href="/memories/{{ m.slug }}" class="btn btn-primary btn-sm">
-          Edit sections →
-        </a>
-        <form hx-post="/memories/{{ m.slug }}/synthesize"
-              hx-target="#synth-panel-{{ m.slug }}"
-              hx-swap="innerHTML"
-              hx-indicator="#synth-spinner-{{ m.slug }}"
-              style="display:inline">
-          <button type="submit" class="btn btn-secondary btn-sm">
-            <span id="synth-spinner-{{ m.slug }}" class="htmx-indicator sync-spinner"
-                  style="width:12px;height:12px;margin-right:4px"></span>
-            Synthesize from corpus
-          </button>
-        </form>
-      </div>
-
-      {# Synthesis result panel #}
-      <div id="synth-panel-{{ m.slug }}" style="margin-top:var(--space-3)"></div>
+  {# ── Section: Always injected ─────────────────────────────────────────── #}
+  <div class="kb-section kb-section--always">
+    <div class="kb-section-header">
+      <span class="kb-section-label">Toujours injectée</span>
+      <span class="kb-section-hint">Ajoutée à chaque brouillon — ne peut pas être désactivée</span>
     </div>
-    {% endfor %}
+    <div class="kb-table">
+      {% for m in always_on %}
+      {% include "partials/memory_row.html" %}
+      {% endfor %}
+    </div>
   </div>
 
-  {# ── Create new memory ──────────────────────────────────────────────────── #}
-  <div class="card" style="margin-top:var(--space-8)">
-    <div class="card-header">
-      <span class="card-title">Create New Memory File</span>
+  {# ── Section: Selected by default ─────────────────────────────────────── #}
+  <div class="kb-section kb-section--on">
+    <div class="kb-section-header">
+      <span class="kb-section-label">Sélectionnées par défaut</span>
+      <span class="kb-section-hint">Injectées automatiquement sauf si un autre topic correspond</span>
     </div>
-    <div class="card-body">
+    <div class="kb-table">
+      {% for m in defaults_on %}
+      {% include "partials/memory_row.html" %}
+      {% else %}
+      <div class="kb-empty">Aucune memory sélectionnée par défaut.</div>
+      {% endfor %}
+    </div>
+  </div>
+
+  {# ── Section: Not selected by default ────────────────────────────────── #}
+  <div class="kb-section kb-section--off">
+    <div class="kb-section-header">
+      <span class="kb-section-label">Non sélectionnées par défaut</span>
+      <span class="kb-section-hint">Injectées uniquement si leur topic correspond à l'email</span>
+    </div>
+    <div class="kb-table">
+      {% for m in defaults_off %}
+      {% include "partials/memory_row.html" %}
+      {% else %}
+      <div class="kb-empty">Toutes les memories sont sélectionnées par défaut.</div>
+      {% endfor %}
+    </div>
+  </div>
+
+  {# ── Section: Create new ──────────────────────────────────────────────── #}
+  <div class="kb-section kb-section--create">
+    <div class="kb-section-header">
+      <span class="kb-section-label">Créer une nouvelle memory</span>
+    </div>
+    <div class="kb-create-form card">
       <form hx-post="/reply/memories/create"
             hx-target="#create-result"
-            hx-swap="innerHTML"
-            style="display:grid;grid-template-columns:1fr 1fr 2fr auto;gap:var(--space-3);align-items:end">
-        <div class="form-group" style="margin:0">
-          <label class="form-label">Slug</label>
-          <input class="form-input" name="slug" placeholder="e.g. sante" required>
+            hx-swap="innerHTML">
+        <div class="kb-create-grid">
+          <div class="form-group" style="margin:0">
+            <label class="form-label">Slug</label>
+            <input class="form-input" name="slug" placeholder="e.g. sante" required>
+          </div>
+          <div class="form-group" style="margin:0">
+            <label class="form-label">Nom affiché</label>
+            <input class="form-input" name="display_name" placeholder="e.g. Santé" required>
+          </div>
+          <div class="form-group" style="margin:0">
+            <label class="form-label">Description</label>
+            <input class="form-input" name="description" placeholder="Santé, décisions médicales…">
+          </div>
+          <button type="submit" class="btn btn-primary" style="align-self:end">Créer</button>
         </div>
-        <div class="form-group" style="margin:0">
-          <label class="form-label">Display name</label>
-          <input class="form-input" name="display_name" placeholder="e.g. Santé" required>
-        </div>
-        <div class="form-group" style="margin:0">
-          <label class="form-label">Description</label>
-          <input class="form-input" name="description" placeholder="Medical, health decisions…">
-        </div>
-        <button type="submit" class="btn btn-primary" style="align-self:end">Create</button>
       </form>
       <div id="create-result" style="margin-top:var(--space-3)"></div>
     </div>
   </div>
+
 </div>
 
 <style>
-.mem-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(360px, 1fr));
-  gap: var(--space-5);
+/* ── Section container ───────────────────────────────────────────────── */
+.kb-section {
+  margin-bottom: var(--space-8);
 }
-.mem-card {
+
+/* ── Section header band ─────────────────────────────────────────────── */
+.kb-section-header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-4);
+  border-radius: var(--radius) var(--radius) 0 0;
+  margin-bottom: 0;
+}
+
+.kb-section-label {
+  font-size: 0.68rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+}
+
+.kb-section-hint {
+  font-size: 0.71rem;
+  opacity: 0.7;
+}
+
+/* ── Per-section colour themes ───────────────────────────────────────── */
+.kb-section--always .kb-section-header {
+  background: #2a1a00;
+  border-left: 4px solid var(--northline-amber);
+  color: var(--northline-amber);
+}
+.kb-section--always .kb-table {
+  border-left: 4px solid var(--northline-amber);
+}
+
+.kb-section--on .kb-section-header {
+  background: var(--accent-bg);
+  border-left: 4px solid var(--northline-navy);
+  color: var(--northline-navy);
+}
+.kb-section--on .kb-table {
+  border-left: 4px solid var(--northline-navy);
+}
+
+.kb-section--off .kb-section-header {
+  background: #f0ede3;
+  border-left: 4px solid var(--border-strong);
+  color: var(--text-secondary);
+}
+.kb-section--off .kb-table {
+  border-left: 4px solid var(--border-strong);
+}
+
+.kb-section--create .kb-section-header {
   background: var(--surface);
+  border-left: 4px solid var(--border);
   border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
-  padding: var(--space-5);
+  color: var(--text-secondary);
+}
+
+/* ── Table of rows ───────────────────────────────────────────────────── */
+.kb-table {
   display: flex;
   flex-direction: column;
-  gap: var(--space-3);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-top: none;
+  border-radius: 0 0 var(--radius) var(--radius);
+  overflow: hidden;
 }
-.mem-card-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: flex-start;
-  gap: var(--space-3);
+
+.kb-row {
+  display: grid;
+  grid-template-columns: minmax(140px,1fr) minmax(160px,2fr) minmax(160px,auto) auto auto;
+  align-items: center;
+  gap: var(--space-4);
+  padding: 10px var(--space-4);
+  border-bottom: 1px solid var(--border);
+  transition: background 0.1s;
 }
-.mem-card-name {
+
+.kb-row:last-child {
+  border-bottom: none;
+}
+
+/* Alternating stripe */
+.kb-row:nth-child(odd) {
+  background: #fafaf8;
+}
+.kb-row:nth-child(even) {
+  background: var(--surface);
+}
+
+.kb-row:hover {
+  background: var(--surface-hover) !important;
+}
+
+/* Synth panel resets stripe */
+.kb-synth-panel:nth-child(odd),
+.kb-synth-panel:nth-child(even) {
+  background: transparent;
+}
+
+/* ── Row cells ───────────────────────────────────────────────────────── */
+.kb-row-name {
   font-weight: 600;
-  font-size: 1rem;
+  font-size: 0.85rem;
   color: var(--text-primary);
-}
-.mem-card-meta {
-  font-size: 0.75rem;
-  color: var(--text-muted);
-  margin-top: 3px;
   display: flex;
   align-items: center;
   gap: var(--space-2);
   flex-wrap: wrap;
 }
-.mem-card-badges {
-  flex-shrink: 0;
-}
-.mem-card-desc {
-  font-size: 0.82rem;
+
+.kb-row-desc {
+  font-size: 0.72rem;
   color: var(--text-muted);
-  line-height: 1.4;
-  min-height: 1em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
-.mem-card-actions {
+
+.kb-row-meta {
+  font-size: 0.7rem;
+  color: var(--text-muted);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.kb-row-actions {
   display: flex;
   gap: var(--space-2);
-  flex-wrap: wrap;
-  margin-top: auto;
-  padding-top: var(--space-2);
-  border-top: 1px solid var(--border);
+  align-items: center;
+  justify-content: flex-end;
+}
+
+.kb-row-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  min-width: 90px;
+}
+
+/* ── Synth result panel ──────────────────────────────────────────────── */
+.kb-synth-panel {
+  padding: var(--space-2) var(--space-4);
+  font-size: 0.78rem;
+  border-bottom: 1px solid var(--border);
+}
+.kb-synth-panel:empty {
+  display: none;
+}
+
+/* ── Empty state ─────────────────────────────────────────────────────── */
+.kb-empty {
+  padding: var(--space-4);
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  font-style: italic;
+  text-align: center;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-top: none;
+  border-radius: 0 0 var(--radius) var(--radius);
+}
+
+/* ── Create form ─────────────────────────────────────────────────────── */
+.kb-create-form {
+  padding: var(--space-4);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-top: none;
+  border-radius: 0 0 var(--radius) var(--radius);
+}
+
+.kb-create-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr 2fr auto;
+  gap: var(--space-3);
+  align-items: end;
+}
+
+@media (max-width: 900px) {
+  .kb-row {
+    grid-template-columns: 1fr auto;
+    gap: var(--space-2);
+  }
+  .kb-row-desc, .kb-row-meta { display: none; }
+  .kb-create-grid { grid-template-columns: 1fr; }
+}
+
+/* ── Toggle pills ────────────────────────────────────────────────────── */
+.kb-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 0.67rem;
+  font-weight: 700;
+  padding: 4px 11px;
+  border-radius: 20px;
+  border: 1.5px solid var(--border-strong);
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: all 0.15s;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+}
+
+.kb-pill:hover {
+  border-color: var(--northline-navy);
+  color: var(--northline-navy);
+  background: var(--accent-bg);
+}
+
+.kb-pill--on {
+  background: var(--northline-navy);
+  border-color: var(--northline-navy);
+  color: #fff;
+}
+
+.kb-pill--on:hover {
+  background: var(--accent-light);
+  border-color: var(--accent-light);
+  color: #fff;
+}
+
+.kb-pill--always {
+  background: rgba(214,161,75,0.15);
+  border-color: var(--northline-amber);
+  color: var(--northline-amber);
+  cursor: default;
+  pointer-events: none;
+  letter-spacing: 0.05em;
 }
 </style>
 {% endblock %}

@@ -105,27 +105,18 @@
       </div>
     </div>
 
-    {# Memory checkboxes #}
+    {# Memories are auto-selected server-side via default_selected + topic match — manage at /memories/ #}
     {% if memories %}
-    <div class="form-group">
-      <label class="form-label">Memories (context to inject)</label>
-      <div class="rw-memory-grid">
-        {% for m in memories %}
-        <label class="rw-memory-check {% if not m.file_exists %}disabled{% endif %}">
-          <input type="checkbox" name="memory_check" value="{{ m.slug }}"
-                 {% if m.selected %}checked{% endif %}
-                 {% if not m.file_exists %}disabled{% endif %}>
-          <span>{{ m.display_name }}</span>
-          {% if m.file_size > 0 %}
-            <span class="text-muted" style="font-size:0.7rem">({{ (m.file_size / 1024) | round(1) }}kb)</span>
-          {% endif %}
-        </label>
-        {% endfor %}
-      </div>
+    <div class="form-group" style="font-size:0.78rem;color:var(--text-muted)">
+      Memories injectées :
+      {% for m in memories if m.selected and m.file_exists %}
+        <span class="badge badge-neutral" style="font-size:0.7rem;margin-left:2px">{{ m.display_name }}</span>
+      {% else %}
+        <span>aucune</span>
+      {% endfor %}
+      <a href="/memories/" style="margin-left:var(--space-2);font-size:0.75rem">Gérer →</a>
     </div>
     {% endif %}
-    {# Hidden field assembled by JS from checkboxes #}
-    <input type="hidden" name="memory_slugs" id="memory-slugs-field" value="">
 
     {# Strategic intent — hard constraint injected before tone #}
     <div class="form-group">
@@ -144,12 +135,39 @@
                 placeholder="e.g. Mention the agreement signed on 2023-04-12. Reference ONC ordonnance."></textarea>
     </div>
 
-    <button type="submit" class="btn btn-primary rw-btn-generate"
-            onclick="var slugs=[];document.querySelectorAll('input[name=memory_check]:checked').forEach(function(c){slugs.push(c.value)});document.getElementById('memory-slugs-field').value=slugs.join(',');">
-      <span id="gen-spinner" class="htmx-indicator sync-spinner" style="width:14px;height:14px;margin-right:6px"></span>
-      Generate Draft
-    </button>
+    <div style="display:flex;gap:var(--space-3);flex-wrap:wrap;align-items:center">
+      <button type="submit" class="btn btn-primary rw-btn-generate">
+        <span id="gen-spinner" class="htmx-indicator sync-spinner" style="width:14px;height:14px;margin-right:6px"></span>
+        Generate Draft
+      </button>
+      <button type="button" class="btn btn-secondary"
+              hx-post="/reply/prompt/{{ email.id }}"
+              hx-target="#prompt-modal-body"
+              hx-swap="innerHTML"
+              hx-include="closest form"
+              onclick="document.getElementById('prompt-modal').style.display='flex';">
+        Copy Prompt
+      </button>
+    </div>
   </form>
+</div>
+
+{# ── Prompt export modal ───────────────────────────────────────────── #}
+<div id="prompt-modal"
+     style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.65);z-index:900;align-items:center;justify-content:center"
+     onclick="if(event.target===this)this.style.display='none'">
+  <div style="background:var(--bg-primary);border:1px solid var(--border-color);border-radius:8px;
+              padding:var(--space-5);width:92%;max-width:860px;max-height:92vh;
+              display:flex;flex-direction:column;gap:var(--space-4)">
+    <div style="display:flex;align-items:center;justify-content:space-between">
+      <strong>Prompt export — paste into Claude, ChatGPT, or any LLM</strong>
+      <button type="button" class="btn btn-secondary btn-sm"
+              onclick="document.getElementById('prompt-modal').style.display='none'">✕ Close</button>
+    </div>
+    <div id="prompt-modal-body" style="overflow-y:auto;flex:1;display:flex;flex-direction:column;gap:var(--space-3)">
+      <span class="text-muted" style="font-size:0.85rem">Building prompt…</span>
+    </div>
+  </div>
 </div>
 
 {# ── Draft display area ───────────────────────────────────────────── #}

@@ -91,6 +91,7 @@ def _memory_meta(row: sqlite3.Row) -> dict:
     d["file_exists"] = fpath.exists()
     d["file_size"] = fpath.stat().st_size if fpath.exists() else 0
     d["file_size_kb"] = round(d["file_size"] / 1024, 1)
+    d["default_selected"] = bool(d.get("default_selected", 0))
     if fpath.exists():
         text = fpath.read_text(encoding="utf-8")
         m = re.search(r"updated=(\S+)", text)
@@ -110,7 +111,7 @@ async def memories_list(
     conn: sqlite3.Connection = Depends(get_conn),
 ):
     rows = conn.execute(
-        "SELECT rm.*, t.name AS topic_name "
+        "SELECT rm.*, t.name AS topic_name, rm.default_selected "
         "FROM reply_memories rm "
         "LEFT JOIN topics t ON rm.topic_id = t.id "
         "ORDER BY rm.display_name"
@@ -315,6 +316,42 @@ async def poll_synthesis(
         "memory": memory,
         "diffs": diffs,
         "slug": slug,
+    })
+
+
+# ── Default-selected toggle ───────────────────────────────────────────────────
+
+@router.post("/memories/{slug}/toggle-default", response_class=HTMLResponse)
+async def toggle_default(
+    request: Request,
+    slug: str,
+    conn: sqlite3.Connection = Depends(get_conn),
+):
+    row = conn.execute(
+        "SELECT rm.*, t.name AS topic_name, rm.default_selected "
+        "FROM reply_memories rm LEFT JOIN topics t ON rm.topic_id = t.id "
+        "WHERE rm.slug = ?", (slug,)
+    ).fetchone()
+    if not row:
+        return HTMLResponse("<p>Memory not found.</p>", status_code=404)
+
+    new_val = 0 if row["default_selected"] else 1
+    conn.execute(
+        "UPDATE reply_memories SET default_selected = ? WHERE slug = ?",
+        (new_val, slug),
+    )
+    conn.commit()
+
+    updated = conn.execute(
+        "SELECT rm.*, t.name AS topic_name, rm.default_selected "
+        "FROM reply_memories rm LEFT JOIN topics t ON rm.topic_id = t.id "
+        "WHERE rm.slug = ?", (slug,)
+    ).fetchone()
+    memory = _memory_meta(updated)
+
+    return templates.TemplateResponse("partials/memory_default_badge.html", {
+        "request": request,
+        "m": memory,
     })
 
 

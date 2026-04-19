@@ -108,7 +108,7 @@ def _get_actions(conn: sqlite3.Connection, email_id: int):
 
 
 def _get_memories(conn: sqlite3.Connection, email_id: Optional[int] = None):
-    """All memory files with auto-select based on email topics."""
+    """All memory files with auto-select based on default_selected flag and email topics."""
     memories = conn.execute(
         "SELECT rm.*, t.name AS topic_name "
         "FROM reply_memories rm "
@@ -116,10 +116,10 @@ def _get_memories(conn: sqlite3.Connection, email_id: Optional[int] = None):
         "ORDER BY rm.display_name"
     ).fetchall()
 
-    result = []
-    auto_selected = set()
+    # Always select: default_selected memories
+    auto_selected = {m["slug"] for m in memories if m["default_selected"]}
 
-    # Auto-select based on email topics
+    # Also auto-select by topic match
     if email_id:
         email_topics = conn.execute(
             "SELECT DISTINCT t.id FROM email_topics et "
@@ -128,17 +128,14 @@ def _get_memories(conn: sqlite3.Connection, email_id: Optional[int] = None):
             (email_id,),
         ).fetchall()
         auto_topic_ids = {r["id"] for r in email_topics}
-
         for m in memories:
             if m["topic_id"] and m["topic_id"] in auto_topic_ids:
                 auto_selected.add(m["slug"])
-            if m["slug"] == "general":
-                auto_selected.add(m["slug"])
 
+    result = []
     for m in memories:
         d = dict(m)
         d["selected"] = m["slug"] in auto_selected
-        # Check file exists and get size — single stat() call
         fpath = Path(m["file_path"])
         if not fpath.is_absolute():
             fpath = memories_dir() / fpath.name
@@ -152,6 +149,12 @@ def _get_memories(conn: sqlite3.Connection, email_id: Optional[int] = None):
         result.append(d)
 
     return result
+
+
+def _auto_slugs(conn: sqlite3.Connection, email_id: int) -> List[str]:
+    """Return the slugs that should be injected for this email (server-side determination)."""
+    memories = _get_memories(conn, email_id)
+    return [m["slug"] for m in memories if m["selected"] and m["file_exists"]]
 
 
 def _get_thread_emails(conn, thread_id, email_id, limit=5):
@@ -317,6 +320,72 @@ async def set_reply_status(
     )
 
 
+# ── Prompt export (no LLM call) ───────────────────────────────────────────────
+
+@router.post("/reply/prompt/{email_id}", response_class=HTMLResponse)
+async def export_prompt(
+    request: Request,
+    email_id: int,
+    tone: str = Form("factual"),
+    guidelines: str = Form(""),
+    intent: str = Form(""),
+    thread_depth: int = Form(5),
+    conn: sqlite3.Connection = Depends(get_conn),
+):
+    """Build the full prompt without calling the LLM, for manual paste into any interface."""
+    import html as _html
+    from src.analysis.reply_generator import (
+        build_system_prompt, build_user_prompt,
+        load_memories_content, get_analysis_context, get_thread_context,
+    )
+
+    slugs = _auto_slugs(conn, email_id)
+
+    email_row = conn.execute("SELECT * FROM emails WHERE id = ?", (email_id,)).fetchone()
+    if not email_row:
+        return HTMLResponse("<p class='text-muted'>Email not found.</p>", status_code=404)
+
+    email_dict = dict(email_row)
+    thread_id = email_dict.get("thread_id")
+    thread_emails = get_thread_context(conn, email_id, thread_id, thread_depth) if thread_id else []
+
+    actions = conn.execute(
+        "SELECT action_type, text FROM pending_actions WHERE email_id = ? AND resolved = 0",
+        (email_id,),
+    ).fetchall()
+    pending_actions = [dict(a) for a in actions]
+
+    email_text = email_dict.get("delta_text", "") or email_dict.get("body_text", "")
+    memories_content = load_memories_content(slugs, conn, email_text=email_text)
+    analysis_context = get_analysis_context(conn, email_id)
+
+    system_prompt = build_system_prompt(tone, memories_content, analysis_context, guidelines, intent)
+    user_prompt = build_user_prompt(email_dict, thread_emails, pending_actions)
+
+    combined = "=== SYSTEM PROMPT ===\n\n{}\n\n\n=== USER MESSAGE ===\n\n{}".format(
+        system_prompt, user_prompt
+    )
+
+    chars = len(combined)
+    escaped = _html.escape(combined)
+
+    return HTMLResponse(
+        '<div style="display:flex;align-items:center;gap:var(--space-3);margin-bottom:var(--space-3)">'
+        '<button class="btn btn-primary btn-sm" type="button"'
+        ' onclick="navigator.clipboard.writeText(document.getElementById(\'prompt-textarea\').value)'
+        '.then(function(){{var b=this;b.textContent=\'Copied!\';setTimeout(function(){{b.textContent=\'Copy to clipboard\'}},2000)}}.bind(this))">'
+        'Copy to clipboard</button>'
+        '<span class="text-muted" style="font-size:0.75rem">{chars:,} chars &nbsp;·&nbsp;'
+        'Paste as one message, or split at <code>=== USER MESSAGE ===</code> for interfaces with a system prompt box</span>'
+        '</div>'
+        '<textarea id="prompt-textarea"'
+        ' style="width:100%;height:55vh;font-family:monospace;font-size:0.75rem;'
+        'resize:vertical;border:1px solid var(--border-color);border-radius:4px;'
+        'padding:var(--space-3)" spellcheck="false" readonly onclick="this.select()">'
+        '{escaped}</textarea>'.format(chars=chars, escaped=escaped)
+    )
+
+
 # ── Draft generation (background) ─────────────────────────────────────────────
 
 @router.post("/reply/generate/{email_id}", response_class=HTMLResponse)
@@ -326,11 +395,11 @@ async def generate_draft(
     tone: str = Form("factual"),
     guidelines: str = Form(""),
     intent: str = Form(""),
-    memory_slugs: str = Form(""),
     thread_depth: int = Form(5),
     tab: Optional[str] = Form("pending"),
+    conn: sqlite3.Connection = Depends(get_conn),
 ):
-    slugs = [s.strip() for s in memory_slugs.split(",") if s.strip()]
+    slugs = _auto_slugs(conn, email_id)
 
     job_id = create_job(
         status="running",

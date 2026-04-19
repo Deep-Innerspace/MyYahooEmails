@@ -590,6 +590,10 @@ _MIGRATIONS = [
         CREATE INDEX IF NOT EXISTS idx_evidence_tags_email ON evidence_tags(email_id);
         CREATE INDEX IF NOT EXISTS idx_evidence_tags_procedure ON evidence_tags(procedure_id);
     """),
+    (27, "Add default_selected flag to reply_memories for auto-injection in reply drafts", """
+        ALTER TABLE reply_memories ADD COLUMN default_selected INTEGER NOT NULL DEFAULT 0;
+        UPDATE reply_memories SET default_selected = 1 WHERE slug IN ('party_b_profile', 'general', 'style');
+    """),
 ]
 
 

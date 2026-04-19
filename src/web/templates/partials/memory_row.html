@@ -1,0 +1,53 @@
+<div class="kb-row">
+  {# Name + topic badge #}
+  <div class="kb-row-name">
+    {{ m.display_name }}
+    {% if m.topic_name %}
+      <span class="badge badge-neutral" style="font-size:0.6rem">{{ m.topic_name }}</span>
+    {% endif %}
+    {% if not m.file_exists %}
+      <span style="color:var(--severity-high);font-size:0.72rem">⚠ manquant</span>
+    {% endif %}
+  </div>
+
+  {# Description #}
+  <div class="kb-row-desc">{{ m.description or '' }}</div>
+
+  {# Metadata #}
+  <div class="kb-row-meta">
+    {% if m.file_exists %}
+      {{ m.file_size_kb }} kb · {{ m.section_count }} sections · {{ m.updated }}
+    {% else %}
+      —
+    {% endif %}
+  </div>
+
+  {# Action buttons #}
+  <div class="kb-row-actions">
+    <a href="/memories/{{ m.slug }}" class="btn btn-secondary btn-sm" style="font-size:0.72rem;padding:3px 10px">
+      Edit →
+    </a>
+    <button class="btn btn-secondary btn-sm"
+            style="font-size:0.72rem;padding:3px 10px"
+            hx-post="/memories/{{ m.slug }}/synthesize"
+            hx-target="#synth-panel-{{ m.slug }}"
+            hx-swap="innerHTML"
+            hx-indicator="#synth-spinner-{{ m.slug }}">
+      <span id="synth-spinner-{{ m.slug }}" class="htmx-indicator sync-spinner"
+            style="width:10px;height:10px;margin-right:3px"></span>
+      Synth
+    </button>
+  </div>
+
+  {# Default toggle #}
+  <div class="kb-row-toggle">
+    {% if m.slug == 'party_b_profile' %}
+      <span class="kb-pill kb-pill--always">★ Toujours</span>
+    {% else %}
+      {% include "partials/memory_default_badge.html" %}
+    {% endif %}
+  </div>
+</div>
+
+{# Synthesis result panel (full-width row) #}
+<div id="synth-panel-{{ m.slug }}" class="kb-synth-panel"></div>
