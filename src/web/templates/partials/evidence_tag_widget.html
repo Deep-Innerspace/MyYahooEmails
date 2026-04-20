@@ -1,8 +1,15 @@
 {#
   Evidence quick-tag widget — mark this email as candidate for one or more procedures.
   Loaded via HTMX from /evidence/widget/{email_id} and fully self-refreshing.
+  data-tagged: JSON list of {id, name} for tagged procedures (read by app.js highlight handler).
 #}
-<div id="evidence-widget-{{ email_id }}" class="evidence-widget">
+{% set tagged_list = [] %}
+{% for p in procedures %}{% if tag_map.get(p.id) %}{% set _ = tagged_list.append({"id": p.id, "name": (p.name or p.procedure_type)}) %}{% endif %}{% endfor %}
+
+<div id="evidence-widget-{{ email_id }}"
+     class="evidence-widget"
+     data-email-id="{{ email_id }}"
+     data-tagged='{{ tagged_list | tojson }}'>
   <div class="evidence-widget__head">
     <span class="evidence-widget__title">Evidence candidates</span>
     <span class="evidence-widget__hint">Tag this email against procedures for later lawyer review.</span>
@@ -27,6 +34,27 @@
             {% if existing.rationale %}
               <div class="evidence-row__rationale">{{ existing.rationale }}</div>
             {% endif %}
+
+            {# Highlights list #}
+            {% if existing.highlights %}
+              <ul class="evidence-highlights">
+                {% for h in existing.highlights %}
+                  <li class="evidence-highlight">
+                    <span class="evidence-highlight__text">&ldquo;{{ h.text[:150] }}{% if h.text | length > 150 %}&hellip;{% endif %}&rdquo;</span>
+                    {% if h.note %}<span class="evidence-highlight__note">{{ h.note }}</span>{% endif %}
+                    <button type="button"
+                            class="evidence-highlight__del"
+                            title="Remove highlight"
+                            hx-delete="/evidence/highlights/{{ email_id }}/{{ p.id }}/{{ loop.index0 }}"
+                            hx-target="#evidence-widget-{{ email_id }}"
+                            hx-swap="outerHTML">×</button>
+                  </li>
+                {% endfor %}
+              </ul>
+            {% else %}
+              <p class="evidence-highlights__empty">No highlights yet — select text in the email body to add one.</p>
+            {% endif %}
+
             <button type="button"
                     class="btn btn-secondary btn-xs"
                     hx-post="/evidence/untag/{{ email_id }}/{{ p.id }}"

@@ -24,12 +24,16 @@ def _fetch_procedures_for_email(conn, email_id: int):
          ORDER BY date_start DESC, id DESC"""
     ).fetchall()
     tagged = conn.execute(
-        """SELECT procedure_id, topic_ids, rationale
+        """SELECT procedure_id, topic_ids, rationale, highlights
              FROM evidence_tags
             WHERE email_id = ?""",
         (email_id,),
     ).fetchall()
-    tag_map = {t["procedure_id"]: dict(t) for t in tagged}
+    tag_map = {}
+    for t in tagged:
+        d = dict(t)
+        d["highlights"] = json.loads(d.get("highlights") or "[]")
+        tag_map[t["procedure_id"]] = d
     return procedures, tag_map
 
 
@@ -92,5 +96,58 @@ async def untag_email(
     conn.execute(
         "DELETE FROM evidence_tags WHERE email_id = ? AND procedure_id = ?",
         (email_id, procedure_id),
+    )
+    return _render_widget(request, conn, email_id)
+
+
+@router.post("/evidence/highlights/{email_id}/{procedure_id}", response_class=HTMLResponse)
+async def add_highlight(
+    request: Request,
+    email_id: int,
+    procedure_id: int,
+    text: str = Form(""),
+    note: str = Form(""),
+    conn=Depends(get_conn),
+):
+    """Append a highlighted passage to an evidence tag."""
+    text = text.strip()
+    if not text:
+        return _render_widget(request, conn, email_id)
+    row = conn.execute(
+        "SELECT highlights FROM evidence_tags WHERE email_id = ? AND procedure_id = ?",
+        (email_id, procedure_id),
+    ).fetchone()
+    if not row:
+        return _render_widget(request, conn, email_id)
+    highlights = json.loads(row["highlights"] or "[]")
+    highlights.append({"text": text, "note": note.strip()})
+    conn.execute(
+        "UPDATE evidence_tags SET highlights = ? WHERE email_id = ? AND procedure_id = ?",
+        (json.dumps(highlights), email_id, procedure_id),
+    )
+    return _render_widget(request, conn, email_id)
+
+
+@router.delete("/evidence/highlights/{email_id}/{procedure_id}/{index}", response_class=HTMLResponse)
+async def remove_highlight(
+    request: Request,
+    email_id: int,
+    procedure_id: int,
+    index: int,
+    conn=Depends(get_conn),
+):
+    """Remove a highlight by its position in the array."""
+    row = conn.execute(
+        "SELECT highlights FROM evidence_tags WHERE email_id = ? AND procedure_id = ?",
+        (email_id, procedure_id),
+    ).fetchone()
+    if not row:
+        return _render_widget(request, conn, email_id)
+    highlights = json.loads(row["highlights"] or "[]")
+    if 0 <= index < len(highlights):
+        highlights.pop(index)
+    conn.execute(
+        "UPDATE evidence_tags SET highlights = ? WHERE email_id = ? AND procedure_id = ?",
+        (json.dumps(highlights), email_id, procedure_id),
     )
     return _render_widget(request, conn, email_id)
