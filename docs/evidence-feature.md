@@ -1,7 +1,8 @@
 # Evidence workflow — feature spec
 
 Status: **Living spec.** v0 (tagging) shipped 2026-04-19 via migration 26 and
-`src/web/routes/evidence.py`. v1–v3 are proposed, not built.
+`src/web/routes/evidence.py`. Highlights shipped 2026-04-20 via migration 28.
+v1–v3 are proposed, not built.
 
 ## Why this document exists
 
@@ -60,6 +61,30 @@ cross-references, and supporting memory excerpts. Build as a pure function
 - **UI** — per-email widget on the email detail page (lazy-loaded HTMX);
   evidence star pill (`★ N`) on email rows indicating how many procedures
   this email is tagged against
+
+## What shipped (highlights, 2026-04-20)
+
+- **Migration 28** — `highlights TEXT NOT NULL DEFAULT '[]'` column on `evidence_tags`
+- **Routes** — `POST /evidence/highlights/{email_id}/{procedure_id}` (append
+  `{text, note}` to highlights JSON); `DELETE /evidence/highlights/{email_id}/{procedure_id}/{index}`
+  (remove by array index)
+- **`_fetch_procedures_for_email()`** updated to parse highlights JSON for each
+  tag into Python list before passing to template
+- **Widget** — `evidence_tag_widget.html` updated: `data-tagged` attribute
+  (single-quoted, JSON list of `{id, name}` for tagged procedures); per-tagged-procedure
+  highlights list (amber left-border cards with text + note + × delete button);
+  "No highlights yet" empty hint
+- **JS** — `app.js`: mouseup on `#email-body` (when email has tagged procedures)
+  → floating ★ Highlight button → `showHighlightPopover()` → procedure selector
+  + note textarea → `htmx.ajax('POST', ...)` swaps widget via outerHTML
+- **CSS** — `style.css`: `.evidence-highlights`, `.evidence-highlight`,
+  `.evidence-highlight__text/note/del`, `.evidence-highlights__empty`,
+  `.highlight-save-floating`, `.highlight-popover`, `.highlight-popover__title/excerpt`
+- **Design choice**: highlights stored as `[{text, note}]` JSON (text snippet,
+  not char offsets) — `delta_text` is immutable post-import so snippet matching
+  is stable; snippets are human-readable in DB and portable into the bundle
+- **Prerequisite**: email must be tagged to at least one active procedure before
+  the ★ Highlight button appears (JS guards on `data-tagged` being non-empty)
 
 ## v1 — bulk tagging (next)
 
@@ -128,10 +153,11 @@ analysis results. This keeps the suggester free and fast.
 ## Build order
 
 1. ✅ v0 — tagging + per-email widget
-2. v1 — bulk tag + procedure Evidence tab
-3. v2 — bundle builder + PDF export + redaction
-4. AI suggester (parallelizable with v2 — no shared code)
-5. v3 — B2B review loop (only when first B2B customer signs)
+2. ✅ highlights — per-email text annotation (stored in `evidence_tags.highlights`)
+3. v1 — bulk tag + procedure Evidence tab
+4. v2 — bundle builder + PDF export + redaction
+5. AI suggester (parallelizable with v2)
+6. v3 — B2B review loop (only when first B2B customer signs)
 
 ## Non-obvious design choices
 
@@ -154,6 +180,7 @@ analysis results. This keeps the suggester free and fast.
 ## Cross-references
 
 - `docs/B2B.md` → Evidence workflow section (B2B-specific review loop)
-- Migration 26 in `src/storage/database.py` (current schema)
-- `src/web/routes/evidence.py` (v0 backend)
-- `src/web/templates/partials/evidence_tag_widget.html` (v0 UI)
+- Migration 26 in `src/storage/database.py` (`evidence_tags` initial schema)
+- Migration 28 in `src/storage/database.py` (`highlights` column on `evidence_tags`)
+- `src/web/routes/evidence.py` (v0 + highlights backend)
+- `src/web/templates/partials/evidence_tag_widget.html` (v0 + highlights UI)

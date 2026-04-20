@@ -289,8 +289,9 @@ All phases are complete. Key facts for new sessions:
 - **Personal corpus**: ~3,791 emails; 100% classified, tone-analyzed, manipulation-analyzed
 - **Legal corpus**: ~2,743 emails; 100% legal_analysis; 15 procedures tracked; 33 MULLER conclusions downloaded
 - **Analysis coverage**: classify/tone/manipulation = personal only; legal_analysis = legal only; timeline_events = personal only (legal events → procedure_events)
-- **Migrations**: 27 applied (schema_version table); next ID = 28
+- **Migrations**: 28 applied (schema_version table); next ID = 29
 - **Procedures**: 15 total, all with date ranges; #14 Révision Pensions Appel + #15 Procédure Lounys Dubai are active
+- **Evidence highlights**: `evidence_tags.highlights` (JSON `[{text, note}]`) stores per-procedure text annotations; `POST/DELETE /evidence/highlights/{email_id}/{procedure_id}/{?index}`; JS floating ★ Highlight button on text selection in `#email-body` (only when `data-tagged` is non-empty)
 
 ### Excel round-trip pipeline (analyze export/import)
 - `--type` accepts: classify | tone | timeline | manipulation | contradictions
@@ -324,6 +325,8 @@ All phases are complete. Key facts for new sessions:
 - **FastAPI commit-before-redirect**: `get_conn()` commits after response. `RedirectResponse` routes must call `conn.commit()` explicitly before returning.
 - **HTMX `hx-on::after-swap`** placed directly on the link element, not on a parent — global `htmx:afterSwap` in `app.js` is unreliable inside dynamically-swapped partials.
 - **NOT NULL columns with DEFAULT**: `field.strip() or None` converts empty strings to NULL, violating NOT NULL constraint even when DEFAULT '' is set. Use `field.strip()` only.
+- **JSON in double-quoted HTML attributes breaks `dataset`**: `data-foo="{{ value | tojson }}"` produces malformed HTML when the JSON contains double quotes. Jinja2's `tojson` marks output as `Markup` (already safe), so `| e` is a no-op. Fix: use single quotes for the attribute — `data-foo='{{ value | tojson }}'`.
+- **`mouseup` handler fires during floating-button click**: A `document.addEventListener('mouseup', ...)` that creates a floating button will fire again when the user clicks that button, removing it before the `click` event fires (detached elements don't receive `click` in Chrome). Guard with `if (e.target && e.target.id === 'my-btn-id') return;` as the first line of the handler.
 
 ## Configuration Reference
 

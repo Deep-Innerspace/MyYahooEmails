@@ -594,6 +594,10 @@ _MIGRATIONS = [
         ALTER TABLE reply_memories ADD COLUMN default_selected INTEGER NOT NULL DEFAULT 0;
         UPDATE reply_memories SET default_selected = 1 WHERE slug IN ('party_b_profile', 'general', 'style');
     """),
+
+    (28, "Add highlights column to evidence_tags for per-procedure text annotations", """
+        ALTER TABLE evidence_tags ADD COLUMN highlights TEXT NOT NULL DEFAULT '[]';
+    """),
 ]
 
 

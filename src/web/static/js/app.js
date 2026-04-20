@@ -116,6 +116,128 @@ document.addEventListener('mousedown', function (e) {
   if (btn && e.target !== btn) btn.remove();
 });
 
+// ─── Text selection → add evidence highlight ─────────────────────────────
+document.addEventListener('mouseup', function (e) {
+  if (e.target && e.target.id === 'highlight-save-btn') return;
+
+  var widget = document.querySelector('[id^="evidence-widget-"]');
+  if (!widget) return;
+
+  var taggedProcedures;
+  try { taggedProcedures = JSON.parse(widget.dataset.tagged || '[]'); } catch (ex) { return; }
+  if (!taggedProcedures.length) return;
+
+  var selection = window.getSelection();
+  if (!selection || selection.toString().trim().length < 10) return;
+
+  var emailBody = document.getElementById('email-body');
+  if (!emailBody || !emailBody.contains(selection.anchorNode)) return;
+
+  var selectedText = selection.toString().trim();
+
+  var prevBtn = document.getElementById('highlight-save-btn');
+  if (prevBtn) prevBtn.remove();
+
+  var btn = document.createElement('button');
+  btn.id = 'highlight-save-btn';
+  btn.textContent = '\u2605 Highlight';
+  btn.className = 'quote-save-floating highlight-save-floating';
+
+  var range = selection.getRangeAt(0);
+  var rect = range.getBoundingClientRect();
+  btn.style.cssText = 'position:fixed;z-index:9999;top:' + Math.max(10, rect.top - 44) + 'px;left:' + (rect.left + (document.getElementById('quote-save-btn') ? 110 : 0)) + 'px';
+
+  btn.addEventListener('click', function () {
+    btn.remove();
+    if (window.getSelection) window.getSelection().removeAllRanges();
+    showHighlightPopover(selectedText, widget.dataset.emailId, taggedProcedures);
+  });
+
+  document.body.appendChild(btn);
+});
+
+function showHighlightPopover(selectedText, emailId, procedures) {
+  var prev = document.getElementById('highlight-popover');
+  if (prev) prev.remove();
+
+  var pop = document.createElement('div');
+  pop.id = 'highlight-popover';
+  pop.className = 'highlight-popover';
+
+  var title = document.createElement('div');
+  title.className = 'highlight-popover__title';
+  title.textContent = 'Add evidence highlight';
+  pop.appendChild(title);
+
+  var excEl = document.createElement('div');
+  excEl.className = 'highlight-popover__excerpt';
+  excEl.textContent = '\u201c' + (selectedText.length > 120 ? selectedText.slice(0, 120) + '\u2026' : selectedText) + '\u201d';
+  pop.appendChild(excEl);
+
+  var procEl;
+  if (procedures.length === 1) {
+    procEl = document.createElement('input');
+    procEl.type = 'hidden';
+    procEl.id = 'hl-proc';
+    procEl.value = String(procedures[0].id);
+  } else {
+    procEl = document.createElement('select');
+    procEl.id = 'hl-proc';
+    procEl.className = 'input input-sm';
+    procEl.style.cssText = 'width:100%;margin-bottom:6px';
+    procedures.forEach(function (p) {
+      var opt = document.createElement('option');
+      opt.value = String(p.id);
+      opt.textContent = p.name;
+      procEl.appendChild(opt);
+    });
+  }
+  pop.appendChild(procEl);
+
+  var noteEl = document.createElement('textarea');
+  noteEl.id = 'hl-note';
+  noteEl.className = 'input input-sm';
+  noteEl.rows = 2;
+  noteEl.placeholder = 'Note (optional)';
+  noteEl.style.cssText = 'width:100%;margin-bottom:6px;resize:vertical';
+  pop.appendChild(noteEl);
+
+  var actions = document.createElement('div');
+  actions.style.cssText = 'display:flex;gap:6px';
+
+  var saveBtn = document.createElement('button');
+  saveBtn.className = 'btn btn-primary btn-xs';
+  saveBtn.textContent = 'Save';
+  saveBtn.addEventListener('click', function () {
+    var procId = document.getElementById('hl-proc').value;
+    var noteVal = noteEl.value.trim();
+    pop.remove();
+    htmx.ajax('POST', '/evidence/highlights/' + emailId + '/' + procId, {
+      target: '#evidence-widget-' + emailId,
+      swap: 'outerHTML',
+      values: { text: selectedText, note: noteVal },
+    });
+  });
+  actions.appendChild(saveBtn);
+
+  var cancelBtn = document.createElement('button');
+  cancelBtn.className = 'btn btn-secondary btn-xs';
+  cancelBtn.textContent = 'Cancel';
+  cancelBtn.addEventListener('click', function () { pop.remove(); });
+  actions.appendChild(cancelBtn);
+
+  pop.appendChild(actions);
+  document.body.appendChild(pop);
+}
+
+// ─── Hide highlight popover / button on outside click ────────────────────
+document.addEventListener('mousedown', function (e) {
+  var pop = document.getElementById('highlight-popover');
+  if (pop && !pop.contains(e.target) && e.target.id !== 'highlight-save-btn') pop.remove();
+  var hlBtn = document.getElementById('highlight-save-btn');
+  if (hlBtn && e.target !== hlBtn) hlBtn.remove();
+});
+
 // ─── Notes tab switching ─────────────────────────────────────────────────
 document.addEventListener('click', function (e) {
   if (!e.target.matches('.notes-tab')) return;

@@ -27,16 +27,20 @@
     <a href="/memories/{{ m.slug }}" class="btn btn-secondary btn-sm" style="font-size:0.72rem;padding:3px 10px">
       Edit →
     </a>
-    <button class="btn btn-secondary btn-sm"
-            style="font-size:0.72rem;padding:3px 10px"
-            hx-post="/memories/{{ m.slug }}/synthesize"
-            hx-target="#synth-panel-{{ m.slug }}"
-            hx-swap="innerHTML"
-            hx-indicator="#synth-spinner-{{ m.slug }}">
-      <span id="synth-spinner-{{ m.slug }}" class="htmx-indicator sync-spinner"
-            style="width:10px;height:10px;margin-right:3px"></span>
-      Synth
-    </button>
+    <form style="display:flex;align-items:center;gap:4px;margin:0"
+          hx-post="/memories/{{ m.slug }}/synthesize"
+          hx-target="#synth-panel-{{ m.slug }}"
+          hx-swap="innerHTML"
+          hx-indicator="#synth-spinner-{{ m.slug }}">
+      <input type="date" name="since"
+             title="Synthesize from this date (leave blank for all)"
+             style="font-size:0.68rem;padding:2px 4px;border:1px solid var(--border);border-radius:4px;color:var(--text-muted);width:110px">
+      <button type="submit" class="btn btn-secondary btn-sm" style="font-size:0.72rem;padding:3px 10px">
+        <span id="synth-spinner-{{ m.slug }}" class="htmx-indicator sync-spinner"
+              style="width:10px;height:10px;margin-right:3px"></span>
+        Synth
+      </button>
+    </form>
   </div>
 
   {# Default toggle #}

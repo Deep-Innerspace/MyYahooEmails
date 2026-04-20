@@ -2714,3 +2714,99 @@ body.perspective-book .book-only.flex { display: flex; }
   padding: 1px 4px;
   flex-shrink: 0;
 }
+
+/* ── Evidence highlights list ───────────────────────────────────────────── */
+.evidence-highlights {
+  list-style: none;
+  margin: var(--space-2) 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.evidence-highlight {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  background: #fef9ec;
+  border-left: 3px solid #f59e0b;
+  border-radius: 0 4px 4px 0;
+  padding: 4px 8px;
+  font-size: 0.72rem;
+}
+.evidence-highlight__text {
+  flex: 1;
+  color: var(--text-primary);
+  font-style: italic;
+  line-height: 1.4;
+}
+.evidence-highlight__note {
+  color: var(--text-muted);
+  font-size: 0.68rem;
+  white-space: nowrap;
+  padding-left: 6px;
+  border-left: 1px solid var(--border);
+}
+.evidence-highlight__del {
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: var(--text-muted);
+  font-size: 0.85rem;
+  line-height: 1;
+  padding: 0 2px;
+  flex-shrink: 0;
+}
+.evidence-highlight__del:hover { color: var(--severity-high); }
+.evidence-highlights__empty {
+  font-size: 0.7rem;
+  color: var(--text-muted);
+  font-style: italic;
+  margin: var(--space-1) 0 var(--space-2);
+}
+
+/* ── Highlight floating button ──────────────────────────────────────────── */
+.highlight-save-floating {
+  background: #f59e0b;
+  color: #fff;
+  border: none;
+  border-radius: 4px;
+  padding: 5px 10px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.18);
+}
+.highlight-save-floating:hover { background: #d97706; }
+
+/* ── Highlight popover ──────────────────────────────────────────────────── */
+.highlight-popover {
+  position: fixed;
+  top: 80px;
+  right: 20px;
+  z-index: 9998;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: 0 4px 20px rgba(0,0,0,0.15);
+  padding: var(--space-3);
+  width: 300px;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+.highlight-popover__title {
+  font-weight: 600;
+  font-size: 0.8rem;
+  color: var(--text-primary);
+}
+.highlight-popover__excerpt {
+  font-size: 0.72rem;
+  color: var(--text-muted);
+  font-style: italic;
+  line-height: 1.4;
+  background: #fef9ec;
+  border-left: 3px solid #f59e0b;
+  padding: 4px 8px;
+  border-radius: 0 4px 4px 0;
+}
