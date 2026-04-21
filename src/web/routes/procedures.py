@@ -1,4 +1,5 @@
 """Procedures CRUD routes — Phase 6e.1 / 6e.2."""
+import json
 import re
 import sqlite3
 from typing import Dict, List, Optional
@@ -229,6 +230,42 @@ async def procedure_detail(
 
     lawyers = _get_lawyer_contacts(conn)
 
+    # Evidence items for this procedure
+    ev_rows = conn.execute("""
+        SELECT et.id, et.email_id, et.rationale, et.topic_ids, et.tagged_at,
+               e.date, e.subject, e.from_address, e.direction,
+               c.name AS from_name
+          FROM evidence_tags et
+          JOIN emails e ON e.id = et.email_id
+          LEFT JOIN contacts c ON e.contact_id = c.id
+         WHERE et.procedure_id = ?
+         ORDER BY e.date ASC
+    """, (proc_id,)).fetchall()
+
+    all_ev_topic_ids: set[int] = set()
+    evidence_items = []
+    for r in ev_rows:
+        d = dict(r)
+        d["topic_ids_list"] = json.loads(d.get("topic_ids") or "[]")
+        all_ev_topic_ids.update(d["topic_ids_list"])
+        evidence_items.append(d)
+
+    ev_topic_map: dict[int, str] = {}
+    if all_ev_topic_ids:
+        ph = ",".join("?" * len(all_ev_topic_ids))
+        for tr in conn.execute(
+            f"SELECT id, name FROM topics WHERE id IN ({ph})", list(all_ev_topic_ids)
+        ).fetchall():
+            ev_topic_map[tr["id"]] = tr["name"]
+
+    for d in evidence_items:
+        d["topic_names"] = [ev_topic_map.get(tid, str(tid)) for tid in d["topic_ids_list"]]
+
+    evidence_all_topics = sorted(
+        [{"id": tid, "name": name} for tid, name in ev_topic_map.items()],
+        key=lambda x: x["name"],
+    )
+
     ctx = {
         "request": request,
         "perspective": perspective,
@@ -242,6 +279,8 @@ async def procedure_detail(
         "event_types": EVENT_TYPES,
         "precision_options": PRECISION_OPTIONS,
         "doc_types": DOC_TYPES,
+        "evidence_items": evidence_items,
+        "evidence_all_topics": evidence_all_topics,
     }
     return templates.TemplateResponse("pages/procedure_detail.html", ctx)
 

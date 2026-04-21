@@ -2765,6 +2765,104 @@ body.perspective-book .book-only.flex { display: flex; }
   margin: var(--space-1) 0 var(--space-2);
 }
 
+/* ── Procedure detail section tabs ──────────────────────────────────────── */
+.proc-tab-nav {
+  display: flex;
+  gap: 0;
+  margin-bottom: var(--space-5);
+  border-bottom: 2px solid var(--border);
+}
+.proc-tab-btn {
+  padding: var(--space-2) var(--space-4);
+  background: none;
+  border: none;
+  border-bottom: 3px solid transparent;
+  margin-bottom: -2px;
+  cursor: pointer;
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+  color: var(--text-secondary);
+  transition: color .15s, border-color .15s;
+}
+.proc-tab-btn:hover { color: var(--primary); }
+.proc-tab-btn.active { color: var(--primary); border-bottom-color: var(--primary); }
+.proc-tab-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  background: var(--border);
+  color: var(--text-secondary);
+  font-size: 0.7rem;
+  font-weight: 700;
+  border-radius: 9px;
+  margin-left: 5px;
+}
+.proc-tab-btn.active .proc-tab-count { background: var(--primary); color: #fff; }
+
+/* ── Evidence list (procedure Evidence tab) ──────────────────────────────── */
+.evidence-list-row {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  padding: var(--space-3) var(--space-4);
+  border-bottom: 1px solid var(--border);
+  transition: background .1s;
+}
+.evidence-list-row:hover { background: var(--bg-secondary); }
+.evidence-list-row:last-child { border-bottom: none; }
+.evidence-list-meta {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+}
+.evidence-rationale {
+  font-size: var(--font-size-xs);
+  color: var(--text-muted);
+  font-style: italic;
+  padding-left: 2px;
+}
+.evidence-topic-filter {
+  padding: 2px 10px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: none;
+  cursor: pointer;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+  transition: background .12s, color .12s, border-color .12s;
+}
+.evidence-topic-filter:hover { border-color: var(--primary); color: var(--primary); }
+.evidence-topic-filter.active { background: var(--primary); color: #fff; border-color: var(--primary); }
+
+/* ── Bulk evidence modal ─────────────────────────────────────────────────── */
+.bulk-evidence-overlay {
+  display: none;
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, .45);
+  z-index: 10000;
+  align-items: center;
+  justify-content: center;
+}
+.bulk-evidence-overlay.open { display: flex; }
+.bulk-evidence-modal {
+  background: var(--surface);
+  border-radius: var(--radius-lg);
+  box-shadow: 0 8px 40px rgba(0, 0, 0, .22);
+  padding: var(--space-5);
+  width: 480px;
+  max-width: 96vw;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+.bulk-evidence-modal h3 { margin: 0; font-size: var(--font-size-base); color: var(--text-primary); }
+
 /* ── Highlight floating button ──────────────────────────────────────────── */
 .highlight-save-floating {
   background: #f59e0b;

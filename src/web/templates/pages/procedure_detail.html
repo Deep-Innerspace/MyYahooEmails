@@ -266,7 +266,22 @@
   </div>
   {% endif %}
 
-  <!-- ─── Documents section ──────────────────────────────────────────── -->
+  <!-- ─── Section tabs: Events | Documents | Evidence ─────────────────── -->
+  <div class="proc-tab-nav">
+    <button class="proc-tab-btn active" data-tab="events">
+      Events <span class="proc-tab-count">{{ events | length }}</span>
+    </button>
+    <button class="proc-tab-btn" data-tab="documents">
+      Documents <span class="proc-tab-count">{{ documents | length }}</span>
+    </button>
+    <button class="proc-tab-btn" data-tab="evidence">
+      Evidence <span class="proc-tab-count">{{ evidence_items | length }}</span>
+    </button>
+  </div>
+
+  <!-- ─── Documents tab panel ──────────────────────────────────────────── -->
+  <div id="proc-tab-documents" class="proc-tab-panel" hidden>
+
   <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:var(--space-4)">
     <h2 style="margin:0;font-size:var(--font-size-xl)">
       Documents
@@ -381,6 +396,11 @@
     <p>No documents uploaded yet. Click "Upload Document" to attach judgments, conclusions, or other legal documents.</p>
   </div>
   {% endif %}
+
+  </div>{# /proc-tab-documents #}
+
+  <!-- ─── Events tab panel ────────────────────────────────────────────────── -->
+  <div id="proc-tab-events" class="proc-tab-panel">
 
   <!-- ─── Events section ───────────────────────────────────────────────── -->
   <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:var(--space-4)">
@@ -599,5 +619,115 @@
   </div>
   {% endif %}
 
-</div>
+  </div>{# /proc-tab-events #}
+
+  <!-- ─── Evidence tab panel ──────────────────────────────────────────────── -->
+  <div id="proc-tab-evidence" class="proc-tab-panel" hidden>
+
+    {% if evidence_all_topics %}
+    <div style="display:flex;align-items:center;gap:var(--space-2);flex-wrap:wrap;margin-bottom:var(--space-4)">
+      <span class="text-xs text-muted" style="font-weight:600;text-transform:uppercase;letter-spacing:.05em">Filter:</span>
+      <button class="evidence-topic-filter active" data-filter-topic="">All</button>
+      {% for t in evidence_all_topics %}
+      <button class="evidence-topic-filter" data-filter-topic="{{ t.id }}">{{ t.name }}</button>
+      {% endfor %}
+    </div>
+    {% endif %}
+
+    {% if evidence_items %}
+    <div class="card">
+      <div class="card-body" style="padding:0">
+        {% for ev in evidence_items %}
+        <div class="evidence-list-row" data-ev-topics='{{ ev.topic_ids_list | tojson }}'>
+          <div class="evidence-list-meta">
+            <span class="text-xs text-muted" style="white-space:nowrap;min-width:80px">{{ ev.date[:10] if ev.date else '—' }}</span>
+            {% if ev.direction == 'sent' %}
+            <span class="direction-icon sent" title="Sent">↑</span>
+            {% else %}
+            <span class="direction-icon received" title="Received">↓</span>
+            {% endif %}
+            <span class="text-sm" style="color:var(--text-secondary);min-width:120px">
+              {{ ev.from_name or (ev.from_address[:20] if ev.from_address else '—') }}
+            </span>
+            <a href="/emails/?q={{ ev.email_id }}" onclick="event.preventDefault();window.open('/emails/#{{ ev.email_id }}','_blank')"
+               style="color:var(--accent);text-decoration:none;font-size:var(--font-size-sm);font-weight:500;flex:1;min-width:0"
+               hx-get="/emails/{{ ev.email_id }}"
+               hx-target="#ev-email-preview-{{ proc.id }}"
+               hx-swap="innerHTML">
+              {{ ev.subject or '(no subject)' }}
+            </a>
+            {% for tname in ev.topic_names %}
+            <span class="badge" style="background:rgba(30,58,95,.08);color:var(--primary);border:1px solid rgba(30,58,95,.2);font-size:10px;padding:1px 6px">{{ tname }}</span>
+            {% endfor %}
+            <a href="/emails/{{ ev.email_id }}" target="_blank"
+               style="color:var(--text-muted);font-size:var(--font-size-xs);white-space:nowrap;text-decoration:none"
+               title="Open email in new tab">↗</a>
+          </div>
+          {% if ev.rationale %}
+          <div class="evidence-rationale">{{ ev.rationale }}</div>
+          {% endif %}
+        </div>
+        {% endfor %}
+      </div>
+    </div>
+
+    <!-- Inline email preview (populated on row click) -->
+    <div id="ev-email-preview-{{ proc.id }}" class="card mt-4" style="display:none"></div>
+
+    {% else %}
+    <div class="card" style="padding:var(--space-6);text-align:center;color:var(--text-muted)">
+      <p>No emails tagged as evidence for this procedure yet.</p>
+      <p class="text-xs">Select emails on the <a href="/emails/" style="color:var(--accent)">Emails page</a> and use "★ Tag as Evidence" to add them here.</p>
+    </div>
+    {% endif %}
+
+  </div>{# /proc-tab-evidence #}
+
+</div>{# /page-body #}
+
+<script>
+(function () {
+  // ── Procedure section tabs ─────────────────────────────────────────────
+  var tabBtns = document.querySelectorAll('.proc-tab-btn');
+  var tabPanels = document.querySelectorAll('.proc-tab-panel');
+
+  tabBtns.forEach(function (btn) {
+    btn.addEventListener('click', function () {
+      var target = btn.dataset.tab;
+      tabBtns.forEach(function (b) { b.classList.remove('active'); });
+      tabPanels.forEach(function (p) { p.hidden = true; });
+      btn.classList.add('active');
+      var panel = document.getElementById('proc-tab-' + target);
+      if (panel) panel.hidden = false;
+    });
+  });
+
+  // Show preview panel when an evidence row email is loaded
+  document.addEventListener('htmx:afterSwap', function (e) {
+    var preview = document.getElementById('ev-email-preview-{{ proc.id }}');
+    if (preview && e.detail.target === preview) {
+      preview.style.display = 'block';
+      preview.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+  });
+
+  // ── Evidence topic quick-filter ────────────────────────────────────────
+  var filterBtns = document.querySelectorAll('.evidence-topic-filter');
+  filterBtns.forEach(function (btn) {
+    btn.addEventListener('click', function () {
+      filterBtns.forEach(function (b) { b.classList.remove('active'); });
+      btn.classList.add('active');
+      var tid = btn.dataset.filterTopic;
+      document.querySelectorAll('.evidence-list-row').forEach(function (row) {
+        if (!tid) {
+          row.hidden = false;
+          return;
+        }
+        var topics = JSON.parse(row.dataset.evTopics || '[]');
+        row.hidden = !topics.includes(parseInt(tid, 10));
+      });
+    });
+  });
+}());
+</script>
 {% endblock %}
