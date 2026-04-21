@@ -185,11 +185,59 @@
                    padding:4px 10px;font-size:var(--font-size-sm);cursor:pointer">
       ⚖️ → Legal
     </button>
+    {% if active_procedures %}
+    <button onclick="emailBulk.openEvidenceModal()"
+            style="background:#f59e0b;color:#fff;border:none;border-radius:var(--radius);
+                   padding:4px 10px;font-size:var(--font-size-sm);cursor:pointer;font-weight:600">
+      ★ Tag as Evidence
+    </button>
+    {% endif %}
     <button onclick="emailBulk.clearSelection()"
             style="background:none;border:1px solid var(--border);border-radius:var(--radius);
                    padding:4px 10px;font-size:var(--font-size-sm);cursor:pointer;color:var(--text-muted)">
       × Clear
     </button>
+  </div>
+
+  <!-- ─── Bulk evidence modal ──────────────────────────────────────────── -->
+  <div id="bulk-evidence-overlay" class="bulk-evidence-overlay">
+    <div class="bulk-evidence-modal">
+      <h3>★ Tag as Evidence</h3>
+      <p class="text-sm text-muted" style="margin:0">
+        Tag <strong id="bulk-ev-count"></strong> email(s) as a candidate for:
+      </p>
+      <div class="form-group">
+        <label class="form-label">Procedure *</label>
+        <select id="bulk-ev-proc" style="width:100%;padding:var(--space-2);border:1px solid var(--border);border-radius:var(--radius);background:var(--surface);color:var(--text-primary)">
+          {% for p in active_procedures %}
+          <option value="{{ p.id }}">#{{ p.id }} — {{ p.name }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Rationale <span class="text-muted" style="font-weight:400">(optional, shared across all selected)</span></label>
+        <textarea id="bulk-ev-rationale" rows="3"
+                  style="width:100%;padding:var(--space-2);border:1px solid var(--border);border-radius:var(--radius);background:var(--surface);color:var(--text-primary);resize:vertical;font-size:var(--font-size-sm)"
+                  placeholder="Why are these emails relevant to this procedure?"></textarea>
+      </div>
+      {% if all_topics %}
+      <div class="form-group">
+        <label class="form-label">Topics <span class="text-muted" style="font-weight:400">(optional)</span></label>
+        <div style="display:flex;flex-wrap:wrap;gap:var(--space-2)">
+          {% for t in all_topics %}
+          <label style="display:flex;align-items:center;gap:4px;cursor:pointer;font-size:0.8rem">
+            <input type="checkbox" class="bulk-ev-topic" value="{{ t.id }}" style="width:auto">
+            <span class="topic-pill" style="background:{{ t.color }}22;color:{{ t.color }};border-color:{{ t.color }}44">{{ t.name }}</span>
+          </label>
+          {% endfor %}
+        </div>
+      </div>
+      {% endif %}
+      <div style="display:flex;gap:var(--space-3);margin-top:var(--space-2)">
+        <button id="bulk-ev-save" class="btn btn-primary" onclick="emailBulk.tagSelected()">Tag Selected</button>
+        <button class="btn btn-secondary" onclick="emailBulk.closeEvidenceModal()">Cancel</button>
+      </div>
+    </div>
   </div>
 
   <!-- ─── Two-panel layout ────────────────────────────────────────────── -->
@@ -272,6 +320,47 @@ const emailBulk = {
     if (resp.ok) {
       htmx.ajax('GET', '/emails/search', {target: '#email-results', include: '#search-form'});
       this.clearSelection();
+    }
+  },
+  openEvidenceModal() {
+    const ids = this.getIds();
+    if (!ids.length) return;
+    const countEl = document.getElementById('bulk-ev-count');
+    if (countEl) countEl.textContent = ids.length;
+    const overlay = document.getElementById('bulk-evidence-overlay');
+    if (overlay) overlay.classList.add('open');
+  },
+  closeEvidenceModal() {
+    const overlay = document.getElementById('bulk-evidence-overlay');
+    if (overlay) overlay.classList.remove('open');
+    const rat = document.getElementById('bulk-ev-rationale');
+    if (rat) rat.value = '';
+    document.querySelectorAll('.bulk-ev-topic').forEach(cb => cb.checked = false);
+  },
+  async tagSelected() {
+    const ids = this.getIds();
+    const procEl = document.getElementById('bulk-ev-proc');
+    if (!ids.length || !procEl) return;
+    const saveBtn = document.getElementById('bulk-ev-save');
+    if (saveBtn) { saveBtn.disabled = true; saveBtn.textContent = 'Tagging…'; }
+    const form = new FormData();
+    ids.forEach(id => form.append('email_ids', id));
+    form.append('procedure_id', procEl.value);
+    const rat = document.getElementById('bulk-ev-rationale');
+    if (rat && rat.value.trim()) form.append('rationale', rat.value.trim());
+    document.querySelectorAll('.bulk-ev-topic:checked').forEach(cb => form.append('topic_ids', cb.value));
+    const resp = await fetch('/evidence/batch-tag', {method: 'POST', body: form});
+    if (saveBtn) { saveBtn.disabled = false; saveBtn.textContent = 'Tag Selected'; }
+    if (resp.ok) {
+      const data = await resp.json();
+      this.closeEvidenceModal();
+      this.clearSelection();
+      htmx.ajax('GET', '/emails/search', {target: '#email-results', include: '#search-form'});
+      const counter = document.getElementById('bulk-count');
+      if (counter) {
+        counter.textContent = `✓ ${data.tagged} tagged`;
+        setTimeout(() => this.updateToolbar(), 2000);
+      }
     }
   }
 };

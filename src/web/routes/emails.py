@@ -117,6 +117,10 @@ async def email_list(
     all_topics = _get_all_topics(conn)
     total_pages = max(1, (total + PAGE_SIZE - 1) // PAGE_SIZE)
 
+    active_procedures = [dict(r) for r in conn.execute(
+        "SELECT id, name FROM procedures ORDER BY date_start DESC, id DESC"
+    ).fetchall()]
+
     ctx = {
         "request": request,
         "perspective": perspective,
@@ -136,6 +140,7 @@ async def email_list(
         "unlinked": unlinked,
         "corpus": corpus,
         "all_topics": all_topics,
+        "active_procedures": active_procedures,
     }
 
     # HTMX partial request → return only the list partial

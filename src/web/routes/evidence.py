@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import List
 
 from fastapi import APIRouter, Depends, Form, Request
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.templating import Jinja2Templates
 
 from src.web.deps import get_conn
@@ -126,6 +126,33 @@ async def add_highlight(
         (json.dumps(highlights), email_id, procedure_id),
     )
     return _render_widget(request, conn, email_id)
+
+
+@router.post("/evidence/batch-tag")
+async def batch_tag_emails(
+    request: Request,
+    email_ids: List[int] = Form(default_factory=list),
+    procedure_id: int = Form(...),
+    rationale: str = Form(""),
+    topic_ids: List[str] = Form(default_factory=list),
+    conn=Depends(get_conn),
+):
+    """Tag multiple emails as evidence for a procedure (UPSERT)."""
+    ids: list[int] = [int(r) for r in topic_ids if r.strip().isdigit()]
+    topic_ids_json = json.dumps(sorted(set(ids)))
+    tagged = 0
+    for email_id in email_ids:
+        conn.execute(
+            """INSERT INTO evidence_tags(email_id, procedure_id, rationale, topic_ids)
+               VALUES (?, ?, ?, ?)
+               ON CONFLICT(email_id, procedure_id) DO UPDATE SET
+                   rationale = CASE WHEN excluded.rationale != '' THEN excluded.rationale ELSE rationale END,
+                   topic_ids = CASE WHEN excluded.topic_ids != '[]' THEN excluded.topic_ids ELSE topic_ids END,
+                   tagged_at = CURRENT_TIMESTAMP""",
+            (email_id, procedure_id, rationale.strip(), topic_ids_json),
+        )
+        tagged += 1
+    return JSONResponse({"tagged": tagged, "procedure_id": procedure_id})
 
 
 @router.delete("/evidence/highlights/{email_id}/{procedure_id}/{index}", response_class=HTMLResponse)
