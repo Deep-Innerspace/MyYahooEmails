@@ -289,9 +289,12 @@ All phases are complete. Key facts for new sessions:
 - **Personal corpus**: ~3,791 emails; 100% classified, tone-analyzed, manipulation-analyzed
 - **Legal corpus**: ~2,743 emails; 100% legal_analysis; 15 procedures tracked; 33 MULLER conclusions downloaded
 - **Analysis coverage**: classify/tone/manipulation = personal only; legal_analysis = legal only; timeline_events = personal only (legal events → procedure_events)
-- **Migrations**: 28 applied (schema_version table); next ID = 29
+- **Migrations**: 29 applied (schema_version table); next ID = 30
 - **Procedures**: 15 total, all with date ranges; #14 Révision Pensions Appel + #15 Procédure Lounys Dubai are active
 - **Evidence highlights**: `evidence_tags.highlights` (JSON `[{text, note}]`) stores per-procedure text annotations; `POST/DELETE /evidence/highlights/{email_id}/{procedure_id}/{?index}`; JS floating ★ Highlight button on text selection in `#email-body` (only when `data-tagged` is non-empty)
+- **Evidence bundle export** (v2): `GET /evidence/export/{id}/pdf` and `GET /evidence/export/{id}/zip`; pure builder in `src/web/bundle.py`; PDF works (`pango` installed); ZIP always works (stdlib); full `delta_text` included (no truncation — legal evidence must be complete)
+- **Evidence AI suggester**: `POST /evidence/suggest/{id}` — scores untagged personal-corpus emails using manipulation score (0.4) + contradiction count (0.3) + topic match (0.3); threshold 0.15; top 30 returned as HTMX partial `partials/evidence_suggestions.html`; no LLM calls, reads existing DB analysis
+- **Evidence dismiss persistence** (migration 29): `POST /evidence/dismiss/{email_id}/{procedure_id}` writes to `evidence_dismissed_suggestions(email_id, procedure_id, dismissed_at)`; Dismiss button uses `hx-post` + `hx-swap="outerHTML"`; `suggest_evidence` excludes dismissed emails via `NOT IN` subquery; dismissing does NOT block manual tagging via the evidence widget
 
 ### Excel round-trip pipeline (analyze export/import)
 - `--type` accepts: classify | tone | timeline | manipulation | contradictions
@@ -327,6 +330,14 @@ All phases are complete. Key facts for new sessions:
 - **NOT NULL columns with DEFAULT**: `field.strip() or None` converts empty strings to NULL, violating NOT NULL constraint even when DEFAULT '' is set. Use `field.strip()` only.
 - **JSON in double-quoted HTML attributes breaks `dataset`**: `data-foo="{{ value | tojson }}"` produces malformed HTML when the JSON contains double quotes. Jinja2's `tojson` marks output as `Markup` (already safe), so `| e` is a no-op. Fix: use single quotes for the attribute — `data-foo='{{ value | tojson }}'`.
 - **`mouseup` handler fires during floating-button click**: A `document.addEventListener('mouseup', ...)` that creates a floating button will fire again when the user clicks that button, removing it before the `click` event fires (detached elements don't receive `click` in Chrome). Guard with `if (e.target && e.target.id === 'my-btn-id') return;` as the first line of the handler.
+
+### Navigation patterns (2026-04-22 overhaul — consistent across all pages)
+- **Email row → inline panel**: `hx-get + hx-push-url="/emails/{{ e.id }}"` — URL updates so browser back works.
+- **Pagination**: `hx-push-url` matches the `href` value (not the `/emails/search?...` HTMX endpoint).
+- **`window.location` rows** (dashboard, contact, sync): always append `?back='+encodeURIComponent(window.location.pathname)`.
+- **Static "View email" links**: hardcode `?back=<parent_url>` in the template where the parent URL is known (e.g. `?back=/procedures/{{ proc.id }}`, `?back=/analysis/contradictions`).
+- **`email_detail.html` partial "Open full page" button**: already uses `onclick="this.href='/emails/N?back='+encodeURIComponent(window.location.href)"` — works in split-panel, timeline modal, and any other inline context. Do not duplicate this logic.
+- **HTMX analysis tabs**: use `hx-push-url="/analysis/?tab=X"` to make tabs bookmarkable. Contradictions/Manipulation are separate full pages — link with `<a href>`, not `window.location`.
 
 ## Configuration Reference
 

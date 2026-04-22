@@ -17,6 +17,7 @@
             hx-get="/analysis/tone"
             hx-target="#analysis-content"
             hx-trigger="click"
+            hx-push-url="/analysis/?tab=tone"
             onclick="setActiveTab(this)">
       Tone Trends
     </button>
@@ -24,6 +25,7 @@
             hx-get="/analysis/topics"
             hx-target="#analysis-content"
             hx-trigger="click"
+            hx-push-url="/analysis/?tab=topics"
             onclick="setActiveTab(this)">
       Topic Evolution
     </button>
@@ -31,24 +33,22 @@
             hx-get="/analysis/response-times"
             hx-target="#analysis-content"
             hx-trigger="click"
+            hx-push-url="/analysis/?tab=response"
             onclick="setActiveTab(this)">
       Response Times
     </button>
     {% if perspective == 'legal' %}
-    <button class="tab-btn"
-            onclick="window.location='/analysis/contradictions'">
+    <a class="tab-btn" href="/analysis/contradictions">
       Contradictions
-    </button>
-    <button class="tab-btn"
-            onclick="window.location='/analysis/manipulation'">
+    </a>
+    <a class="tab-btn" href="/analysis/manipulation">
       Manipulation
-    </button>
+    </a>
     {% endif %}
     {% if perspective == 'book' %}
-    <button class="tab-btn"
-            onclick="window.location='/narrative'">
+    <a class="tab-btn" href="/narrative">
       Character Evolution
-    </button>
+    </a>
     {% endif %}
   </div>
 

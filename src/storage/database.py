@@ -598,6 +598,16 @@ _MIGRATIONS = [
     (28, "Add highlights column to evidence_tags for per-procedure text annotations", """
         ALTER TABLE evidence_tags ADD COLUMN highlights TEXT NOT NULL DEFAULT '[]';
     """),
+
+    (29, "Add evidence_dismissed_suggestions table for persisting dismissed AI suggestion cards", """
+        CREATE TABLE IF NOT EXISTS evidence_dismissed_suggestions (
+            email_id     INTEGER NOT NULL REFERENCES emails(id) ON DELETE CASCADE,
+            procedure_id INTEGER NOT NULL REFERENCES procedures(id) ON DELETE CASCADE,
+            dismissed_at TEXT NOT NULL DEFAULT (datetime('now')),
+            PRIMARY KEY (email_id, procedure_id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_ev_dismissed_proc ON evidence_dismissed_suggestions(procedure_id);
+    """),
 ]
 
 

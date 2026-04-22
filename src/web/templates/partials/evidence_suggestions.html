@@ -1,0 +1,48 @@
+{% if candidates %}
+<div class="ev-suggestions">
+  <div class="ev-suggestions__header">
+    <span class="text-sm" style="font-weight:600;color:var(--primary)">{{ candidates|length }} candidate(s) — click Add to tag</span>
+  </div>
+  {% for c in candidates %}
+  <div class="ev-suggestion-card" id="ev-sug-{{ c.email_id }}">
+    <div class="ev-suggestion-card__meta">
+      <span class="text-xs text-muted" style="white-space:nowrap;min-width:80px">{{ c.date }}</span>
+      <span class="text-sm" style="color:var(--text-secondary);min-width:100px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ c.from_name }}</span>
+      <span class="text-sm" style="color:var(--accent);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ c.subject }}</span>
+      <a href="/emails/{{ c.email_id }}" target="_blank" style="color:var(--text-muted);font-size:var(--font-size-xs);text-decoration:none" title="Open in new tab">↗</a>
+    </div>
+    <div class="ev-suggestion-card__footer">
+      <div class="ev-score-bar">
+        <div class="ev-score-bar__fill" style="width:{{ (c.score * 100)|int }}%"></div>
+      </div>
+      <span class="text-xs text-muted">{{ (c.score * 100)|int }}%</span>
+      <div style="display:flex;gap:4px;flex-wrap:wrap">
+        {% if 'manipulation' in c.reason_flags %}
+        <span class="badge" style="background:rgba(220,38,38,.08);color:#dc2626;border:1px solid rgba(220,38,38,.2);font-size:9px">manipulation</span>
+        {% endif %}
+        {% if 'contradiction' in c.reason_flags %}
+        <span class="badge" style="background:rgba(245,158,11,.08);color:#b45309;border:1px solid rgba(245,158,11,.2);font-size:9px">contradiction</span>
+        {% endif %}
+        {% if 'topic_match' in c.reason_flags %}
+        <span class="badge" style="background:rgba(30,58,95,.08);color:var(--primary);border:1px solid rgba(30,58,95,.2);font-size:9px">topic match</span>
+        {% endif %}
+      </div>
+      <div style="display:flex;gap:var(--space-2);margin-left:auto">
+        <button class="btn btn-xs"
+                style="background:var(--primary);color:#fff"
+                hx-post="/evidence/tag/{{ c.email_id }}/{{ procedure_id }}"
+                hx-vals='{"tagged_by": "ai_suggested"}'
+                hx-target="#ev-sug-{{ c.email_id }}"
+                hx-swap="outerHTML">Add</button>
+        <button class="btn btn-xs btn-outline"
+                hx-post="/evidence/dismiss/{{ c.email_id }}/{{ procedure_id }}"
+                hx-target="#ev-sug-{{ c.email_id }}"
+                hx-swap="outerHTML">Dismiss</button>
+      </div>
+    </div>
+  </div>
+  {% endfor %}
+</div>
+{% else %}
+<p class="text-muted text-sm" style="padding:var(--space-4)">No strong candidates found above threshold.</p>
+{% endif %}

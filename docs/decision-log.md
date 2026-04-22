@@ -781,3 +781,61 @@ parsed = raw.parse()  # get the actual response content
 **Pattern**: `_conn_or_new(conn)` context manager yields the passed connection as-is (no close on exit) or opens a new one (closes on exit). This is backward-compatible — existing CLI callers pass nothing and still work.
 
 **Impact**: `src/analysis/runner.py`, `src/analysis/classifier.py`, `src/analysis/tone.py`, `src/analysis/timeline.py`.
+
+---
+
+## 2026-04-22 — Evidence bundle: full delta_text, no truncation
+
+**Decision**: PDF and ZIP evidence exports include the full `delta_text` for every tagged email — no character limit.
+
+**Rationale**: The original implementation truncated at 1200 chars to "keep the PDF readable." This is wrong for legal evidence: a lawyer needs the complete email content. Truncated evidence could be challenged or useless. The slight PDF size increase is irrelevant compared to completeness.
+
+**Impact**: `src/web/routes/evidence.py` `export_bundle_pdf()` — removed the `if len(body) > 1200: body = body[:1200] + "\n[…]"` guard.
+
+---
+
+## 2026-04-22 — AI suggester: pure SQL scoring, no LLM
+
+**Decision**: The evidence AI suggester reads existing analysis results (tone/manipulation scores, contradiction counts, topic matches) rather than running new LLM inference.
+
+**Rationale**: All the relevant signals are already in the DB from prior analysis passes. Running new LLM calls would add cost, latency, and rate-limit risk for marginal quality improvement. The three-signal weighted score (manipulation 0.4 + contradiction 0.3 + topic match 0.3) is interpretable and debuggable.
+
+**Impact**: `POST /evidence/suggest/{id}` in `src/web/routes/evidence.py` — three SQL queries + in-Python scoring; no provider calls. `tagged_by='ai_suggested'` is preserved end-to-end: suggestion card passes `hx-vals='{"tagged_by":"ai_suggested"}'`; `tag_email` route accepts and validates the param; INSERT/UPSERT writes it to `evidence_tags`. Query to measure usefulness: `SELECT tagged_by, COUNT(*) FROM evidence_tags GROUP BY tagged_by`.
+
+---
+
+## 2026-04-22 — Evidence subject link: remove window.open, keep HTMX inline preview
+
+**Decision**: Clicking an evidence subject in the procedure Evidence tab loads the email inline (HTMX) rather than opening a new browser tab.
+
+**Rationale**: The `onclick="window.open('/emails/#id','_blank')"` was opening a blank `/emails/` list page on every click — the hash `#id` does not match `email-row-<id>` row IDs. A dedicated `↗` link already handles explicit new-tab navigation. The subject click should be the fast inline path.
+
+**Impact**: `procedure_detail.html` line 652 — `href` changed to `#`, `onclick` removed; `hx-get`/`hx-target`/`hx-swap` retained.
+
+---
+
+## 2026-04-22 — Systematic navigation overhaul: hx-push-url + ?back= everywhere
+
+**Decision**: All navigation paths in the web dashboard now update the browser URL and carry a `?back=` parameter so the browser back button always returns the user to the right page.
+
+**Rationale**: A comprehensive audit found 23 navigation breakage points across 11 templates, all caused by three patterns: (1) `hx-get` without `hx-push-url`, (2) `window.location='/emails/N'` without `?back=`, (3) `<a href="/emails/N">` without `?back=`. The user reported that opening any email from a non-list context (evidence tab, procedure events, contradictions, etc.) and closing it would return them to the correspondence list rather than where they started.
+
+**Design rules adopted**:
+- Email rows get `hx-push-url="/emails/{{ e.id }}"` — split-panel navigation now updates the URL
+- Pagination links get `hx-push-url` matching their `href` value
+- `window.location` rows: always append `?back='+encodeURIComponent(window.location.pathname)`
+- Static "View email" links: hardcode `?back=<parent_url>` in the Jinja2 template
+- The "Open full page" button already in `email_detail.html` partial handles the back-link dynamically — no duplication needed
+- Contradictions/Manipulation converted from `window.location` buttons to `<a href>` links
+
+**Impact**: 11 template files changed, no Python routes or DB changes needed.
+
+---
+
+## 2026-04-22 — Evidence dismiss: separate table, not a status column on evidence_tags
+
+**Decision**: Persist dismissed AI suggestions in a new `evidence_dismissed_suggestions(email_id, procedure_id)` table rather than adding a `dismissed` status to `evidence_tags`.
+
+**Rationale**: A dismiss is not a tag state — it's a UI preference ("don't suggest this again"). Putting it in `evidence_tags` would conflate "I reviewed this and dismissed it" with "I tagged this as evidence". The separate table keeps `evidence_tags` as a clean record of actual evidence decisions. It also means a dismissed email can still be tagged later via the evidence widget without any awkward status transitions.
+
+**Impact**: Migration 29 adds the table. `POST /evidence/dismiss/{email_id}/{procedure_id}` handles persistence. `suggest_evidence` gains a second `NOT IN` subquery. Dismiss button uses `hx-post` + `hx-swap="outerHTML"` returning an empty `<span>`.

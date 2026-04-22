@@ -107,7 +107,7 @@
           <span class="badge {% if item.dir_a == 'sent' %}badge-sent{% else %}badge-received{% endif %}">{{ item.dir_a }}</span>
         </div>
         <div class="text-sm font-medium mb-2">{{ item.subject_a or '(no subject)' }}</div>
-        <a href="/emails/{{ item.email_id_a }}" class="text-xs">View email &rarr;</a>
+        <a href="/emails/{{ item.email_id_a }}?back=/analysis/contradictions" class="text-xs">View email &rarr;</a>
       </div>
       <div class="contradiction-email-excerpt">
         <div class="text-xs text-muted mb-2">
@@ -115,7 +115,7 @@
           <span class="badge {% if item.dir_b == 'sent' %}badge-sent{% else %}badge-received{% endif %}">{{ item.dir_b }}</span>
         </div>
         <div class="text-sm font-medium mb-2">{{ item.subject_b or '(no subject)' }}</div>
-        <a href="/emails/{{ item.email_id_b }}" class="text-xs">View email &rarr;</a>
+        <a href="/emails/{{ item.email_id_b }}?back=/analysis/contradictions" class="text-xs">View email &rarr;</a>
       </div>
     </div>
 

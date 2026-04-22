@@ -54,7 +54,7 @@
       <div class="timeline-description">{{ item.description }}</div>
 
       {% if item.source == 'email' and item.email_id %}
-      <a href="#"
+      <a href="/emails/{{ item.email_id }}?back=/timeline/"
          onclick="openTimelineEmailModal({{ item.email_id }}); return false;"
          class="text-xs"
          style="margin-top:4px;display:inline-block">

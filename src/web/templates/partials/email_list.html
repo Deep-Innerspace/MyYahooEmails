@@ -42,7 +42,8 @@
      hx-get="/emails/search?{% if query %}q={{ query }}&{% endif %}page={{ current_page - 1 }}{{ _cp }}"
      hx-target="#email-results"
      hx-include="#search-form"
-     hx-swap="innerHTML">‹</a>
+     hx-swap="innerHTML"
+     hx-push-url="?{% if query %}q={{ query }}&{% endif %}page={{ current_page - 1 }}{{ _cp }}">‹</a>
   {% else %}
   <span class="pagination-btn disabled">‹</span>
   {% endif %}
@@ -53,7 +54,8 @@
      hx-get="/emails/search?{% if query %}q={{ query }}&{% endif %}page={{ p }}{{ _cp }}"
      hx-target="#email-results"
      hx-include="#search-form"
-     hx-swap="innerHTML">{{ p }}</a>
+     hx-swap="innerHTML"
+     hx-push-url="?{% if query %}q={{ query }}&{% endif %}page={{ p }}{{ _cp }}">{{ p }}</a>
   {% endfor %}
 
   {% if current_page < total_pages %}
@@ -62,7 +64,8 @@
      hx-get="/emails/search?{% if query %}q={{ query }}&{% endif %}page={{ current_page + 1 }}{{ _cp }}"
      hx-target="#email-results"
      hx-include="#search-form"
-     hx-swap="innerHTML">›</a>
+     hx-swap="innerHTML"
+     hx-push-url="?{% if query %}q={{ query }}&{% endif %}page={{ current_page + 1 }}{{ _cp }}">›</a>
   {% else %}
   <span class="pagination-btn disabled">›</span>
   {% endif %}
