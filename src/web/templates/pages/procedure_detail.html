@@ -599,11 +599,11 @@
 
       {% if ev.email_subject %}
       <div class="event-email-link">
-        <a href="/emails/{{ ev.source_email_id }}">View email: {{ ev.email_subject }} &rarr;</a>
+        <a href="/emails/{{ ev.source_email_id }}?back=/procedures/{{ proc.id }}">View email: {{ ev.email_subject }} &rarr;</a>
       </div>
       {% elif ev.source_email_id %}
       <div class="event-email-link">
-        <a href="/emails/{{ ev.source_email_id }}">View linked email #{{ ev.source_email_id }} &rarr;</a>
+        <a href="/emails/{{ ev.source_email_id }}?back=/procedures/{{ proc.id }}">View linked email #{{ ev.source_email_id }} &rarr;</a>
       </div>
       {% endif %}
 
@@ -623,6 +623,24 @@
 
   <!-- ─── Evidence tab panel ──────────────────────────────────────────────── -->
   <div id="proc-tab-evidence" class="proc-tab-panel" hidden>
+
+    <!-- toolbar: count + export + suggest -->
+    <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:var(--space-2);margin-bottom:var(--space-4)">
+      <span class="text-sm text-muted">{{ evidence_items|length }} email(s) tagged</span>
+      <div style="display:flex;gap:var(--space-2);align-items:center">
+        {% if evidence_items %}
+        <a href="/evidence/export/{{ proc.id }}/pdf" class="btn btn-sm btn-outline" title="Download PDF dossier">↓ PDF</a>
+        <a href="/evidence/export/{{ proc.id }}/zip" class="btn btn-sm btn-outline" title="Download ZIP archive">↓ ZIP</a>
+        {% endif %}
+        <button class="btn btn-sm btn-outline"
+                style="color:var(--accent);border-color:var(--accent)"
+                hx-post="/evidence/suggest/{{ proc.id }}"
+                hx-target="#ev-suggestions-{{ proc.id }}"
+                hx-swap="innerHTML"
+                hx-indicator="#ev-suggest-spinner-{{ proc.id }}">✦ Suggest</button>
+        <span id="ev-suggest-spinner-{{ proc.id }}" class="htmx-indicator text-xs text-muted">…</span>
+      </div>
+    </div>
 
     {% if evidence_all_topics %}
     <div style="display:flex;align-items:center;gap:var(--space-2);flex-wrap:wrap;margin-bottom:var(--space-4)">
@@ -649,8 +667,8 @@
             <span class="text-sm" style="color:var(--text-secondary);min-width:120px">
               {{ ev.from_name or (ev.from_address[:20] if ev.from_address else '—') }}
             </span>
-            <a href="/emails/?q={{ ev.email_id }}" onclick="event.preventDefault();window.open('/emails/#{{ ev.email_id }}','_blank')"
-               style="color:var(--accent);text-decoration:none;font-size:var(--font-size-sm);font-weight:500;flex:1;min-width:0"
+            <a href="#"
+               style="color:var(--accent);text-decoration:none;font-size:var(--font-size-sm);font-weight:500;flex:1;min-width:0;cursor:pointer"
                hx-get="/emails/{{ ev.email_id }}"
                hx-target="#ev-email-preview-{{ proc.id }}"
                hx-swap="innerHTML">
@@ -680,6 +698,9 @@
       <p class="text-xs">Select emails on the <a href="/emails/" style="color:var(--accent)">Emails page</a> and use "★ Tag as Evidence" to add them here.</p>
     </div>
     {% endif %}
+
+    <!-- AI suggestion results -->
+    <div id="ev-suggestions-{{ proc.id }}" class="mt-4"></div>
 
   </div>{# /proc-tab-evidence #}
 

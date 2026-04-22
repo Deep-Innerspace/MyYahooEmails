@@ -155,7 +155,7 @@
           </thead>
           <tbody>
             {% for e in emails %}
-            <tr style="cursor:pointer" onclick="window.location='/emails/{{ e.id }}'">
+            <tr style="cursor:pointer" onclick="window.location='/emails/{{ e.id }}?back='+encodeURIComponent(window.location.pathname)">
               <td class="text-xs text-muted" style="white-space:nowrap">{{ e.date[:10] if e.date else '—' }}</td>
               <td class="text-sm truncate" style="max-width:180px" title="{{ e.subject }}">
                 {{ e.subject or '(no subject)' }}

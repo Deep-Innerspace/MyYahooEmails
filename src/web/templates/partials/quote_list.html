@@ -10,7 +10,7 @@
       {% endfor %}
       {% endif %}
       {% if q.email_id %}
-      <a href="/emails/{{ q.email_id }}" class="quote-source text-xs">
+      <a href="/emails/{{ q.email_id }}?back=/quotes" class="quote-source text-xs">
         {% if q.email_date %}{{ q.email_date[:10] }}{% endif %}
         {% if q.email_subject %} — {{ q.email_subject[:50] }}{% endif %}
       </a>

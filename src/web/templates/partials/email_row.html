@@ -3,6 +3,7 @@
     hx-get="/emails/{{ e.id }}"
     hx-target="#detail-panel"
     hx-swap="innerHTML"
+    hx-push-url="/emails/{{ e.id }}"
     hx-indicator="#loading-bar"
     style="cursor:pointer">
 

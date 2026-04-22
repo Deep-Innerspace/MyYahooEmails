@@ -10,7 +10,7 @@
   </thead>
   <tbody>
     {% for e in recent_emails %}
-    <tr class="clickable-row" onclick="window.location='/emails/{{ e.id }}'">
+    <tr class="clickable-row" onclick="window.location='/emails/{{ e.id }}?back='+encodeURIComponent(window.location.pathname)">
       <td class="text-muted" style="font-size:0.8rem;white-space:nowrap">
         {{ e.date[:16] if e.date else '—' }}
       </td>

@@ -218,7 +218,7 @@
             </thead>
             <tbody>
               {% for em in top_aggressive %}
-              <tr style="cursor:pointer" onclick="window.location='/emails/{{ em.id }}'">
+              <tr style="cursor:pointer" onclick="window.location='/emails/{{ em.id }}?back='+encodeURIComponent(window.location.pathname)">
                 <td class="text-xs text-muted">{{ em.date[:10] if em.date else '—' }}</td>
                 <td class="truncate" style="max-width:160px" title="{{ em.subject }}">
                   <span class="badge {% if em.direction == 'sent' %}badge-sent{% else %}badge-received{% endif %}" style="margin-right:4px">
